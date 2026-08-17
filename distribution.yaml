@@ -1,0 +1,12 @@
+name: ERPNext Hermes Agent
+version: 0.1.0
+description: "Hermes Agent to manage one or more ERPNext instances. Consists of a mix of various function/department level skills like HR, Accounts, Taxation, Procurement, Sales executives including an MIS analyst and overall erp system admin."
+hermes_requires: ""
+author: "Qkeee"
+license: "MIT"
+env_requires: []
+distribution_owned:
+  - SOUL.md
+  - skills/qkeee-erp/            # only ERPNext related skills; other installed skills stay
+  - cron/jobs.json
+  - config.yaml

@@ -1,0 +1,117 @@
+model:
+  default: openrouter/auto-beta
+  provider: openrouter
+  base_url: https://openrouter.ai/api/v1
+  api_mode: chat_completions
+checkpoints:
+  enabled: true
+  max_snapshots: 20
+  max_total_size_mb: 500
+  max_file_size_mb: 10
+  auto_prune: true
+  retention_days: 7
+  min_interval_hours: 24
+agent:
+  max_turns: 50
+web:
+  backend: tavily
+  use_gateway: false
+browser:
+  cloud_provider: local
+  use_gateway: false
+display:
+  tool_progress: all
+dashboard:
+  basic_auth:
+    username: ""
+    password_hash: ""
+    secret: ""
+tts:
+  use_gateway: false
+command_allowlist:
+  - execute_code
+  - script execution via heredoc
+  - script execution via -e/-c flag
+onboarding:
+  seen:
+    tool_progress_prompt: true
+    busy_input_prompt: true
+    profile_build_offered: true
+_config_version: 33
+session_reset:
+  mode: none
+image_gen:
+  provider: openrouter
+  use_gateway: false
+  model: openai/gpt-5.4-image-2
+platform_toolsets:
+  cli:
+    - browser
+    - clarify
+    - code_execution
+    - computer_use
+    - cronjob
+    - delegation
+    - file
+    - image_gen
+    - memory
+    - session_search
+    - skills
+    - terminal
+    - todo
+    - tts
+    - vision
+    - web
+  discord:
+    - browser
+    - clarify
+    - code_execution
+    - computer_use
+    - cronjob
+    - delegation
+    - file
+    - image_gen
+    - memory
+    - session_search
+    - skills
+    - terminal
+    - todo
+    - tts
+    - vision
+    - web
+known_plugin_toolsets:
+  cli:
+    - spotify
+  discord:
+    - spotify
+platforms:
+  discord:
+    enabled: true
+  google_chat:
+    enabled: true
+terminal:
+  backend: local
+  cwd: /work/storage/hermes/agent-profiles/dev-erpnext/cwd
+approvals:
+  destructive_slash_confirm: true
+updates:
+  pre_update_backup: true
+  backup_keep: 5
+  non_interactive_local_changes: stash
+
+# ── Security ──────────────────────────────────────────────────────────
+# Secret redaction is ON by default — strings that look like API keys,
+# tokens, and passwords are masked in tool output, logs, and chat
+# responses before the model or user ever sees them. Set redact_secrets
+# to false to disable (e.g. when developing the redactor itself).
+# tirith pre-exec scanning is enabled by default when the tirith binary
+# is available. Configure via security.tirith_* keys or env vars
+# (TIRITH_ENABLED, TIRITH_BIN, TIRITH_TIMEOUT, TIRITH_FAIL_OPEN).
+#
+security:
+  redact_secrets: true
+  tirith_enabled: true
+  tirith_path: "tirith"
+  tirith_timeout: 5
+  tirith_fail_open: true
+
