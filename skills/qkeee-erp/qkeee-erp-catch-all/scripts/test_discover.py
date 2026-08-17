@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
 Unit tests for discover.py — the offline-testable parts: field-shape
-extraction, the apps/modules fallback, and (specific to the 2026-08-16
-adversarial-review fix) resolve_doctype()'s app vs. app_lookup_error
-distinction. Run: python scripts/test_discover.py
+extraction, the apps/modules fallback, and resolve_doctype()'s app vs.
+app_lookup_error distinction. Run: python scripts/test_discover.py
 
 discover.py resolve/meta were exercised live against demo.qkeee.in
-(2026-08-16, session-cookie auth — token-key minting was blocked on that
+(session-cookie auth — token-key minting was blocked on that
 instance at the time) — see references/connector-reference.md and the
 qkeee-erp-demo-instance memory entry for that record. These tests cover
 what doesn't need network.
@@ -74,7 +73,7 @@ class TestDoctypeMeta(unittest.TestCase):
 
 
 class TestResolveDoctype(unittest.TestCase):
-    """The 2026-08-16 adversarial-review fix: app=null must be
+    """app=null must be
     distinguishable from "lookup failed" vs "genuinely nothing to
     resolve" — previously both collapsed to a bare app: null."""
 
@@ -129,7 +128,7 @@ class TestListModules(unittest.TestCase):
 
 class TestListInstalledApps(unittest.TestCase):
     def test_confirmed_blocked_rpc_reports_fallback_not_a_crash(self):
-        """Reproduces the real 2026-08-16 finding against demo.qkeee.in:
+        """Reproduces the real finding against demo.qkeee.in:
         frappe.utils.change_log.get_versions came back
         'PermissionError: ... is not whitelisted'. list_installed_apps()
         must surface that as a normal error+fallback dict, not raise."""

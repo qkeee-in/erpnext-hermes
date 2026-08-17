@@ -25,9 +25,9 @@ Non-negotiable: never issue a write call while mode == "read-only".
 This is enforced in mutate_resource() below, not just in the calling
 skill's prompt.
 
-Audit-trail retrofit (synced from qkeee-erp-core 2026-08-16): every
-write is additionally logged to Qkeee Bot Audit Log (two-phase,
-best-effort — see qkeee-erp-bot-init/references/bot-doctypes-design.md).
+Audit-trail retrofit: every write is additionally logged to Qkeee Bot
+Audit Log (two-phase, best-effort — see
+qkeee-erp-bot-init/references/bot-doctypes-design.md).
 """
 
 import argparse
@@ -250,8 +250,8 @@ def record_comment(cfg: dict, doctype: str, name: str, content: str) -> bool:
 
 
 # --------------------------------------------------------------------------
-# Audit logging (Qkeee Bot Audit Log) — synced from qkeee-erp-core
-# 2026-08-16. Best-effort throughout: if the target instance hasn't run
+# Audit logging (Qkeee Bot Audit Log)
+# Best-effort throughout: if the target instance hasn't run
 # qkeee-erp-bot-init yet, every function below swallows the failure and the
 # caller's real ERPNext read/write proceeds unaffected.
 # --------------------------------------------------------------------------

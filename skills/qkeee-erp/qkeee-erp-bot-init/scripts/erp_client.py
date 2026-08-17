@@ -5,7 +5,7 @@ qkeee-erp-bot-init connector — ERPNext (Frappe REST API) client.
 Self-contained copy of qkeee-erp-core's erp_client.py, per the
 self-contained-copies architecture decision (every qkeee-erp-* skill ships
 its own copy rather than depending on qkeee-erp-core at runtime). Synced
-from qkeee-erp-core/scripts/erp_client.py as of 2026-08-16's audit-trail
+from qkeee-erp-core/scripts/erp_client.py, including its audit-trail
 retrofit — do not hand-diverge except for the two things noted below.
 
 Deliberate divergences from the core copy (keep these on re-sync):

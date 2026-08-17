@@ -7,7 +7,7 @@ physical and financial impact (current qty/value vs. counted qty/value,
 and the resulting difference) is stated plainly before confirm, every
 time.
 
-Confirmed live against <erp-instance> (2026-08-10) — the most important
+Confirmed live against <erp-instance> — the most important
 live finding of this build: a Stock Reconciliation line's `current_qty`
 is NOT resolved by ERPNext from Bin.actual_qty at create time — the
 create response silently echoes back whatever `current_qty` the caller

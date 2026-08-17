@@ -12,7 +12,7 @@ draft (docstatus 0 -> 1, status Draft -> Open) is a distinct, separately
 confirmed step in SKILL.md's Execute stage, not something this renderer
 ever recommends doing in the same call as create.
 
-Live-confirmed findings (<erp-instance>, 2026-08-10) this renderer encodes:
+Live-confirmed findings (<erp-instance>) this renderer encodes:
   - `party_name` (the actual customer link, fieldtype Dynamic Link) is
     NOT flagged `reqd` in the Quotation DocType schema, but is practically
     required: ERPNext will silently create and happily accept a Quotation

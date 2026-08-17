@@ -140,8 +140,8 @@ the dedicated India Compliance app rather than being core functionality
 **Standing disclaimer for every tax-related output this skill
 produces:** state plainly that the output assists, doesn't replace,
 verification against current regulation — rates, thresholds, and formats
-change, and this skill's knowledge reflects what was confirmed at build
-time (2026-08-10), not a live regulatory feed. Government portals
+change, and this skill's knowledge reflects a point-in-time confirmation,
+not a live regulatory feed. Government portals
 (`gst.gov.in`, `einvoice1.gst.gov.in`, `ewaybillgst.gov.in`, the Income
 Tax e-filing portal) are the ground-truth authority, never this skill's
 own memory of the rule.

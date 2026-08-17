@@ -51,7 +51,7 @@ class TestEmployeeDraft(unittest.TestCase):
         self.assertIn("CONTAINS SENSITIVE PII", result["markdown"])
 
     def test_compensation_and_address_flagged_as_pii(self):
-        # Regression: 2026-08-10 adversarial review found `ctc` (the actual
+        # Regression: adversarial review found `ctc` (the actual
         # compensation figure) and home address/personal phone fields were
         # missing from PII_SENSITIVE_FIELDS despite being named categories
         # in SKILL.md's non-negotiable.

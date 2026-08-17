@@ -55,7 +55,7 @@ key. A mismatch is never hidden or guessed past — it renders as a
 prominent anomaly, per `references/domain-knowledge.md`'s
 "reconciliation-obsessed, not reconciliation-decorative" discipline.
 
-## Audit trail (added 2026-08-16)
+## Audit trail
 
 This skill has no write path, so only the read side of the retrofit
 applies: `query_resource()`/`get_resource()`/`run_query_report()` log a

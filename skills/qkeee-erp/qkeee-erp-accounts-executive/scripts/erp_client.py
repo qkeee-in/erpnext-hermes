@@ -24,7 +24,7 @@ Journal Entry submission) lives in scripts/render_je_draft.py, not here
 — this file enforces the library-wide mode gate; the JE-specific
 never-auto-submit rule is enforced closer to where JE drafts are built.
 
-Audit-trail retrofit (synced from qkeee-erp-core 2026-08-16): every
+Audit-trail retrofit (synced from qkeee-erp-core): every
 write is additionally logged to Qkeee Bot Audit Log (two-phase,
 best-effort — see qkeee-erp-bot-init/references/bot-doctypes-design.md).
 """
@@ -279,8 +279,8 @@ def record_comment(cfg: dict, doctype: str, name: str, content: str) -> bool:
 
 
 # --------------------------------------------------------------------------
-# Audit logging (Qkeee Bot Audit Log) — synced from qkeee-erp-core
-# 2026-08-16. Best-effort throughout: if the target instance hasn't run
+# Audit logging (Qkeee Bot Audit Log) — synced from qkeee-erp-core.
+# Best-effort throughout: if the target instance hasn't run
 # qkeee-erp-bot-init yet, every function below swallows the failure and the
 # caller's real ERPNext read/write proceeds unaffected.
 # --------------------------------------------------------------------------

@@ -6,7 +6,7 @@ field-patch mechanism. Run: python scripts/test_init_bot.py
 Mocks erp_client.resource_exists()/get_resource()/health_check()/
 mutate_resource() — does not hit a real ERPNext instance. The deferred-
 field-patch behavior itself (ensure_deferred_fields) was live-confirmed
-necessary against demo.qkeee.in on 2026-08-16 (see doctype_defs.py /
+necessary against demo.qkeee.in (see doctype_defs.py /
 bot-doctypes-design.md) — these tests pin the code-level behavior that
 live finding required, not a substitute for re-running the live dry-run/
 real-run flow after future schema changes.

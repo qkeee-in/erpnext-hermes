@@ -9,8 +9,7 @@ Configuration section). This is purely non-secret research notes:
 installed-app inventory, doctype/module mapping, and app-level
 documentation summaries.
 
-**Caveat: requires a writable skill mount (added 2026-08-16, adversarial
-review).** This design assumes the running harness lets the skill write
+**Caveat: requires a writable skill mount.** This design assumes the running harness lets the skill write
 back into its own `references/` directory. That does not hold universally
 — the reference `erpnext-hermes` Hermes profile in this library mounts
 `qkeee-erp-*` skills **read-only** via `skills.external_dirs`

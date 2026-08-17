@@ -83,12 +83,10 @@ SESSION = {
 
 # linked_audit_log (Link -> Qkeee Bot Audit Log) is NOT in this create
 # payload's fields, even though the design doc lists it as a Message
-# field — live-confirmed 2026-08-16 against demo.qkeee.in that Frappe
+# field — live-confirmed against demo.qkeee.in that Frappe
 # rejects a DocType create whose Link field's `options` names a doctype
 # that doesn't exist yet (WrongOptionsDoctypeLinkError on
-# "Qkeee Bot Message" for exactly this field), contradicting this file's
-# former comment that Frappe allows it and defers enforcement to record
-# save time. Since Message is created before Audit Log (ALL_DOCTYPES
+# "Qkeee Bot Message" for exactly this field). Since Message is created before Audit Log (ALL_DOCTYPES
 # order), the field is added as a post-create `update` patch once Audit
 # Log exists instead — see DEFERRED_FIELD_PATCHES below and
 # init_bot.py's ensure_deferred_fields().
@@ -197,7 +195,7 @@ AUDIT_LOG = {
 # Persona, Message links to Session (+ self), Audit Log links to Message
 # (already exists by then) and to DocType (always exists). Audit Log's
 # link to Message and Message's link to Audit Log are mutually
-# referential — live-confirmed 2026-08-16 against demo.qkeee.in that
+# referential — live-confirmed against demo.qkeee.in that
 # Frappe does NOT allow a Link field naming a not-yet-existing doctype at
 # DocType-create time (WrongOptionsDoctypeLinkError), so the two can't
 # both be created with their cross-reference fields present. Audit Log's

@@ -93,7 +93,7 @@ caution on top — see "Advisory-first, always" below.
    confirmed working across instances. `... apps` mirrors the Help →
    About dialog and includes version numbers `modules` can't derive, so
    still try it, but treat it as opportunistic: on a live-tested instance
-   (`demo.qkeee.in`, 2026-08-16) its whitelisted RPC method
+   (`demo.qkeee.in`) its whitelisted RPC method
    (`frappe.utils.change_log.get_versions`) came back `PermissionError:
    not whitelisted` — a real, reproduced outcome, not a hypothetical
    version-mismatch edge case. If `apps` fails, fall back to `modules`

@@ -56,7 +56,7 @@ def build_dn_tracking_report(dn_rows: list, dn_items: list = None) -> dict:
       entirely and the report says so rather than silently implying the
       linkage was verified.
 
-    Live-confirmed (<erp-instance>, 2026-08-10): a Delivery Note line only
+    Live-confirmed (<erp-instance>): a Delivery Note line only
     updates its originating Sales Order's per_delivered/delivery_status
     correctly when the line carries BOTH `against_sales_order` and
     `so_detail` (the specific Sales Order Item row name) — a DN created

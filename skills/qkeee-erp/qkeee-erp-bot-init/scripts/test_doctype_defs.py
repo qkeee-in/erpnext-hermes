@@ -85,7 +85,7 @@ class TestMessage(unittest.TestCase):
         self.assertEqual(by_name["session"]["options"], "Qkeee Bot Session")
 
     def test_linked_audit_log_is_not_in_the_create_payload(self):
-        """Live-confirmed 2026-08-16 against demo.qkeee.in: Frappe rejects a
+        """Live-confirmed against demo.qkeee.in: Frappe rejects a
         Link field naming a not-yet-existing DocType at DocType-create time
         (WrongOptionsDoctypeLinkError). Message is created before Audit Log
         in ALL_DOCTYPES, so linked_audit_log must NOT be part of this

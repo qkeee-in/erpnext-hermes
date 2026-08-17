@@ -83,7 +83,7 @@ and `qkeee-erp-core`'s canonical reference for why. This also means
 submit reposts every stored field verbatim, including any sensitive
 fields already on the record — expected, not a scope leak; see
 `qkeee-erp-core`'s reference for the full note (flagged during
-`qkeee-erp-hr-associate`'s 2026-08-10 adversarial review).
+`qkeee-erp-hr-associate`'s adversarial review).
 
 **Response shape differs by action.** `create`/`update`/the GET before
 submit return `{"data": {...doc...}}`. `submit`/`cancel` and the four
@@ -98,8 +98,8 @@ parsing the scrap response itself).
 
 See `references/erpnext-assets-docs.md`'s "Live validation record"
 section for the full capitalize -> submit -> transfer -> scrap /
-depreciate -> repair chain confirmed against `<erp-instance>`,
-2026-08-10. Key numbers: Asset `ACC-ASS-2026-00001` (scrap path),
+depreciate -> repair chain confirmed against `<erp-instance>`.
+Key numbers: Asset `ACC-ASS-2026-00001` (scrap path),
 `ACC-ASS-2026-00002` (depreciation-run path, 6 periods posted in one
 `make_depreciation_entry` call), Asset Repair `ACC-ASR-2026-00001`.
 
@@ -118,7 +118,7 @@ the whole story (here: `asset_category` isn't schema-mandatory but is
 practically required for depreciation to have anywhere to post).
 
 **Discovering a whitelisted RPC method's exact signature (build-time
-technique, new this build):** calling a whitelisted method with an
+technique):** calling a whitelisted method with an
 empty `{}` payload returns a Python `TypeError` naming the missing
 required positional argument(s) — used to confirm
 `scrap_asset(asset_name)`, `restore_asset(asset_name)`,
@@ -226,9 +226,9 @@ this file (here and in `qkeee-erp-core`, the source of truth). Nothing
 in `references/domain-knowledge.md` or this skill's `SKILL.md` needs to
 change — they're written to be ERP-agnostic in substance.
 
-## Audit-trail retrofit (synced from qkeee-erp-core, added 2026-08-16)
+## Audit-trail retrofit (synced from qkeee-erp-core)
 
-`mutate_resource()` now wraps every write with a two-phase log to the
+`mutate_resource()` wraps every write with a two-phase log to the
 `Qkeee Bot Audit Log` doctype (`Attempted` before the real call,
 `Success`/`Failure` after), best-effort throughout — a target instance
 that hasn't run `qkeee-erp-bot-init` yet keeps writing exactly as before

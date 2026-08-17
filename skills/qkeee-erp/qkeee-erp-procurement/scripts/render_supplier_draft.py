@@ -9,7 +9,7 @@ field renders as INCOMPLETE — listing exactly what's missing — and the
 CLI exits non-zero, so a calling skill can't accidentally treat an
 incomplete draft as create-ready.
 
-Field bar (confirmed live against <erp-instance>, 2026-08-10):
+Field bar (confirmed live against <erp-instance>):
   - ERPNext's own hard-mandatory fields on Supplier are only
     `supplier_name` and `supplier_type` (see references/connector-
     reference.md) — everything else this script treats as "mandatory"

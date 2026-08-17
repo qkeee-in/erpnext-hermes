@@ -31,7 +31,7 @@ class TestRenderReport(unittest.TestCase):
         self.assertNotIn("ANOMALY", out)
 
     def test_boolean_row_value_rejected_before_reconciliation_trusted(self):
-        # Regression: 2026-08-10 adversarial review — row validation used
+        # Regression: adversarial review — row validation used
         # to run after reconciliation_checks validation; now row shape is
         # checked first.
         with self.assertRaises(RenderError):

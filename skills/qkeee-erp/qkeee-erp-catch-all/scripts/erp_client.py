@@ -30,7 +30,7 @@ a best-effort audit Comment on the affected record naming that
 requester — so ERPNext's own audit trail shows who asked, not just
 that the bot acted. See record_comment()/mutate_resource() below.
 
-Audit-trail retrofit (added 2026-08-16): every write is additionally
+Audit-trail retrofit: every write is additionally
 logged to the `Qkeee Bot Audit Log` doctype (two-phase: an `Attempted`
 row inserted before the real write, updated to `Success`/`Failure`
 after), and every read is logged there too when `debug=True` is passed.
@@ -41,7 +41,7 @@ best-effort, not a gate" below for why, and
 qkeee-erp-bot-init/references/bot-doctypes-design.md for the full
 schema/decision log this implements.
 
-Catch-all-specific write gate (added 2026-08-16, adversarial review):
+Catch-all-specific write gate:
 this copy also ships `gated_mutate_resource()`, the actual write entry
 point for this skill — it requires a confirmation_token + issued_at from
 `render_draft.py`, matching this skill's "advisory-first, always"

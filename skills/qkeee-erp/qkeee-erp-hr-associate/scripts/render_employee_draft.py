@@ -5,7 +5,7 @@ update to an existing record).
 
 Enforces two things in code, not just in the prompt:
   1. ERPNext's own mandatory fields (confirmed live against
-     <erp-instance>, 2026-08-10) must be present/confident before a draft
+     <erp-instance>) must be present/confident before a draft
      is marked "ready" — first_name, gender, date_of_birth,
      date_of_joining, company.
   2. Any PII-sensitive field present in the draft (compensation, ID/
@@ -38,8 +38,8 @@ REQUIRED_FIELDS = ("first_name", "gender", "date_of_birth", "date_of_joining", "
 # build found on Purchase Order's warehouse requirement.
 LEFT_STATUS_REQUIRES = ("relieving_date",)
 
-# Confirmed against <erp-instance>'s live Employee schema (2026-08-10
-# adversarial review): `ctc` is the actual compensation figure, not just
+# Confirmed against <erp-instance>'s live Employee schema via
+# adversarial review: `ctc` is the actual compensation figure, not just
 # `salary_mode` metadata about it — the field this non-negotiable most
 # needs to catch. `current_address`/`permanent_address`/`cell_number`
 # cover "personal contact details" per SKILL.md's non-negotiable, same

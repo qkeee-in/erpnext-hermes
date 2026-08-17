@@ -11,10 +11,7 @@ carries) rather than re-implementing auth/env resolution. Also imports
 _log_read()/AUDIT_EXEMPT_DOCTYPES from the same file so this script's own
 metadata reads (apps/modules/meta/resolve) get the same debug-gated
 Qkeee Bot Audit Log logging query_resource()/get_resource() give
-erp_client.py's reads, rather than being invisible to the audit trail —
-added 2026-08-16, adversarial review: these calls previously hit
-_request() directly, bypassing logging entirely regardless of
-qkeee_erp.debug.
+erp_client.py's reads, rather than being invisible to the audit trail.
 
 Non-negotiable this script exists to serve: never propose a field/doctype
 that isn't confirmed live on the target instance. GitHub docs and
@@ -51,7 +48,7 @@ def list_installed_apps(tag: str, *, debug: bool = False, requested_by: str = No
     method rather than a REST resource.
 
     Not verified stable across every Frappe/ERPNext version — if this
-    method name has moved (or, confirmed live 2026-08-16 against
+    method name has moved (or, confirmed live against
     demo.qkeee.in, is blocked by the instance's whitelist policy
     entirely: `PermissionError: ... is not whitelisted`), `_request`
     raises a normal ConnectorError, and the `modules` subcommand (a plain

@@ -1,7 +1,7 @@
 # ERPNext accounting documentation map
 
 Curated pointers into `docs.frappe.io`'s ERPNext accounting documentation,
-fetched and summarized while building this skill (2026-08-10). This is a
+fetched and summarized while building this skill. This is a
 build-time research aid *and* a runtime reference — when you (the agent)
 are unsure how a concept behaves, which report to run, or what a filter
 means, fetch the relevant URL below directly rather than guessing from
@@ -100,7 +100,7 @@ Not indexed further here.
 
 ## Staleness note
 
-Fetched 2026-08-10 against the current `docs.frappe.io` content, which is
+Fetched against the current `docs.frappe.io` content, which is
 largely version-unpinned (some search results also surfaced
 version-pinned mirrors like `/erpnext/v13/...` or `/erpnext/v14/...` —
 prefer the unversioned URLs above unless the target org is confirmed on

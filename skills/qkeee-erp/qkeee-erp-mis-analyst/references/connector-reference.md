@@ -12,14 +12,14 @@ should never gain a write path.
 
 **Not a mechanical copy — hand-rewritten.** `qkeee-erp-core`'s
 `connector-reference.md` documents a full end-to-end round-trip validated
-against a live instance (`<erp-instance>`, 2026-08-10), but that validation
+against a live instance (`<erp-instance>`), but that validation
 covered the *original, untrimmed* `erp_client.py`. This skill's copy was
 written by hand to omit the write path rather than mechanically diffed
 from that file. Future syncs of read-path fixes from `qkeee-erp-core`
 must be reapplied by hand to this file too — there's no tooling that
 diffs the two copies automatically.
 
-**Read path now independently live-verified, 2026-08-10.** Ran
+**Read path independently live-verified.** Ran
 `erp_client.py --tag demo health` (confirmed `logged_in_as:
 "Administrator"`), `erp_client.py --tag demo query "Module Def"`, and
 `erp_client.py --tag demo report "Trial Balance"` against `<erp-instance>`
@@ -134,10 +134,10 @@ this file (here and in `qkeee-erp-core`, the source of truth). Nothing in
 `references/domain-knowledge.md` or this skill's `SKILL.md` needs to
 change — they're written to be ERP-agnostic in substance.
 
-## Audit-trail retrofit (synced from qkeee-erp-core, added 2026-08-16)
+## Audit-trail retrofit
 
 This skill has no write path, so only the read side applies:
-`query_resource()`/`get_resource()`/`run_query_report()` gained an
+`query_resource()`/`get_resource()`/`run_query_report()` carry an
 opt-in `debug` kwarg (`qkeee_erp.debug`, default `false`) that logs a
 `Read` row to the `Qkeee Bot Audit Log` doctype, best-effort — silently
 no-ops if the target instance hasn't run `qkeee-erp-bot-init` yet. Given

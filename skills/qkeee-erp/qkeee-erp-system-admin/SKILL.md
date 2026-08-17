@@ -78,6 +78,17 @@ it in chat — defeating the requester-attribution mechanism below. Tell
 the user this explicitly if they're setting up credentials for the
 first time.
 
+**Proactively check this, don't just wait to be asked.** If a session's `health` check reports `logged_in_as`
+an identity that looks like a real staff member rather than a
+service account, or the user is configuring `QKEEE_ERP_*` credentials
+for the first time and hasn't mentioned a dedicated bot user, or a
+write fails/behaves oddly around the `Qkeee Bot Audit Log` doctype
+(a sign `qkeee-erp-bot-init` hasn't been run on this target): say so,
+and suggest running `qkeee-erp-bot-init` — it can detect or create the
+dedicated bot user (via an elevated admin login) and provisions the
+audit-trail doctypes in the same pass. This is a recommendation, not
+a blocker — don't refuse the user's actual request over it.
+
 ## Requester attribution — mandatory on every write
 
 Before the first write of a session, resolve `qkeee_erp.requested_by`
@@ -91,7 +102,7 @@ posts a best-effort Comment on the affected record: `[SKILL_LABEL]
 comment failure never blocks or rolls back the underlying write.
 Mention in your report-back that the audit comment was posted.
 
-## Audit trail (added 2026-08-16)
+## Audit trail
 
 Every write through `mutate_resource()` also logs a two-phase
 (`Attempted` → `Success`/`Failure`) row to the `Qkeee Bot Audit Log`
@@ -154,8 +165,7 @@ they're relying on the audit trail to cover permission-change activity.
    with the roles attached via the `roles` child table in the same call
    (confirmed live: `[{"role": "..."}]` list on create works cleanly).
    Non-elevated role grants are unaffected — one confirm, no token
-   required. **Review the saved record before reporting it done (added
-   2026-08-12):** re-fetch the User via `erp_client.py get User
+   required. **Review the saved record before reporting it done:** re-fetch the User via `erp_client.py get User
    <name/email>` immediately after `create_user()` succeeds — not `query
    --filters`, since the list endpoint silently drops the `roles` child
    table even when named in `--fields` (confirmed live; `get` is the
@@ -203,8 +213,7 @@ they're relying on the audit trail to cover permission-change activity.
    `erp_client.call_permission_manager()` with the printed
    `confirmation_token` AND `issued_at` — the call is refused without a
    matching token, and refused if `issued_at` is more than 15 minutes
-   old (re-render if the confirmation went stale). **Review after write
-   (added 2026-08-12):** for every action (not just `remove`), re-run
+   old (re-render if the confirmation went stale). **Review after write:** for every action (not just `remove`), re-run
    `get_permissions()` after applying and confirm the resulting matrix
    actually matches the stated before/after — permission rows have no
    separate submit step, so this post-write re-fetch is the only
@@ -226,7 +235,7 @@ they're relying on the audit trail to cover permission-change activity.
    not callable over this REST API even as Administrator (403). Trust
    the direct resource query, not the meta re-fetch. **This existing
    verification step already satisfies the library's save-then-review
-   discipline (added 2026-08-12)** — extend it to also confirm the
+   discipline** — extend it to also confirm the
    persisted `dt` (target DocType) Link field matches what was
    confirmed, not just that the field/property row exists at all, before
    telling the user the customization is live.
@@ -258,7 +267,7 @@ they're relying on the audit trail to cover permission-change activity.
     `gated_config_mutate()` path, since it can halt every in-flight
     approval on that document type; anything more (new states/
     transitions) is guidance, not executed by this skill. **Review after
-    write (added 2026-08-12):** after a Webhook create, re-fetch it by
+    write:** after a Webhook create, re-fetch it by
     `name` and confirm `webhook_doctype`, `request_url`, and
     `webhook_docevent` persisted exactly as confirmed; after a Workflow
     `is_active` toggle, re-fetch the Workflow and confirm `is_active` and

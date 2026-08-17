@@ -19,7 +19,7 @@ available — whenever an ERPNext-specific mechanic is uncertain.
 | Item | Stock → Item | No |
 | Warehouse | Stock → Warehouse | No |
 
-## Live field-schema grounding (2026-08-10, <erp-instance>)
+## Live field-schema grounding (<erp-instance>)
 
 **Stock Entry** — mandatory: `naming_series`, `stock_entry_type`
 (Link → Stock Entry Type), `company`, `items` (child table, Stock Entry
@@ -128,7 +128,7 @@ for the full mechanism and why it matters.
 ## Version note
 
 Confirmed live: Frappe Framework 15.110.0 / ERPNext 15.110.0 on
-`<erp-instance>` (2026-08-10, via `last_known_versions` on the
+`<erp-instance>` (via `last_known_versions` on the
 Administrator User doc). Field lists/behaviors above are grounded
 against this version; re-verify via `GET /api/resource/DocType/<name>`
 against a target org's actual instance before relying on them, per the

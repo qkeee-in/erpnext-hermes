@@ -76,6 +76,17 @@ it in chat — defeating the requester-attribution mechanism below. Tell
 the user this explicitly if they're setting up credentials for the
 first time.
 
+**Proactively check this, don't just wait to be asked.** If a session's `health` check reports `logged_in_as`
+an identity that looks like a real staff member rather than a
+service account, or the user is configuring `QKEEE_ERP_*` credentials
+for the first time and hasn't mentioned a dedicated bot user, or a
+write fails/behaves oddly around the `Qkeee Bot Audit Log` doctype
+(a sign `qkeee-erp-bot-init` hasn't been run on this target): say so,
+and suggest running `qkeee-erp-bot-init` — it can detect or create the
+dedicated bot user (via an elevated admin login) and provisions the
+audit-trail doctypes in the same pass. This is a recommendation, not
+a blocker — don't refuse the user's actual request over it.
+
 ## Requester attribution — mandatory on every write
 
 Before the first write of a session, resolve `qkeee_erp.requested_by`
@@ -89,7 +100,7 @@ posts a best-effort Comment on the affected record: `[SKILL_LABEL]
 comment failure never blocks or rolls back the underlying write.
 Mention in your report-back that the audit comment was posted.
 
-## Audit trail (added 2026-08-16)
+## Audit trail
 
 Every write through `mutate_resource()` also logs a two-phase
 (`Attempted` → `Success`/`Failure`) row to the `Qkeee Bot Audit Log`
@@ -142,7 +153,7 @@ disposal activity specifically.
    (method, total periods, frequency, start date all present). Present
    the draft, get explicit confirmation, then call `mutate_resource()`'s
    `create`, which lands the Asset at `docstatus 0`. **Save-draft-then-
-   review-then-submit (added 2026-08-12):** if the user wants it
+   review-then-submit:** if the user wants it
    capitalized/locked immediately, re-fetch the created Asset via
    `erp_client.py get Asset <name>` (not `query --filters` — the list
    endpoint silently drops the `finance_books` child table even when

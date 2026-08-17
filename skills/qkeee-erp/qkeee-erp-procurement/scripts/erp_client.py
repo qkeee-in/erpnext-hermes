@@ -26,7 +26,7 @@ Supplier onboarding (scripts/render_supplier_draft.py) and the
 PO-submission-authority default (scripts/render_po_draft.py) — this
 file only enforces the library-wide mode gate.
 
-Audit-trail retrofit (synced from qkeee-erp-core 2026-08-16): every
+Audit-trail retrofit (synced from qkeee-erp-core): every
 write is additionally logged to Qkeee Bot Audit Log (two-phase,
 best-effort — see qkeee-erp-bot-init/references/bot-doctypes-design.md).
 """
@@ -189,7 +189,7 @@ def get_user_roles(tag: str, user: str = "") -> dict:
     guaranteed) signal for whether the acting user plausibly holds
     PO-submission authority (Purchase Manager / Purchase Master Manager
     vs. Purchase User only). No Workflow doctype was found configured for
-    Purchase Order on <erp-instance> (confirmed live 2026-08-10) — role
+    Purchase Order on <erp-instance> (confirmed live) — role
     membership is the only signal available via the REST API on a
     default-configured instance; an org with a real approval Workflow
     should be asked about it directly rather than relying on this alone.
@@ -296,8 +296,8 @@ def record_comment(cfg: dict, doctype: str, name: str, content: str) -> bool:
 
 
 # --------------------------------------------------------------------------
-# Audit logging (Qkeee Bot Audit Log) — synced from qkeee-erp-core
-# 2026-08-16. Best-effort throughout: if the target instance hasn't run
+# Audit logging (Qkeee Bot Audit Log) — synced from qkeee-erp-core.
+# Best-effort throughout: if the target instance hasn't run
 # qkeee-erp-bot-init yet, every function below swallows the failure and the
 # caller's real ERPNext read/write proceeds unaffected.
 # --------------------------------------------------------------------------

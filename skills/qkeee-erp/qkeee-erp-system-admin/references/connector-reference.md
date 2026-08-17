@@ -146,7 +146,7 @@ Four skill-specific wrappers, all token-gated:
 
 See `references/erpnext-system-admin-docs.md`'s "Live validation
 record" section for the full round trip confirmed against
-`<erp-instance>`, 2026-08-11: permission add → get_permissions →
+`<erp-instance>`: permission add → get_permissions →
 update → get_permissions → remove → get_permissions (all via the CLI
 itself, not just the underlying Python functions); User create → fetch
 → disable → delete; Custom Field create → verify-via-direct-query →
@@ -269,9 +269,9 @@ this file (here and in `qkeee-erp-core`, the source of truth). Nothing
 in `references/domain-knowledge.md` or this skill's `SKILL.md` needs to
 change — they're written to be ERP-agnostic in substance.
 
-## Audit-trail retrofit (synced from qkeee-erp-core, added 2026-08-16)
+## Audit-trail retrofit (synced from qkeee-erp-core)
 
-`mutate_resource()` now wraps every write with a two-phase log to the
+`mutate_resource()` wraps every write with a two-phase log to the
 `Qkeee Bot Audit Log` doctype (`Attempted` before the real call,
 `Success`/`Failure` after), best-effort throughout — a target instance
 that hasn't run `qkeee-erp-bot-init` yet keeps writing exactly as before

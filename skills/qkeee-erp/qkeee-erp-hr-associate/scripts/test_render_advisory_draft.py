@@ -27,7 +27,7 @@ class TestAdvisoryDraft(unittest.TestCase):
             render_advisory_draft(doctype="Employee", fields={}, reason="x")
 
     def test_numeric_string_compensation_formatted(self):
-        # Regression: 2026-08-10 adversarial review found a string-typed
+        # Regression: adversarial review found a string-typed
         # compensation figure (e.g. from doc-extraction) skipped _fmt()
         # entirely and rendered unformatted.
         result = render_advisory_draft(

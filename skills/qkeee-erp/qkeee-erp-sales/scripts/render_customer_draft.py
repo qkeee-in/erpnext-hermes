@@ -11,7 +11,7 @@ channel (email or mobile) are present and (for extraction-derived fields)
 above MIN_CONFIDENCE. Incomplete extractions are flagged back to the user,
 never silently filled with a placeholder.
 
-Live-confirmed, non-obvious shape (<erp-instance>, 2026-08-10): Customer's
+Live-confirmed, non-obvious shape (<erp-instance>): Customer's
 own mobile_no/email_id fields are fetch_from=customer_primary_contact.*
 (Read Only in the UI sense) — they are NOT settable directly on the
 Customer record itself, and customer_primary_contact does NOT get set

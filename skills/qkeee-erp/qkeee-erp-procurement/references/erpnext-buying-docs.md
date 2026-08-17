@@ -1,8 +1,7 @@
 # ERPNext buying/procurement documentation map (procurement scope)
 
-Curated pointers into `docs.frappe.io/erpnext`, fetched 2026-08-10 while
-building this skill, plus findings confirmed live against
-`<erp-instance>` the same day. Runtime reference, not just a build-time
+Curated pointers into `docs.frappe.io/erpnext`, plus findings confirmed
+live against `<erp-instance>`. Runtime reference, not just a build-time
 note: when unsure how a mechanic behaves, fetch the linked URL directly
 (via a harness web-fetch tool, if available) rather than guessing — this
 file can drift from the live docs, the URL is the source of truth.
@@ -19,7 +18,7 @@ file can drift from the live docs, the URL is the source of truth.
 | Purchase Receipt (GRN) | `https://docs.frappe.io/erpnext/purchase-receipt` | Accepted/rejected quantities, separate warehouses for each, `per_billed` for billing reconciliation, "Get Items from Purchase Order" creation path. |
 | Supplier Scorecard | `https://docs.frappe.io/erpnext/supplier-scorecard` | Weighted-period scoring (default: linear over last 12 periods), criteria built from variables like total/accepted/rejected item counts and delivery counts. |
 
-## Supplier — field grounding (live, 2026-08-10)
+## Supplier — field grounding (live)
 
 **ERPNext's own hard-mandatory fields on Supplier are only
 `supplier_name` (Data) and `supplier_type` (Select: Company/Individual/
@@ -47,7 +46,7 @@ Supplier deleted cleanly with `{"data": "ok"}`. This means the
 at this skill's layer (Stage/Confirm before the create call), not via
 ERPNext's own draft/submit mechanism the way Purchase Order has one.
 
-## Purchase Order — field grounding (live, 2026-08-10)
+## Purchase Order — field grounding (live)
 
 Mandatory per `GET /api/resource/DocType/Purchase%20Order`: `title`,
 `naming_series`, `supplier`, `transaction_date`, `company`, `currency`,
@@ -79,7 +78,7 @@ membership is the only API-visible signal for submission authority —
 heuristic per `references/domain-knowledge.md`, not a guarantee any org
 intends role membership alone to authorize every submission.
 
-**Live create → submit → cancel round trip confirmed 2026-08-10**
+**Live create → submit → cancel round trip confirmed**
 (same temporary-key technique as prior skill builds): created a draft
 PO (`PUR-ORD-2026-00007`, supplier `Mauli Tea`, company `Qkeee LLP`, 1
 line `Raw Item-1` qty 5 @ rate 10, warehouse `Stores - QL`), confirmed
@@ -92,7 +91,7 @@ call when `mode != "read-write"`) is identical to every other
 `qkeee-erp-*` connector copy — see `qkeee-erp-core`'s reference for
 that mechanism, not re-tested here since it's shared, unmodified code.
 
-## RFQ / Supplier Quotation / Purchase Receipt — field grounding (live, 2026-08-10)
+## RFQ / Supplier Quotation / Purchase Receipt — field grounding (live)
 
 Mandatory fields confirmed via `GET /api/resource/DocType/<name>`:
 
@@ -145,7 +144,7 @@ library-wide "prefer the built-in report" convention.
 
 ## Staleness note
 
-Fetched/verified 2026-08-10. Doctype field lists, mandatory flags, and
+Doctype field lists, mandatory flags, and
 which roles exist should be reconfirmed against the target org's
 instance directly (`GET /api/resource/DocType/<DocType Name>`, `GET
 /api/resource/Role`) rather than assumed from this file — this

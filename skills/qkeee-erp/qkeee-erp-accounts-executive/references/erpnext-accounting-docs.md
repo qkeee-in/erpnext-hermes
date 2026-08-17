@@ -1,9 +1,8 @@
 # ERPNext accounting documentation map (accounts-executive scope)
 
-Curated pointers into ERPNext/India Compliance documentation, fetched
-2026-08-10 while building this skill, plus findings confirmed live
-against `<erp-instance>` the same day. Runtime reference, not just a
-build-time note: when unsure how a mechanic behaves, fetch the linked URL
+Curated pointers into ERPNext/India Compliance documentation, plus
+findings confirmed live against `<erp-instance>`. Runtime reference, not
+just a build-time note: when unsure how a mechanic behaves, fetch the linked URL
 directly (via a harness web-fetch tool, if available) rather than
 guessing — this file can drift from the live docs, the URL is the source
 of truth.
@@ -27,8 +26,7 @@ create/submit/cancel path is.
 
 ## 3-way match (PO → GRN → Invoice)
 
-No single dedicated doc page found for this ERPNext-specific mechanic; grounded instead in live field introspection against `<erp-instance>`
-(2026-08-10):
+No single dedicated doc page found for this ERPNext-specific mechanic; grounded instead in live field introspection against `<erp-instance>`:
 
 - **Purchase Order** carries `per_received` and `per_billed` (percent of ordered qty received / percent of ordered value billed) — the concrete fields that tell you whether a PO is fully, partially, or not yet matched.
 - **Purchase Receipt** carries `per_billed` (percent of received qty billed).
@@ -37,7 +35,7 @@ No single dedicated doc page found for this ERPNext-specific mechanic; grounded 
 
 ## Tax Withholding (TDS) — core ERPNext, not India-specific
 
-**Confirmed live 2026-08-10: `apply_tds` and `tax_withholding_category`
+**`apply_tds` and `tax_withholding_category`
 are native fields on Purchase Invoice**, and a real `Tax Withholding
 Category` record ("TDS - 194J - Professional Services") exists on
 `<erp-instance>` with no India Compliance app installed. **TDS/withholding
@@ -52,7 +50,7 @@ withholding categories relevant to their jurisdiction.
 
 ## GST / e-invoicing / e-way bill — needs the India Compliance app
 
-**Confirmed live 2026-08-10: `<erp-instance>` has no India Compliance
+**Confirmed live: `<erp-instance>` has no India Compliance
 module installed** (`Module Def` query returned only stock
 `frappe`/`erpnext`/`hrms`/`crm`) and Supplier's `tax_id` is a generic
 Data field, not a validated GSTIN field. GST/e-invoicing/e-way-bill
@@ -97,7 +95,7 @@ against these; it is not itself the regulation.
 
 ## Staleness note
 
-Fetched/verified 2026-08-10. Doctype field lists and report filter
+Doctype field lists and report filter
 schemas should be reconfirmed against the target org's instance directly
 (`GET /api/resource/DocType/<DocType Name>`) rather than assumed from
 this file — this instance's specific configuration (e.g. which Tax

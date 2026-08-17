@@ -57,8 +57,8 @@ reconfirmed live here during the Leave Application round trip.
 
 ## Live validation record
 
-**This skill's connector was validated live against `<erp-instance>`
-2026-08-10** via a temporary API key/secret (session login +
+**This skill's connector was validated live against `<erp-instance>`**
+via a temporary API key/secret (session login +
 `frappe.core.doctype.user.user.generate_keys`; revoked immediately
 after — `PUT /api/resource/User/Administrator` with `{"api_key":
 null}`, reconfirmed the old token 401s):
@@ -164,14 +164,14 @@ this file (here and in `qkeee-erp-core`, the source of truth). Nothing
 in `references/domain-knowledge.md` or this skill's `SKILL.md` needs to
 change — they're written to be ERP-agnostic in substance.
 
-## Audit-trail retrofit (synced from qkeee-erp-core, added 2026-08-16)
+## Audit-trail retrofit
 
-`mutate_resource()` now wraps every write with a two-phase log to the
+`mutate_resource()` wraps every write with a two-phase log to the
 `Qkeee Bot Audit Log` doctype (`Attempted` before the real call,
 `Success`/`Failure` after), best-effort throughout — a target instance
-that hasn't run `qkeee-erp-bot-init` yet keeps writing exactly as before
-this retrofit, just unaudited. `query_resource()`/`get_resource()`
-gained an opt-in `debug` kwarg (`qkeee_erp.debug`) for `Read`-row
+that hasn't run `qkeee-erp-bot-init` yet keeps writing exactly as
+before this retrofit, just unaudited. `query_resource()`/`get_resource()`
+carry an opt-in `debug` kwarg (`qkeee_erp.debug`) for `Read`-row
 logging, off by default. `AUDIT_EXEMPT_DOCTYPES` prevents the logger
 from recursively logging itself or double-logging the audit Comment
 write. Full mechanism, decision log, and doctype schema:

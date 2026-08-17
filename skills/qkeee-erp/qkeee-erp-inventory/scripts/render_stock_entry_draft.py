@@ -6,7 +6,7 @@ The non-negotiable: stock transfers never adjust silently — the physical
 and financial impact (item, qty, from/to warehouse, value moved) is
 stated plainly before confirm, every time.
 
-Confirmed live against <erp-instance> (2026-08-10): ERPNext does NOT
+Confirmed live against <erp-instance>: ERPNext does NOT
 reject an outgoing (s_warehouse) line with more qty than is actually on
 hand at DRAFT-CREATE time — a Stock Entry with qty 999 against a
 warehouse holding 6 was accepted as a Draft (docstatus 0) with no error,
@@ -29,7 +29,7 @@ each subsequent line against what's actually left.
 
 This renderer also rejects a non-positive qty (<= 0) outright — the
 Stock Entry Detail schema's `qty` field is not `non_negative`-flagged
-in ERPNext itself (confirmed live, 2026-08-11), so this is not a check
+in ERPNext itself (confirmed live), so this is not a check
 ERPNext performs for us.
 
 This script NEVER calls ERPNext. It only formats a draft for human

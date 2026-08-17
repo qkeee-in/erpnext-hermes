@@ -4,8 +4,8 @@ Unit tests for erp_client.py's pure/offline-testable functions and the
 read-only/requested-by/action gates. Run: python scripts/test_erp_client.py
 
 This connector copy has never been exercised live against a real ERPNext
-instance (see qkeee-erp-skills-library-plan.md's adversarial review,
-2026-08-16) — these tests cover what's verifiable offline: env resolution,
+instance (see qkeee-erp-skills-library-plan.md's adversarial review) —
+these tests cover what's verifiable offline: env resolution,
 tag sanitization, and every gate refusing before any HTTP call is made.
 They are not a substitute for the live dry-run/real-run validation noted
 in SKILL.md.

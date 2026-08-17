@@ -98,7 +98,7 @@ def field_exists(tag: str, doctype_name: str, fieldname: str) -> bool:
 def ensure_deferred_fields(tag: str, requested_by: str, approval_note: str) -> list:
     """Patches in any DEFERRED_FIELD_PATCHES field whose target doctype
     (`requires`) now exists but hasn't been applied yet. Live-confirmed
-    2026-08-16: Frappe rejects a Link field naming a not-yet-existing
+    that Frappe rejects a Link field naming a not-yet-existing
     doctype at DocType-create time, so Qkeee Bot Message's
     linked_audit_log field (-> Qkeee Bot Audit Log, created after Message
     in ALL_DOCTYPES order) can't be part of Message's initial create

@@ -5,9 +5,7 @@ don't need network: env resolution, tag sanitization, the mode gate, the
 submit two-step, and (specific to this skill's copy) gated_mutate_resource()'s
 confirmation-token gate. Run: python scripts/test_erp_client.py
 
-Before this file existed, catch-all was the only skill in the library
-with zero test coverage — added 2026-08-16, adversarial review, modeled
-on the sibling skills' test_erp_client.py (e.g. qkeee-erp-accounts-executive's).
+Modeled on the sibling skills' test_erp_client.py (e.g. qkeee-erp-accounts-executive's).
 """
 
 import os

@@ -70,7 +70,7 @@ Missing-var failures must name the exact variable
 
 ## Verified against a live instance
 
-Checked 2026-08-10 against `<erp-instance>`: **ERPNext v15.112.0 / Frappe
+Checked against `<erp-instance>`: **ERPNext v15.112.0 / Frappe
 v15.112.0**, apps installed: `frappe`, `erpnext`, `hrms` (Frappe HR
 15.61.0), `crm` (1.57.9). **No India Compliance app installed** — build
 time for `qkeee-erp-accounts-executive` should confirm whether the target
@@ -78,7 +78,7 @@ org's instance has it before assuming GSTIN/e-invoicing/e-way-bill
 capabilities have dedicated fields to work against; on an instance without
 it, `tax_id` is a generic Data field, not a GST-specific one.
 
-**Full end-to-end round-trip validated 2026-08-10** using a temporary
+**Full end-to-end round-trip validated** using a temporary
 API key/secret (generated for the test, revoked immediately after):
 `erp_client.py list-envs` / `health` / `query` (incl. `filters` and
 `has_more` pagination) / `mutate create` / `mutate submit` / `mutate
@@ -158,13 +158,13 @@ GETs the full record first, then POSTs that full doc to
 `frappe.client.cancel(doctype, name)` looks the record up server-side.
 **This means submit necessarily reposts every stored field verbatim,
 including any PII already on the record** (flagged during
-`qkeee-erp-hr-associate`'s 2026-08-10 adversarial review) — expected,
+`qkeee-erp-hr-associate`'s adversarial review) — expected,
 since submit locks in the record as-is rather than granting new write
 access; a calling skill's PII-scope discipline governs what it writes
 new values to via create/update, not what submit echoes back.
 
 **Response shape is inconsistent across actions — confirmed live
-2026-08-10 during `qkeee-erp-accounts-executive`'s Journal Entry
+during `qkeee-erp-accounts-executive`'s Journal Entry
 create → submit → cancel round trip.** `create`/`update`/the GET before
 submit all return `{"data": {...doc...}}`. `frappe.client.submit` and
 `frappe.client.cancel` (both whitelisted RPC-style methods, not REST
@@ -182,7 +182,7 @@ which key holds the doc, or check for either key defensively.
 reference does not duplicate ERPNext's own field-level docs; consult them
 at persona-skill build time for exact doctype/field lists.
 
-## List endpoint vs. single-resource GET — child tables and token cost (added 2026-08-12)
+## List endpoint vs. single-resource GET — child tables and token cost
 
 Confirmed live against `<erp-instance>` while investigating input-token cost
 across the `qkeee-erp-*` skills:
@@ -266,7 +266,7 @@ folds into this generic one; system-admin's reason text, where supplied,
 gets appended to the standard requester-attribution comment rather than
 posted separately.
 
-## Save-draft-then-review-then-submit discipline (added 2026-08-12)
+## Save-draft-then-review-then-submit discipline
 
 `mutate_resource()`'s `create`/`update`/`submit` actions were already
 independent, separately-callable actions before this note — `create`/
@@ -333,9 +333,9 @@ python erp_client.py --tag qa --mode read-write --requested-by priya@org.com mut
 python erp_client.py --tag qa --mode read-write --requested-by priya@org.com mutate "Journal Entry" create --payload '{"...": "..."}'
 ```
 
-## Audit-trail retrofit (added 2026-08-16)
+## Audit-trail retrofit
 
-`mutate_resource()` now wraps every write with a two-phase log to the
+`mutate_resource()` wraps every write with a two-phase log to the
 `Qkeee Bot Audit Log` doctype (schema owned by the sibling skill
 `qkeee-erp-bot-init`, see its `references/bot-doctypes-design.md` for the
 full field list, permission matrix, and decision log — this section only
@@ -389,9 +389,9 @@ along even when Session logging isn't actually landing anywhere —
 carry either a real Session row's `name` or this fallback string
 interchangeably (see bot-doctypes-design.md decision 10).
 
-**Sync status (updated 2026-08-16): done.** The retrofit above was synced
+The retrofit above was synced
 into all 7 write-capable persona skills' own `erp_client.py` copies plus
-`qkeee-erp-mis-analyst`, same day, alongside this skill
+`qkeee-erp-mis-analyst`
 (`qkeee-erp-catch-all`'s own copy — see `scripts/erp_client.py` in this
 skill — already carries it). Two narrow gaps remain, both because the
 bypassed function never calls `mutate_resource()`: fixed-asset-manager's

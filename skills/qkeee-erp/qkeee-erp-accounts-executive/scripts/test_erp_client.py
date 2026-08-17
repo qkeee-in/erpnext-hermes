@@ -5,7 +5,7 @@ read-only mode gate. Run: python scripts/test_erp_client.py
 
 health_check()/query_resource()/run_query_report()/mutate_resource()
 were exercised live against <erp-instance> during this skill's build
-(create -> submit -> cancel Journal Entry round trip, 2026-08-10) — see
+(create -> submit -> cancel Journal Entry round trip) — see
 references/connector-reference.md for that record. These tests cover
 the parts that don't need network: env resolution, tag sanitization,
 and the mode gate refusing before any HTTP call is made.
@@ -80,7 +80,7 @@ class TestMutateModeGate(unittest.TestCase):
             "QKEEE_ERP_QA_API_SECRET": "secret",
         }
         # _audit_insert/_audit_update/_audit_submit are patched directly (not
-        # just _request) so the 2026-08-16 audit-logging retrofit's own
+        # just _request) so the audit-logging retrofit's own
         # _request calls don't count against this test's assert_called_once()
         # on the real business _request call.
         with mock.patch.dict(os.environ, env, clear=True), \

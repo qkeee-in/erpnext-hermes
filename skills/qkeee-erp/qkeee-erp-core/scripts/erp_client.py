@@ -30,7 +30,7 @@ a best-effort audit Comment on the affected record naming that
 requester — so ERPNext's own audit trail shows who asked, not just
 that the bot acted. See record_comment()/mutate_resource() below.
 
-Audit-trail retrofit (added 2026-08-16): every write is additionally
+Every write is additionally
 logged to the `Qkeee Bot Audit Log` doctype (two-phase: an `Attempted`
 row inserted before the real write, updated to `Success`/`Failure`
 after), and every read is logged there too when `debug=True` is passed.

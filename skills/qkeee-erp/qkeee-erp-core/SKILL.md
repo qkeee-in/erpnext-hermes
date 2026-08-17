@@ -56,6 +56,20 @@ person regardless of who actually requested it in chat — defeating the
 requester-attribution mechanism below. Tell the user this explicitly if
 they're setting up credentials for the first time.
 
+**Proactively check this, don't just wait to be asked.** This applies even when `qkeee-erp-bot-init` itself hasn't
+been invoked this session. If a `health` check reports `logged_in_as` an
+identity that looks like a real staff member rather than a service
+account, or the user is configuring `QKEEE_ERP_*` credentials for the
+first time and hasn't mentioned a dedicated bot user, or a write fails/
+behaves oddly around the `Qkeee Bot Audit Log` doctype (a sign
+`qkeee-erp-bot-init` hasn't been run on this target yet): say so, and
+suggest running `qkeee-erp-bot-init` — it can detect or create the
+dedicated bot user (via an elevated admin login, distinct from this
+skill's own steady-state bot credentials) and provisions the audit-trail
+doctypes in the same pass. This is a recommendation, not a blocker —
+don't refuse the user's actual request over it. Every persona skill
+carries the same instruction in its own "Bot account" section.
+
 ## Requester attribution — mandatory on every write
 
 Before the first write of a session, resolve `qkeee_erp.requested_by` to
@@ -68,7 +82,7 @@ on the affected record: `[qkeee-erp-core] <action> — requested by
 or rolls back the underlying write. Mention in your report-back that the
 audit comment was posted.
 
-## Audit trail — Qkeee Bot doctypes (added 2026-08-16)
+## Audit trail — Qkeee Bot doctypes
 
 Every `mutate_resource()` write is now also logged to the `Qkeee Bot Audit
 Log` doctype (provisioned by `qkeee-erp-bot-init`), two-phase: an
@@ -146,7 +160,7 @@ and the debug-mode volume-gating rationale:
    be given at the start of a new session. Credentials and URLs never go
    into agent-curated memory — they live only in environment variables.
 7. **Save as draft, review, then submit — never create-and-submit in one
-   motion (added 2026-08-12).** `create`/`update` and `submit` are always
+   motion.** `create`/`update` and `submit` are always
    separate `mutate` calls (see the Generic resource mutate capability
    below); this skill's job is to keep them separate, not chain them. When
    a persona skill (or an ad hoc caller) is driving a create/update
@@ -178,7 +192,7 @@ and the debug-mode volume-gating rationale:
 
 - `scripts/erp_client.py` — the connector implementation (stdlib-only
   Python; no third-party deps so persona skills can copy it verbatim).
-  Includes the Qkeee Bot audit-trail retrofit (2026-08-16):
+  Includes the Qkeee Bot audit-trail retrofit:
   `record_audit_log_start()`/`record_audit_log_finish()` (two-phase write
   logging, wired into `mutate_resource()`), debug-gated read logging in
   `query_resource()`/`get_resource()`, and opt-in `open_session()`/

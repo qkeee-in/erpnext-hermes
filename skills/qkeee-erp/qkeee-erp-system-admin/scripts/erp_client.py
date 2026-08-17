@@ -25,7 +25,7 @@ Non-negotiable: never issue a write call while mode == "read-only".
 This is enforced in mutate_resource()/call_whitelisted_method()/
 destructive_mutate() below, not just in the calling skill's prompt.
 
-Audit-trail retrofit (synced from qkeee-erp-core 2026-08-16): every
+Audit-trail retrofit (synced from qkeee-erp-core): every
 write through mutate_resource() is additionally logged to Qkeee Bot
 Audit Log (two-phase, best-effort — see qkeee-erp-bot-init/references/
 bot-doctypes-design.md). destructive_mutate(), gated_config_mutate(),
@@ -293,8 +293,8 @@ def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
 
 
 # --------------------------------------------------------------------------
-# Audit logging (Qkeee Bot Audit Log) — synced from qkeee-erp-core
-# 2026-08-16. Best-effort throughout: if the target instance hasn't run
+# Audit logging (Qkeee Bot Audit Log) — synced from qkeee-erp-core.
+# Best-effort throughout: if the target instance hasn't run
 # qkeee-erp-bot-init yet, every function below swallows the failure and the
 # caller's real ERPNext read/write proceeds unaffected.
 # --------------------------------------------------------------------------
@@ -594,7 +594,7 @@ def destructive_mutate(tag: str, doctype: str, action: str, name: str, reason: s
 
     Delegates to mutate_resource() for the actual write, so it inherits
     Qkeee Bot Audit Log logging automatically — no separate audit wiring
-    needed here (2026-08-16 retrofit).
+    needed here.
     """
     if action == "update":
         if doctype != "User":
@@ -716,7 +716,7 @@ def call_permission_manager(tag: str, action: str, doctype: str, role: str, perm
     natural record to attach one to. The calling skill should surface
     `requested_by` in its own report-back for this capability instead.
 
-    KNOWN GAP (2026-08-16): does NOT delegate to mutate_resource() (this
+    KNOWN GAP: does NOT delegate to mutate_resource() (this
     RPC shape doesn't fit create/update/submit/cancel/delete), so it is
     NOT yet logged to Qkeee Bot Audit Log either — the widest-blast-
     radius write path in the entire qkeee-erp library is currently the
@@ -789,7 +789,7 @@ def create_user(tag: str, email: str, first_name: str, roles: list, mode: str = 
     grants are unaffected — still a single confirm, no token required.
 
     Delegates to mutate_resource() for the actual create, so it inherits
-    Qkeee Bot Audit Log logging automatically (2026-08-16 retrofit).
+    Qkeee Bot Audit Log logging automatically.
     """
     elevated = sorted(set(roles) & ELEVATED_ROLES)
     if elevated:
@@ -837,7 +837,7 @@ def gated_config_mutate(tag: str, kind: str, doctype: str, identifier: str, reas
     shown in the render step.
 
     Delegates to mutate_resource() for the actual write, so it inherits
-    Qkeee Bot Audit Log logging automatically (2026-08-16 retrofit).
+    Qkeee Bot Audit Log logging automatically.
     """
     if kind not in CONFIG_CHANGE_KINDS:
         raise ConnectorError(f"Unknown config-change kind {kind!r}. Expected one of {CONFIG_CHANGE_KINDS}.")

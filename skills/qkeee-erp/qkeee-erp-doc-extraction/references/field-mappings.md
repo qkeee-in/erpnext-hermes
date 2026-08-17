@@ -1,7 +1,7 @@
 # Target-doctype field mappings
 
 **Verified against a live instance: ERPNext v15.112.0 / Frappe v15.112.0
-(<erp-instance>, checked 2026-08-10)**, apps installed: `frappe`,
+(<erp-instance>)**, apps installed: `frappe`,
 `erpnext`, `hrms` (Frappe HR), `crm` — **no India Compliance app**
 installed on this instance, so GSTIN/e-invoicing/e-way-bill fields are
 not present as dedicated fields here; `tax_id` is the generic Data field

@@ -65,6 +65,17 @@ it in chat — defeating the requester-attribution mechanism below. Tell
 the user this explicitly if they're setting up credentials for the
 first time.
 
+**Proactively check this, don't just wait to be asked.** If a session's `health` check reports `logged_in_as`
+an identity that looks like a real staff member rather than a
+service account, or the user is configuring `QKEEE_ERP_*` credentials
+for the first time and hasn't mentioned a dedicated bot user, or a
+write fails/behaves oddly around the `Qkeee Bot Audit Log` doctype
+(a sign `qkeee-erp-bot-init` hasn't been run on this target): say so,
+and suggest running `qkeee-erp-bot-init` — it can detect or create the
+dedicated bot user (via an elevated admin login) and provisions the
+audit-trail doctypes in the same pass. This is a recommendation, not
+a blocker — don't refuse the user's actual request over it.
+
 ## Requester attribution — mandatory on every write
 
 Before the first write of a session, resolve `qkeee_erp.requested_by`
@@ -78,7 +89,7 @@ posts a best-effort Comment on the affected record: `[SKILL_LABEL]
 comment failure never blocks or rolls back the underlying write.
 Mention in your report-back that the audit comment was posted.
 
-## Audit trail (added 2026-08-16)
+## Audit trail
 
 Every write also logs a two-phase (`Attempted` → `Success`/`Failure`) row
 to the `Qkeee Bot Audit Log` doctype, best-effort — never blocks a write
@@ -112,7 +123,7 @@ violations field, not a second gate.
    lists, what a status value means, whether a built-in report exists.
    Field-level facts in these references (e.g. `party_name` not being
    `reqd`) are grounded against one instance/version
-   (`<erp-instance>`, Frappe/ERPNext 15.110.0, 2026-08-10) — re-verify via
+   (`<erp-instance>`, Frappe/ERPNext 15.110.0) — re-verify via
    `GET /api/resource/DocType/<name>` against a target org before
    trusting them as version-independent.
 5. **Customer onboarding always goes through
@@ -132,8 +143,7 @@ violations field, not a second gate.
    Present the full staged draft (all pending payloads) and get one
    explicit confirmation before starting step 1 — don't ask three times
    for what the user experiences as one onboarding action. **Review the
-   saved records before reporting onboarding complete (added
-   2026-08-12):** after step 3, re-fetch the Customer by its real name
+   saved records before reporting onboarding complete:** after step 3, re-fetch the Customer by its real name
    and check every persisted field — `customer_group`, `territory`, and
    `customer_primary_contact` resolve to real, existing records (the
    Contact created in step 2, specifically) and `mobile_no`/`email_id`
@@ -161,7 +171,7 @@ violations field, not a second gate.
    accepted silently by ERPNext as a "quotation to nobody," confirmed
    live. Present the draft, get explicit confirmation, call
    `mutate_resource()`'s `create` (lands `docstatus 0`, `status:
-   "Draft"`). **Save-draft-then-review-then-submit (added 2026-08-12):**
+   "Draft"`). **Save-draft-then-review-then-submit:**
    before ever offering to submit, re-fetch the created Quotation by its
    `name` (via `erp_client.py get Quotation <name>` — needed here because
    the line-item Link check below requires the `items` child table, which

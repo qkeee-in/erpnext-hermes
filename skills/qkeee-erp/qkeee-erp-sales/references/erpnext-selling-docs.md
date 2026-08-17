@@ -1,7 +1,7 @@
 # ERPNext Selling module — doc map & live field-schema grounding
 
 Curated pointers into `docs.frappe.io/erpnext` for the Selling module,
-plus what this build confirmed live against `<erp-instance>` (2026-08-10)
+plus what this build confirmed live against `<erp-instance>`
 where docs alone were thin or ambiguous. Consult the linked docs page
 directly (fetch it, if a harness web-fetch tool is available) whenever a
 mechanic is uncertain at runtime; treat this file's live-confirmed notes

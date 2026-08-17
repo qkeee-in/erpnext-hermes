@@ -72,9 +72,9 @@ validation needs the full DB-loaded doc, not a sparse payload). This
 also means submit reposts every stored field verbatim, including any
 sensitive fields already on the record — expected, not a scope leak;
 see `qkeee-erp-core`'s reference for the full note (flagged during
-`qkeee-erp-hr-associate`'s 2026-08-10 adversarial review).
+`qkeee-erp-hr-associate`'s adversarial review).
 
-**Response shape differs by action — verified live 2026-08-10.**
+**Response shape differs by action.**
 `create`/`update`/the GET before submit return `{"data": {...doc...}}`.
 `submit` and `cancel` (whitelisted RPC methods, not REST resource calls)
 return `{"message": {...doc...}}` instead. Code built on
@@ -85,8 +85,8 @@ skill's connector copy (a naive `result["data"]` after `submit` raised
 
 **`delete` fails on anything ever submitted, even after `cancel`** — a
 cancelled voucher still has a linked GL Entry and ERPNext refuses the
-delete with `LinkExistsError` to protect referential integrity.
-Reconfirmed live 2026-08-10: `Cannot delete or cancel because Journal
+delete with `LinkExistsError` to protect referential integrity:
+`Cannot delete or cancel because Journal
 Entry ... is linked with GL Entry ...`. Describe **cancel**, not delete,
 as the practical "undo" for anything ledger-touching in domain guidance
 and to users — never promise delete will work post-submission.
@@ -94,7 +94,7 @@ and to users — never promise delete will work post-submission.
 ## Live validation record
 
 **Full create → submit → cancel round trip against `<erp-instance>`
-confirmed 2026-08-10**, using a temporary API key/secret (generated via
+confirmed live**, using a temporary API key/secret (generated via
 session login + `frappe.core.doctype.user.user.generate_keys`, per admin
 credentials the org provided for this validation pass). Created a
 balanced Journal Entry (`Cash - QL` debit 100 / `Administrative Expenses
@@ -188,9 +188,9 @@ this file (here and in `qkeee-erp-core`, the source of truth). Nothing in
 `references/domain-knowledge.md` or this skill's `SKILL.md` needs to
 change — they're written to be ERP-agnostic in substance.
 
-## Audit-trail retrofit (synced from qkeee-erp-core, added 2026-08-16)
+## Audit-trail retrofit
 
-`mutate_resource()` now wraps every write with a two-phase log to the
+`mutate_resource()` wraps every write with a two-phase log to the
 `Qkeee Bot Audit Log` doctype (`Attempted` before the real call,
 `Success`/`Failure` after), best-effort throughout — a target instance
 that hasn't run `qkeee-erp-bot-init` yet keeps writing exactly as before
@@ -198,7 +198,7 @@ this retrofit, just unaudited. `query_resource()`/`get_resource()`/
 `run_query_report()` gained an opt-in `debug` kwarg (`qkeee_erp.debug`)
 for `Read`-row logging, off by default. `AUDIT_EXEMPT_DOCTYPES` prevents
 the logger from recursively logging itself or double-logging the audit
-Comment write. Full mechanism, decision log, and doctype schema:
+Comment write. Full mechanism and doctype schema:
 `qkeee-erp-core/references/connector-reference.md`'s own "Audit-trail
 retrofit" section and `qkeee-erp-bot-init/references/bot-doctypes-
 design.md`.

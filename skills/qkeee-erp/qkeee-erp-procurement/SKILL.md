@@ -66,6 +66,17 @@ it in chat — defeating the requester-attribution mechanism below. Tell
 the user this explicitly if they're setting up credentials for the
 first time.
 
+**Proactively check this, don't just wait to be asked.** If a session's `health` check reports `logged_in_as`
+an identity that looks like a real staff member rather than a
+service account, or the user is configuring `QKEEE_ERP_*` credentials
+for the first time and hasn't mentioned a dedicated bot user, or a
+write fails/behaves oddly around the `Qkeee Bot Audit Log` doctype
+(a sign `qkeee-erp-bot-init` hasn't been run on this target): say so,
+and suggest running `qkeee-erp-bot-init` — it can detect or create the
+dedicated bot user (via an elevated admin login) and provisions the
+audit-trail doctypes in the same pass. This is a recommendation, not
+a blocker — don't refuse the user's actual request over it.
+
 ## Requester attribution — mandatory on every write
 
 Before the first write of a session, resolve `qkeee_erp.requested_by`
@@ -79,7 +90,7 @@ posts a best-effort Comment on the affected record: `[SKILL_LABEL]
 comment failure never blocks or rolls back the underlying write.
 Mention in your report-back that the audit comment was posted.
 
-## Audit trail (added 2026-08-16)
+## Audit trail
 
 Every write also logs a two-phase (`Attempted` → `Success`/`Failure`) row
 to the `Qkeee Bot Audit Log` doctype, best-effort — never blocks a write
@@ -112,7 +123,7 @@ violations field, not a second gate.
    the only place the KYC-completeness bar is enforced. Present the
    rendered draft, get explicit confirmation, and only then call
    `mutate_resource()`'s `create`. **Review the saved record before
-   reporting onboarding complete (added 2026-08-12):** re-fetch the
+   reporting onboarding complete:** re-fetch the
    Supplier by its `name` via `query --filters '[["name","=","<name>"]]'
    --fields [...]` (none of these checked fields live in a child table,
    so the cheaper list endpoint covers it fully — no need for
@@ -144,7 +155,7 @@ violations field, not a second gate.
    stock" default for anything beyond a quick sanity check, since it
    both over-warns on service lines and can be defeated by a caller
    passing an empty set to silence warnings. **Save-draft-then-review-
-   then-submit (added 2026-08-12):** `create` always lands the PO at
+   then-submit:** `create` always lands the PO at
    `docstatus 0` first, regardless of whether submission authority is
    confirmed. Before ever calling `submit` (only reachable when
    `submission_authority_confirmed=True`), re-fetch the created PO via

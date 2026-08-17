@@ -2,9 +2,8 @@
 
 Curated pointers into `docs.frappe.io/hr` (Frappe HR / HRMS — a separate
 app from core ERPNext, confirmed installed on `<erp-instance>`: `hrms
-15.61.0`), fetched 2026-08-10 while building this skill, plus findings
-confirmed live against `<erp-instance>` the same day. Runtime reference,
-not just a build-time note: when unsure how a mechanic behaves, fetch
+15.61.0`), plus findings confirmed live against `<erp-instance>`.
+Runtime reference, not just a build-time note: when unsure how a mechanic behaves, fetch
 the linked URL directly (via a harness web-fetch tool, if available)
 rather than guessing — this file can drift from the live docs, the URL
 is the source of truth.
@@ -24,7 +23,7 @@ is the source of truth.
 | Attendance | `https://docs.frappe.io/hr/attendance` | Present/Absent/On Leave/Half Day (+"Work From Home" confirmed live), manual/bulk/auto marking, Marking Unmarked Attendance for regularization. |
 | Employee Separation | `https://docs.frappe.io/hr/employee-separation` | Separation Template activities, auto-generated Project/Tasks on submit, same checklist mechanism as Onboarding. |
 
-## Employee — field grounding (live, 2026-08-10)
+## Employee — field grounding (live)
 
 Mandatory per `GET /api/resource/DocType/Employee`: `first_name`,
 `gender` (Link → Gender; confirmed values on this instance: Male,
@@ -43,7 +42,7 @@ accepted by the schema (neither field forces the other at the `reqd`
 level) but is an incomplete exit in practice — `scripts/
 render_employee_draft.py` checks this explicitly.
 
-**Live create confirmed 2026-08-10**: created `HR-EMP-00002`
+**Live create confirmed**: created `HR-EMP-00002`
 (`first_name: "qkeee-erp-hr-associate"`, `gender: "Male"`,
 `date_of_birth: "1995-01-01"`, `date_of_joining: "2026-08-10"`,
 `company: "Qkeee LLP"`, `status: "Active"`) — succeeded immediately,
@@ -52,7 +51,7 @@ via `GET /api/resource/DocType/Employee` → `is_submittable: 0` — no
 draft/submit distinction the way Purchase Order or Leave Application
 have one).
 
-## Leave Application — field grounding + live round trip (2026-08-10)
+## Leave Application — field grounding + live round trip
 
 Mandatory: `naming_series`, `employee`, `leave_type`, `company`,
 `from_date`, `to_date`, `posting_date`, `status` (Select:
@@ -98,7 +97,7 @@ explained to the user as expected system behavior when discussing leave
 approval, not treated as a surprise side effect. See
 `references/domain-knowledge.md`.
 
-## Job Applicant — field grounding + autoname finding (live, 2026-08-10)
+## Job Applicant — field grounding + autoname finding (live)
 
 Mandatory: `applicant_name`, `email_id` (Email fieldtype), `status`
 (Select: Open/Replied/Rejected/Hold/Accepted). `is_submittable: 0` —
@@ -112,7 +111,7 @@ generated series** — confirmed live: creating one with
 literally `test.applicant@example.com`, not an `HR-JA-...`-style name.
 This matters for lookups (query/reference this doctype by email, not by
 an assumed naming series) and for re-application handling. **Confirmed
-live (2026-08-10 adversarial review): a second Job Applicant `create`
+live via adversarial review: a second Job Applicant `create`
 with the same `email_id` neither updates the existing record nor
 conflicts** — it succeeds with HTTP 200 and gets auto-suffixed to
 `<email>-1` (standard Frappe duplicate-name handling), silently
@@ -161,13 +160,13 @@ Job Applicant were.
 `expected_skill_set` (child table). **Interview Feedback** mandatory:
 `interview`, `interview_round`, `interviewer` (Link → User), `result`
 (Select: Cleared/Rejected), `skill_assessment` (child table).
-Confirmed live (2026-08-10): `is_submittable: 1` on **Interview**,
+Confirmed live: `is_submittable: 1` on **Interview**,
 `is_submittable: 1` on **Interview Feedback**, `is_submittable: 0` on
 **Interview Round** (the round definition itself isn't a workflow
 document — only the scheduled Interview and the recorded Feedback go
 through draft/submit).
 
-## HR reports — no live query validation (gap, flagged 2026-08-10)
+## HR reports — no live query validation (gap)
 
 Unlike every other capability in this file, no headcount/birthday/
 probation-ending/attendance-summary query was live-round-tripped against

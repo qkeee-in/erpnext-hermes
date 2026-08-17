@@ -18,8 +18,8 @@ Env/credential model (tagged, not fixed dev/test/qa/prod):
 
 <TAG> defaults to "DEFAULT" if the user didn't name one at install.
 
-Audit-trail retrofit (synced from qkeee-erp-core 2026-08-16): reads can
-be logged to Qkeee Bot Audit Log when `debug=True` (best-effort — see
+Audit-trail retrofit: reads can be logged to Qkeee Bot Audit Log when
+`debug=True` (best-effort — see
 qkeee-erp-bot-init/references/bot-doctypes-design.md). This skill has no
 write path, so nothing here touches the two-phase Attempted/Success
 write-logging machinery — only the single-shot Read logging applies.
@@ -148,8 +148,8 @@ def health_check(tag: str = "default") -> dict:
 
 
 # --------------------------------------------------------------------------
-# Audit logging (Qkeee Bot Audit Log) — read-only side only, synced from
-# qkeee-erp-core 2026-08-16. Best-effort: if the target instance hasn't
+# Audit logging (Qkeee Bot Audit Log) — read-only side only.
+# Best-effort: if the target instance hasn't
 # run qkeee-erp-bot-init yet, this silently no-ops and the caller's real
 # read proceeds unaffected.
 # --------------------------------------------------------------------------

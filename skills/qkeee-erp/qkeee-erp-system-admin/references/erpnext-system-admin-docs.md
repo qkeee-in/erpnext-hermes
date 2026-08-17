@@ -1,7 +1,7 @@
 # ERPNext system-admin surface — docs map + live findings
 
 Curated pointers into `docs.frappe.io` plus everything confirmed live
-against `<erp-instance>` (2026-08-11) during this build. Consult the
+against `<erp-instance>`. Consult the
 live findings first — several diverge from what generic ERPNext
 community docs describe.
 
@@ -19,7 +19,7 @@ community docs describe.
   (see connector-reference.md's Endpoints table) — confirmed this is
   the only working REST read/write path for permission rows.
 
-## Live findings (2026-08-11, <erp-instance>)
+## Live findings (<erp-instance>)
 
 **Instance:** ERPNext v15.110.0 / Frappe v15.110.0, apps `frappe`,
 `erpnext`, `hrms`, `crm`. Same instance/version as prior `qkeee-erp-*`
@@ -169,7 +169,7 @@ Scheduled", "Material Request Receipt Notification"), all `channel:
 
 ## Live validation record
 
-2026-08-11, `<erp-instance>`, temporary API key/secret (generated via
+`<erp-instance>`, temporary API key/secret (generated via
 session login + `frappe.core.doctype.user.user.generate_keys`, revoked
 immediately after via `PUT /api/resource/User/Administrator` with
 `{"api_key": null}`, reconfirmed the old token 401s afterward):

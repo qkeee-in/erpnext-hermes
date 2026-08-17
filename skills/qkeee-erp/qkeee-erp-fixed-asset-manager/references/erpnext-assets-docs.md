@@ -2,7 +2,7 @@
 
 Curated map into `docs.frappe.io/erpnext` (Assets module) plus live
 field-schema grounding confirmed against `<erp-instance>` (ERPNext
-v15.110.0 / Frappe v15.110.0) during this skill's build, 2026-08-10.
+v15.110.0 / Frappe v15.110.0).
 Consult the linked docs pages directly (fetch, if a harness web-fetch
 tool is available) when a mechanic is uncertain; prefer live
 `GET /api/resource/DocType/<name>` introspection over docs when they
@@ -155,7 +155,7 @@ a bare "create failed" if it occurs.
 
 ## Live validation record
 
-Full round trip confirmed against `<erp-instance>`, 2026-08-10, using a
+Full round trip confirmed against `<erp-instance>`, using a
 temporary API key/secret (session login + `generate_keys`, revoked
 immediately after):
 

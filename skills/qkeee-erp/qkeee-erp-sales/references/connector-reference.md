@@ -65,7 +65,7 @@ submit return `{"data": {...doc...}}`. `submit` and `cancel`
 Quotation/Sales Order/Delivery Note round trips, consistent with the
 finding first made during `qkeee-erp-accounts-executive`'s build.
 
-## Live validation record (<erp-instance>, 2026-08-10)
+## Live validation record (<erp-instance>)
 
 Temporary API key/secret generated via session login +
 `frappe.core.doctype.user.user.generate_keys`, per admin credentials the
@@ -263,9 +263,9 @@ this file (here and in `qkeee-erp-core`, the source of truth). Nothing
 in `references/domain-knowledge.md` or this skill's `SKILL.md` needs to
 change — they're written to be ERP-agnostic in substance.
 
-## Audit-trail retrofit (synced from qkeee-erp-core, added 2026-08-16)
+## Audit-trail retrofit (synced from qkeee-erp-core)
 
-`mutate_resource()` now wraps every write with a two-phase log to the
+`mutate_resource()` wraps every write with a two-phase log to the
 `Qkeee Bot Audit Log` doctype (`Attempted` before the real call,
 `Success`/`Failure` after), best-effort throughout — a target instance
 that hasn't run `qkeee-erp-bot-init` yet keeps writing exactly as before

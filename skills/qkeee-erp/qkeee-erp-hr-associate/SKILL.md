@@ -73,6 +73,17 @@ it in chat — defeating the requester-attribution mechanism below. Tell
 the user this explicitly if they're setting up credentials for the
 first time.
 
+**Proactively check this, don't just wait to be asked.** If a session's `health` check reports `logged_in_as`
+an identity that looks like a real staff member rather than a
+service account, or the user is configuring `QKEEE_ERP_*` credentials
+for the first time and hasn't mentioned a dedicated bot user, or a
+write fails/behaves oddly around the `Qkeee Bot Audit Log` doctype
+(a sign `qkeee-erp-bot-init` hasn't been run on this target): say so,
+and suggest running `qkeee-erp-bot-init` — it can detect or create the
+dedicated bot user (via an elevated admin login) and provisions the
+audit-trail doctypes in the same pass. This is a recommendation, not
+a blocker — don't refuse the user's actual request over it.
+
 ## Requester attribution — mandatory on every write
 
 Before the first write of a session, resolve `qkeee_erp.requested_by`
@@ -86,7 +97,7 @@ posts a best-effort Comment on the affected record: `[SKILL_LABEL]
 comment failure never blocks or rolls back the underlying write.
 Mention in your report-back that the audit comment was posted.
 
-## Audit trail (added 2026-08-16)
+## Audit trail
 
 Every write also logs a two-phase (`Attempted` → `Success`/`Failure`) row
 to the `Qkeee Bot Audit Log` doctype, best-effort — never blocks a write
@@ -120,8 +131,8 @@ violations field, not a second gate.
    `status: "Left"` → `relieving_date` requirement, and the PII-flagging
    discipline. Present the rendered draft, get explicit confirmation,
    and only then call `mutate_resource()`'s `create`/`update`. **After
-   the call succeeds, re-fetch the Employee by its `name` (added
-   2026-08-12) and review every persisted field against what was
+   the call succeeds, re-fetch the Employee by its `name`
+   and review every persisted field against what was
    confirmed — in particular that Link fields (`department`,
    `designation`, `reports_to`, `company`, `holiday_list`, and similar)
    resolve to real, existing records rather than a typo'd or stale
@@ -155,7 +166,7 @@ violations field, not a second gate.
    required call, not a mental note; don't rely on remembering to check
    it, since the failure only otherwise surfaces as a live
    `ValidationError` after the user has already been told submission
-   would work. **Save-draft-then-review-then-submit (added 2026-08-12):**
+   would work. **Save-draft-then-review-then-submit:**
    `create` the Leave Application first (it lands `Open`, `docstatus 0`),
    re-fetch it by `name` via `query --filters --fields` (all checked
    fields — dates, leave type/balance, `employee`/`leave_approver` —

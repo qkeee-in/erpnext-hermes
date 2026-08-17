@@ -25,9 +25,9 @@ reconciliations never adjust silently) lives outside this file, closer
 to where each draft is built: scripts/render_stock_entry_draft.py and
 scripts/render_reconciliation_draft.py.
 
-Audit-trail retrofit (synced from qkeee-erp-core 2026-08-16): every
-write is additionally logged to Qkeee Bot Audit Log (two-phase,
-best-effort — see qkeee-erp-bot-init/references/bot-doctypes-design.md).
+Audit-trail retrofit: every write is additionally logged to Qkeee Bot
+Audit Log (two-phase, best-effort — see
+qkeee-erp-bot-init/references/bot-doctypes-design.md).
 """
 
 import argparse
@@ -188,7 +188,7 @@ def get_stock_reconciliation_items(tag: str, warehouse: str, company: str,
     get_items whitelisted method — NEVER guess or hand-supply current_qty
     for a Stock Reconciliation line.
 
-    Confirmed live (2026-08-10, <erp-instance>): the Stock Reconciliation
+    Confirmed live (<erp-instance>): the Stock Reconciliation
     Item's `current_qty` field is NOT resolved server-side from a
     caller-supplied value at create time (it's silently reset to 0 in the
     create response regardless of what's passed in), and Bin.actual_qty is
@@ -204,7 +204,7 @@ def get_stock_reconciliation_items(tag: str, warehouse: str, company: str,
     silently ADDED 8 to the existing balance rather than SETTING it,
     when current_qty was passed as 0/unresolved for a batch-tracked item.
 
-    `item_code` is optional (confirmed live, 2026-08-11): omitting it
+    `item_code` is optional (confirmed live): omitting it
     returns every item with a nonzero/tracked balance in `warehouse`, not
     just one — useful for reconciling a whole warehouse's physical count
     in one resolver call instead of one per item.
@@ -331,8 +331,8 @@ def record_comment(cfg: dict, doctype: str, name: str, content: str) -> bool:
 
 
 # --------------------------------------------------------------------------
-# Audit logging (Qkeee Bot Audit Log) — synced from qkeee-erp-core
-# 2026-08-16. Best-effort throughout: if the target instance hasn't run
+# Audit logging (Qkeee Bot Audit Log)
+# Best-effort throughout: if the target instance hasn't run
 # qkeee-erp-bot-init yet, every function below swallows the failure and the
 # caller's real ERPNext read/write proceeds unaffected.
 # --------------------------------------------------------------------------

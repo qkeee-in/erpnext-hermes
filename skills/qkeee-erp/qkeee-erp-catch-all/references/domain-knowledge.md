@@ -86,7 +86,7 @@ bot ends up guessing field names that don't exist on this instance.
    its whitelisted RPC method (`frappe.utils.change_log.get_versions`)
    was confirmed blocked (`PermissionError: not whitelisted`) on a real
    instance during this skill's own build-time validation
-   (`demo.qkeee.in`, 2026-08-16) — that failure is an expected, common
+   (`demo.qkeee.in`) — that failure is an expected, common
    outcome on a hardened instance, not a rare version mismatch. If both
    fail (or exact version numbers matter and `modules` alone doesn't
    answer that), ask the user to paste the Help → About dialog contents

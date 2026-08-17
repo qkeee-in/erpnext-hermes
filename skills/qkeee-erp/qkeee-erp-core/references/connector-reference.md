@@ -28,8 +28,15 @@ Authorization: token <api_key>:<api_secret>
 ```
 
 Keys are generated per ERPNext user via **User → API Access → Generate
-Keys** in the ERPNext UI (org's ERPNext admin provisions these) — this is a
-manual, org-side onboarding step, not something this skill automates.
+Keys** in the ERPNext UI (org's ERPNext admin provisions these). This can
+be done manually as an org-side onboarding step, or automated
+via `qkeee-erp-bot-init/scripts/ensure_bot_user.py`, which detects
+whether the dedicated bot user already exists and, if not, creates it
+(with the `Qkeee Bot` role attached) and generates its API key/secret —
+using an elevated admin credential distinct from this key, same
+dry-run/confirm discipline as that skill's doctype provisioning. Prefer
+suggesting that path over manual UI steps when the user doesn't already
+have a bot user configured.
 
 **Must be a dedicated bot/integration user, not a human's login.** All
 `qkeee-erp-*` skills share one ERPNext identity for reads/writes. Generate
@@ -69,7 +76,7 @@ Missing-var failures must name the exact variable
 
 ## Verified against a live instance
 
-Checked 2026-08-10 against `<erp-instance>`: **ERPNext v15.112.0 / Frappe
+Checked against `<erp-instance>`: **ERPNext v15.112.0 / Frappe
 v15.112.0**, apps installed: `frappe`, `erpnext`, `hrms` (Frappe HR
 15.61.0), `crm` (1.57.9). **No India Compliance app installed** — build
 time for `qkeee-erp-accounts-executive` should confirm whether the target
@@ -77,7 +84,7 @@ org's instance has it before assuming GSTIN/e-invoicing/e-way-bill
 capabilities have dedicated fields to work against; on an instance without
 it, `tax_id` is a generic Data field, not a GST-specific one.
 
-**Full end-to-end round-trip validated 2026-08-10** using a temporary
+**Full end-to-end round-trip validated** using a temporary
 API key/secret (generated for the test, revoked immediately after):
 `erp_client.py list-envs` / `health` / `query` (incl. `filters` and
 `has_more` pagination) / `mutate create` / `mutate submit` / `mutate
@@ -157,13 +164,13 @@ GETs the full record first, then POSTs that full doc to
 `frappe.client.cancel(doctype, name)` looks the record up server-side.
 **This means submit necessarily reposts every stored field verbatim,
 including any PII already on the record** (flagged during
-`qkeee-erp-hr-associate`'s 2026-08-10 adversarial review) — expected,
+`qkeee-erp-hr-associate`'s adversarial review) — expected,
 since submit locks in the record as-is rather than granting new write
 access; a calling skill's PII-scope discipline governs what it writes
 new values to via create/update, not what submit echoes back.
 
 **Response shape is inconsistent across actions — confirmed live
-2026-08-10 during `qkeee-erp-accounts-executive`'s Journal Entry
+during `qkeee-erp-accounts-executive`'s Journal Entry
 create → submit → cancel round trip.** `create`/`update`/the GET before
 submit all return `{"data": {...doc...}}`. `frappe.client.submit` and
 `frappe.client.cancel` (both whitelisted RPC-style methods, not REST
@@ -181,7 +188,7 @@ which key holds the doc, or check for either key defensively.
 reference does not duplicate ERPNext's own field-level docs; consult them
 at persona-skill build time for exact doctype/field lists.
 
-## List endpoint vs. single-resource GET — child tables and token cost (added 2026-08-12)
+## List endpoint vs. single-resource GET — child tables and token cost
 
 Confirmed live against `<erp-instance>` while investigating input-token cost
 across the `qkeee-erp-*` skills:
@@ -265,15 +272,15 @@ folds into this generic one; system-admin's reason text, where supplied,
 gets appended to the standard requester-attribution comment rather than
 posted separately.
 
-## Save-draft-then-review-then-submit discipline (added 2026-08-12)
+## Save-draft-then-review-then-submit discipline
 
-`mutate_resource()`'s `create`/`update`/`submit` actions were already
-independent, separately-callable actions before this note — `create`/
+`mutate_resource()`'s `create`/`update`/`submit` actions are
+independent, separately-callable actions — `create`/
 `update` never implicitly submits a record (ERPNext itself leaves a newly
 created or updated record at `docstatus 0` unless `submit` is called
 separately). This is a **skill-instruction discipline**, not a connector
-change: every persona skill's Execute-stage instructions for a
-create/update capability must now sequence as:
+concern: every persona skill's Execute-stage instructions for a
+create/update capability must sequence as:
 
 1. **Save as draft** — `mutate_resource(..., "create"/"update", ...)`.
 2. **Review the saved draft** — `get_resource()`/`erp_client.py get` by
@@ -332,7 +339,7 @@ python erp_client.py --tag qa --mode read-write --requested-by priya@org.com mut
 python erp_client.py --tag qa --mode read-write --requested-by priya@org.com mutate "Journal Entry" create --payload '{"...": "..."}'
 ```
 
-## Audit-trail retrofit (added 2026-08-16)
+## Audit-trail retrofit
 
 `mutate_resource()` now wraps every write with a two-phase log to the
 `Qkeee Bot Audit Log` doctype (schema owned by the sibling skill
@@ -390,8 +397,9 @@ interchangeably (see bot-doctypes-design.md decision 10).
 
 **Not yet done — a known gap, not an oversight:** none of the 7
 write-capable persona skills' own `erp_client.py` copies have been synced
-with this retrofit yet. Each one still runs the pre-2026-08-16 connector
-(read-only-gate + requester-attribution + save-draft-review-submit, but no
-audit logging). Syncing this file into each persona skill's `scripts/`
+with this retrofit yet. Each one still runs the connector version
+predating the audit-trail retrofit (read-only-gate + requester-attribution
++ save-draft-review-submit, but no audit logging). Syncing this file into
+each persona skill's `scripts/`
 directory is the next mechanical step before any persona skill's writes
 actually reach `Qkeee Bot Audit Log`.

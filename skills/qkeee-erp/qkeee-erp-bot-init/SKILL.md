@@ -1,6 +1,6 @@
 ---
 name: qkeee-erp-bot-init
-description: "Provisions the Qkeee Bot audit-trail doctypes (Qkeee Bot Persona, Qkeee Bot Session, Qkeee Bot Message, Qkeee Bot Audit Log) plus the Qkeee Bot role into a target ERPNext instance, if they don't already exist — idempotent, no custom app required. Use when setting up a fresh ERPNext instance for the qkeee-erp-* skill library, when a persona skill reports the audit doctypes are missing, or when explicitly asked to 'initialize the bot' / 'set up the audit trail' / 'run bot init' against an environment."
+description: "Provisions the Qkeee Bot audit-trail doctypes (Qkeee Bot Persona, Qkeee Bot Session, Qkeee Bot Message, Qkeee Bot Audit Log) plus the Qkeee Bot role into a target ERPNext instance, if they don't already exist — idempotent, no custom app required. Also detects/provisions the dedicated qkeee-erp-bot service-account User the persona skills' shared API key should belong to, assigning it the Qkeee Bot role and generating fresh API keys if needed. Use when setting up a fresh ERPNext instance for the qkeee-erp-* skill library, when a persona skill reports the audit doctypes are missing or that its credentials don't look like a dedicated bot account, or when explicitly asked to 'initialize the bot' / 'set up the audit trail' / 'create a bot user' / 'run bot init' against an environment."
 metadata:
   hermes:
     config:
@@ -24,8 +24,64 @@ the 4 `Qkeee Bot *` audit-trail doctypes and the `Qkeee Bot` role already
 exist in the target ERPNext instance, and creates whatever's missing.
 Idempotent — safe to re-run against an instance that's already initialized.
 Live-validated end-to-end (dry-run → real-run → idempotent re-run) against
-`demo.qkeee.in` on 2026-08-16 — see `references/bot-doctypes-design.md`'s
+`demo.qkeee.in` — see `references/bot-doctypes-design.md`'s
 deferred-field-patch note for what that run found and fixed.
+
+**Also checks for and can provision the dedicated
+`qkeee-erp-bot@<org>`-style service-account User** the persona skills'
+shared `QKEEE_ERP_<TAG>_API_KEY`/`_API_SECRET` should authenticate as —
+see "Bot user provisioning" below. This is a related but separate concern
+from the doctype/role provisioning above: the doctypes/role are the audit
+*schema*; the bot user is the *account* persona skills actually log in as
+day to day. Both are this skill's job because both are one-time/occasional
+per-environment setup an elevated admin credential is needed for.
+
+## Bot user provisioning
+
+Run `scripts/ensure_bot_user.py` to check whether a given ERPNext email
+already exists as a User, and if so whether it holds the `Qkeee Bot` role,
+is enabled, and has an API key configured. If the User doesn't exist yet,
+this script — using the same elevated admin credential as the doctype
+provisioning above — can create it (System User, no welcome email, `Qkeee
+Bot` role attached) and generate a fresh API key/secret pair for it.
+
+**Trigger this proactively, not only when explicitly asked to "init the
+bot."** If a user is setting up ERPNext credentials for the first time, or
+a persona skill's health check reports `logged_in_as` an identity that
+looks like a real person rather than a service account, or the user
+mentions they don't yet have a dedicated bot account: surface this
+capability and offer to run it, rather than waiting to be asked by name.
+
+1. **Requires the `Qkeee Bot` role to already exist.** Run the doctype/role
+   init flow (steps above) first if it doesn't — `ensure_bot_user.py`
+   errors out with this instruction rather than silently creating a user
+   with a role that doesn't exist.
+2. **Ask for (or confirm) the bot email** the user wants — suggest a
+   `qkeee-erp-bot@<org-domain>`-style address if they don't have one in
+   mind, but let them choose; don't invent one silently.
+3. **Dry-run first**: `python scripts/ensure_bot_user.py --tag <tag>
+   --bot-email <email> --requested-by <admin-id> --dry-run`. Shows exactly
+   what would change (create user / assign role / re-enable / generate
+   keys) and prints a `--confirm-token`/`--issued-at` pair, same
+   discipline as the doctype-provisioning flow above.
+4. **Run for real only after the user explicitly confirms** — including
+   confirming that this email really is meant to be a dedicated bot
+   account, not someone's personal login (the whole point of the
+   Bot-account non-negotiable in `qkeee-erp-core`'s SKILL.md). Pass the
+   token back verbatim.
+5. **If new keys are generated, they print to stdout exactly once.** Tell
+   the user to copy `QKEEE_ERP_<TAG>_API_KEY` / `_API_SECRET` into their
+   shell profile or OS credential manager immediately — this skill never
+   stores them anywhere (not in the Qkeee Bot audit trail, not in a file,
+   not in agent memory). If lost, re-run with `--regenerate-keys` (through
+   the same dry-run/confirm flow) to issue a new pair — this invalidates
+   the old one.
+6. **If the user says they'd rather create/share the bot user themselves**
+   (e.g. their org's ERPNext admin access is restricted to specific
+   people), don't push — tell them what's needed: a dedicated User with
+   the `Qkeee Bot` role, enabled, with an API key/secret generated via
+   *User → API Access → Generate Keys* in the ERPNext UI, then have them
+   set the three `QKEEE_ERP_<TAG>_*` env vars themselves.
 
 ## The non-negotiable
 
@@ -109,6 +165,8 @@ requirement above and the confirm-token flow below.
 | Doctype provisioning | `init_bot.py` creates each of the 4 `Qkeee Bot *` doctypes if missing, via `mutate_resource("DocType", "create", ...)` | `custom: 1`, module `Custom` — no app, no Python controller. See design doc for why |
 | Dry-run | `init_bot.py --dry-run` | Reports what would be created and issues a `--confirm-token`/`--issued-at` pair, without writing anything |
 | Connectivity health check | `erp_client.py health` | Run before init; also confirms which ERPNext user the configured key belongs to |
+| Bot user existence/role/enabled/key check | `ensure_bot_user.py --dry-run` | Read-only-equivalent — reports what's missing without writing anything; requires the `Qkeee Bot` role to already exist |
+| Bot user provisioning | `ensure_bot_user.py` creates the User (if missing), assigns the `Qkeee Bot` role, re-enables if disabled, and generates a fresh API key/secret if none is configured | Same dry-run → confirm-token → real-run discipline as doctype provisioning; keys print once, never stored by this skill |
 
 ## Files
 
@@ -121,7 +179,7 @@ requirement above and the confirm-token flow below.
   synced from the design doc. Field-for-field source of what gets created.
   Also defines `DEFERRED_FIELD_PATCHES`: fields that can't be in their
   doctype's initial create payload because they Link to a doctype created
-  later (live-confirmed 2026-08-16 that Frappe rejects that at create
+  later (live-confirmed that Frappe rejects that at create
   time) — currently just `Qkeee Bot Message.linked_audit_log`.
 - `scripts/erp_client.py` — connector copy (self-contained-copies pattern,
   synced from `qkeee-erp-core` including its two-phase audit-log write
@@ -138,9 +196,15 @@ requirement above and the confirm-token flow below.
   (dry-run: print plan + token) or (real: verify token → ensure role →
   ensure each doctype → `ensure_deferred_fields()`), existence-checked
   and idempotent throughout.
+- `scripts/ensure_bot_user.py` — the bot-user flow:
+  health check → compute plan (user exists? has `Qkeee Bot` role? enabled?
+  has an API key?) → (dry-run: print plan + token) or (real: verify token
+  → create-or-update the User → generate API keys if needed, printed once).
+  Requires the `Qkeee Bot` role to already exist (run `init_bot.py` first).
 - `scripts/test_erp_client.py`, `scripts/test_init_bot.py`,
-  `scripts/test_doctype_defs.py` — unit coverage for the connector gating,
-  the plan/token flow, and the doctype payload shapes.
+  `scripts/test_doctype_defs.py`, `scripts/test_ensure_bot_user.py` — unit
+  coverage for the connector gating, the plan/token flows, the doctype
+  payload shapes, and the bot-user provisioning flow.
 
 ## Extension point
 

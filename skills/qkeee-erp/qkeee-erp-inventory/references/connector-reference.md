@@ -69,7 +69,7 @@ check for the right key and shape per endpoint, never assume
 
 ## Live validation record
 
-**Full round trip against `<erp-instance>` confirmed 2026-08-10**, using
+**Full round trip against `<erp-instance>` confirmed**, using
 a temporary API key/secret (generated via session login +
 `frappe.core.doctype.user.user.generate_keys`, per admin credentials the
 org provided for this validation pass). Company `Qkeee LLP`, warehouses
@@ -142,7 +142,7 @@ org provided for this validation pass). Company `Qkeee LLP`, warehouses
    two ledger legs (forward + reversing) net to zero exactly — used to
    independently verify step 4's cancel fully undid the inflation.
 
-**Post-review fix (2026-08-11) — why the `remarks` label didn't persist
+**Post-review fix — why the `remarks` label didn't persist
 on the two left-submitted Stock Entries.** Confirmed live against
 `<erp-instance>`: Stock Entry's `remarks` field has `allow_on_submit: 0`
 in its DocField definition — Frappe silently drops (or rejects) any PUT
@@ -221,7 +221,7 @@ inflation trap documented in the Live validation record above. See
 `scripts/render_reconciliation_draft.py`'s docstring for the full
 mechanism and how the renderer enforces this at the drafting stage.
 
-`item_code` is optional (confirmed live, 2026-08-11: `POST .../get_items`
+`item_code` is optional (confirmed live: `POST .../get_items`
 with `{warehouse, posting_date, posting_time, company}` and no
 `item_code` returned every item with a balance in that warehouse — 3
 rows for `Stores - QL` on this instance). Use this to resolve a whole
@@ -311,14 +311,14 @@ this file (here and in `qkeee-erp-core`, the source of truth). Nothing
 in `references/domain-knowledge.md` or this skill's `SKILL.md` needs to
 change — they're written to be ERP-agnostic in substance.
 
-## Audit-trail retrofit (synced from qkeee-erp-core, added 2026-08-16)
+## Audit-trail retrofit
 
-`mutate_resource()` now wraps every write with a two-phase log to the
+`mutate_resource()` wraps every write with a two-phase log to the
 `Qkeee Bot Audit Log` doctype (`Attempted` before the real call,
 `Success`/`Failure` after), best-effort throughout — a target instance
-that hasn't run `qkeee-erp-bot-init` yet keeps writing exactly as before
-this retrofit, just unaudited. `query_resource()`/`get_resource()`
-gained an opt-in `debug` kwarg (`qkeee_erp.debug`) for `Read`-row
+that hasn't run `qkeee-erp-bot-init` yet keeps writing exactly as
+before this retrofit, just unaudited. `query_resource()`/`get_resource()`
+carry an opt-in `debug` kwarg (`qkeee_erp.debug`) for `Read`-row
 logging, off by default. `AUDIT_EXEMPT_DOCTYPES` prevents the logger
 from recursively logging itself or double-logging the audit Comment
 write. Full mechanism, decision log, and doctype schema:

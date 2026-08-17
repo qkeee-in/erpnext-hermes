@@ -2,7 +2,7 @@
 """
 qkeee-erp-procurement — Purchase Order draft renderer.
 
-Confirmed live against <erp-instance> (2026-08-10): ERPNext's own schema
+Confirmed live against <erp-instance>: ERPNext's own schema
 does not flag a line item's `warehouse` as `reqd`, but `validate()`
 throws ValidationError for any stock Item lacking a warehouse — a PO
 built purely against the declared schema silently fails at create time.
@@ -78,7 +78,7 @@ def render_po_draft(header: dict, items: list, stock_items: set = None,
             problems.append(
                 f"item[{idx}] ({item.get('item_code', '?')}): warehouse missing — ERPNext's "
                 f"validate() rejects a stock item line with no warehouse at create time, "
-                f"even though the schema doesn't flag it 'reqd' (confirmed live 2026-08-10)"
+                f"even though the schema doesn't flag it 'reqd' (confirmed live)"
             )
         qty = item.get("qty") or 0
         rate = item.get("rate") or 0

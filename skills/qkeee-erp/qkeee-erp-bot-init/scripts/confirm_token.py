@@ -82,3 +82,29 @@ def init_plan_token(tag: str, requested_by: str, role_needed: bool,
         doctypes_needed=sorted(doctypes_needed),
         issued_at=int(issued_at),
     )
+
+
+def bot_user_plan_token(tag: str, requested_by: str, bot_email: str, user_needed: bool,
+                         role_needed: bool, enable_needed: bool, keys_needed: bool,
+                         issued_at: int = None) -> str:
+    """Same pattern as init_plan_token(), for ensure_bot_user.py's plan:
+    which tag/requester/target bot_email, and which of user-create /
+    role-assign / re-enable / key-generation steps the current live state
+    actually needs. Re-derived from the live target on every dry-run AND
+    real-run, so a real run always checks its token against current state
+    — not a plan that may have gone stale (e.g. someone else already
+    created the user, or already generated keys, between dry-run and
+    real-run)."""
+    if issued_at is None:
+        raise ValueError("issued_at is required — pass the dry-run-time epoch seconds.")
+    return compute_token(
+        kind="bot_user_plan",
+        tag=tag,
+        requested_by=requested_by,
+        bot_email=bot_email,
+        user_needed=bool(user_needed),
+        role_needed=bool(role_needed),
+        enable_needed=bool(enable_needed),
+        keys_needed=bool(keys_needed),
+        issued_at=int(issued_at),
+    )

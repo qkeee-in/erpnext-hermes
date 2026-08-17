@@ -25,7 +25,7 @@ Non-negotiable: never issue a write call while mode == "read-only".
 This is enforced in write_resource()/mutate below, not just in the
 calling skill's prompt.
 
-Audit-trail retrofit (synced from qkeee-erp-core 2026-08-16): every
+Audit-trail retrofit (synced from qkeee-erp-core): every
 write through mutate_resource() is additionally logged to Qkeee Bot
 Audit Log (two-phase, best-effort — see qkeee-erp-bot-init/references/
 bot-doctypes-design.md). Known gap: call_whitelisted_method() below
@@ -259,8 +259,8 @@ def record_comment(cfg: dict, doctype: str, name: str, content: str) -> bool:
 
 
 # --------------------------------------------------------------------------
-# Audit logging (Qkeee Bot Audit Log) — synced from qkeee-erp-core
-# 2026-08-16. Best-effort throughout: if the target instance hasn't run
+# Audit logging (Qkeee Bot Audit Log) — synced from qkeee-erp-core.
+# Best-effort throughout: if the target instance hasn't run
 # qkeee-erp-bot-init yet, every function below swallows the failure and the
 # caller's real ERPNext read/write proceeds unaffected.
 # --------------------------------------------------------------------------
@@ -581,7 +581,7 @@ def call_whitelisted_method(tag: str, method: str, body: dict, mode: str = "read
     four RPCs takes) naming the requester — same shape as
     mutate_resource()'s. A comment failure never blocks the RPC result.
 
-    KNOWN GAP (2026-08-16): unlike mutate_resource(), this function does
+    KNOWN GAP: unlike mutate_resource(), this function does
     NOT yet log to Qkeee Bot Audit Log — it bypasses mutate_resource()
     entirely (RPC call shape, not create/update/submit/cancel), so the
     audit-logging retrofit wired into mutate_resource() doesn't cover it.

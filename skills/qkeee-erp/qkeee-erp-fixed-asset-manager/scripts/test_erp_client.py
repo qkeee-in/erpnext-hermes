@@ -71,7 +71,7 @@ class TestModeGate(unittest.TestCase):
     def test_submit_fetches_full_doc_first(self, mock_req, mock_audit_submit, mock_audit_update,
                                             mock_audit_insert, mock_comment):
         # _audit_insert/_audit_update/_audit_submit are patched directly (not just
-        # _request) so the 2026-08-16 audit-logging retrofit's own _request calls
+        # _request) so the audit-logging retrofit's own _request calls
         # (Attempted-row insert before the write, Success-row update+submit after)
         # don't consume slots from this test's ordered side_effect list, which is
         # written to match only the real submit flow's two calls.

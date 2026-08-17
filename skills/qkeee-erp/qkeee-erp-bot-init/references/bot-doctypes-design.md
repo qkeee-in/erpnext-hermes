@@ -7,7 +7,7 @@ sync the script from this doc, not the other way around.
 
 Decision log / debate history for how this design was reached lives in
 `qkeee-erp-skills-library-plan.md`'s "Bot Audit-Trail Doctype Design"
-section (2026-08-16). This file is the buildable spec that came out of it.
+section. This file is the buildable spec that came out of it.
 
 ## Why 4 doctypes, no app
 
@@ -91,7 +91,7 @@ primarily to protect against bloat.
 | `content` | Long Text, reqd | |
 | `related_capability` | Data | e.g. "Journal Entry drafting" — ties the turn back to the persona's capability table |
 | `in_reply_to` | Link → Qkeee Bot Message | self-link; the User message this turn answers. **Required for reconstructing conversations under interleaved/async turns** (decision 5) — do not rely on `creation` order alone once a harness allows a user to send a second message before the bot finishes responding to the first |
-| `linked_audit_log` | Link → Qkeee Bot Audit Log | set only on Bot-Action messages that actually touched ERPNext. **Not present in the initial `DocType` create payload** — live-confirmed 2026-08-16 that Frappe rejects a Link field naming a not-yet-existing doctype at create time (`WrongOptionsDoctypeLinkError`), and Message is created before Audit Log. Added via a post-create `update` patch once Audit Log exists — see `scripts/doctype_defs.py`'s `DEFERRED_FIELD_PATCHES` and `init_bot.py`'s `ensure_deferred_fields()`. |
+| `linked_audit_log` | Link → Qkeee Bot Audit Log | set only on Bot-Action messages that actually touched ERPNext. **Not present in the initial `DocType` create payload** — live-confirmed that Frappe rejects a Link field naming a not-yet-existing doctype at create time (`WrongOptionsDoctypeLinkError`), and Message is created before Audit Log. Added via a post-create `update` patch once Audit Log exists — see `scripts/doctype_defs.py`'s `DEFERRED_FIELD_PATCHES` and `init_bot.py`'s `ensure_deferred_fields()`. |
 
 Autoname: `hash`.
 
