@@ -289,6 +289,17 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
+def _session_or_fallback(session_id: str) -> str:
+    """`session` is a mandatory field on Qkeee Bot Audit Log. Callers that
+    never got/passed a real session_id (e.g. CLI invocations without
+    --session-id) must still produce a non-empty value here — an empty
+    string fails Audit Log's mandatory-field validation, and because
+    _audit_insert() swallows all exceptions by design, that failure is
+    otherwise invisible (the row is just silently never written). Same
+    `local-<timestamp>` fallback shape as open_session()'s own fallback."""
+    return session_id or f"local-{_now_iso()}"
+
+
 def _diff_fields(before: dict, after: dict) -> list:
     if not before or not after:
         return []
@@ -306,7 +317,8 @@ def _audit_insert(cfg: dict, fields: dict) -> str:
         payload = {"doctype": AUDIT_LOG_DOCTYPE, **fields}
         result = _request(cfg, "POST", f"/api/resource/{urllib.parse.quote(AUDIT_LOG_DOCTYPE)}", payload=payload)
         return (result.get("data") or {}).get("name")
-    except Exception:
+    except Exception as e:
+        print(f"WARN: audit log insert failed (non-fatal): {e}", file=sys.stderr)
         return None
 
 
@@ -317,7 +329,8 @@ def _audit_update(cfg: dict, log_name: str, fields: dict) -> bool:
         path = f"/api/resource/{urllib.parse.quote(AUDIT_LOG_DOCTYPE)}/{urllib.parse.quote(log_name)}"
         _request(cfg, "PUT", path, payload=fields)
         return True
-    except Exception:
+    except Exception as e:
+        print(f"WARN: audit log update failed (non-fatal): {e}", file=sys.stderr)
         return False
 
 
@@ -330,7 +343,8 @@ def _audit_submit(cfg: dict, log_name: str) -> bool:
             return False
         _request(cfg, "POST", "/api/method/frappe.client.submit", payload={"doc": full_doc})
         return True
-    except Exception:
+    except Exception as e:
+        print(f"WARN: audit log submit failed (non-fatal): {e}", file=sys.stderr)
         return False
 
 
@@ -338,7 +352,7 @@ def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id:
     if doctype in AUDIT_EXEMPT_DOCTYPES:
         return
     _audit_insert(cfg, {
-        "session": session_id or "",
+        "session": _session_or_fallback(session_id),
         "persona_code": persona_code or SKILL_LABEL,
         "environment_tag": cfg.get("tag", ""),
         "action": "Read",
@@ -358,7 +372,7 @@ def record_audit_log_start(cfg: dict, *, action: str, doctype: str, name: str, r
     if doctype in AUDIT_EXEMPT_DOCTYPES:
         return None
     return _audit_insert(cfg, {
-        "session": session_id or "",
+        "session": _session_or_fallback(session_id),
         "persona_code": persona_code or SKILL_LABEL,
         "environment_tag": cfg.get("tag", ""),
         "action": action,
@@ -594,6 +608,13 @@ def _cli():
         p.error("--mode is required for 'mutate'")
     if args.command == "mutate" and not args.requested_by:
         p.error("--requested-by is required for 'mutate'")
+    if args.command in ("query", "get", "mutate") and not args.session_id:
+        # No --session-id passed (no open_session() call preceded this CLI
+        # invocation) — generate a fallback now rather than relying solely
+        # on _session_or_fallback() deep inside audit logging, so a
+        # --debug query and a mutate in the same shell session share the
+        # visible-to-the-caller id shape consistently.
+        args.session_id = _session_or_fallback(None)
 
     try:
         if args.command == "health":

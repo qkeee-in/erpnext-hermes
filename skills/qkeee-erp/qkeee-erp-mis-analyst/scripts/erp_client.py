@@ -158,6 +158,17 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
+def _session_or_fallback(session_id: str) -> str:
+    """`session` is a mandatory field on Qkeee Bot Audit Log. Callers that
+    never got/passed a real session_id (e.g. CLI invocations without
+    --session-id) must still produce a non-empty value here — an empty
+    string fails Audit Log's mandatory-field validation, and because
+    _audit_insert() swallows all exceptions by design, that failure is
+    otherwise invisible (the row is just silently never written). Same
+    `local-<timestamp>` fallback shape as open_session()'s own fallback."""
+    return session_id or f"local-{_now_iso()}"
+
+
 def _audit_insert(cfg: dict, fields: dict) -> str:
     try:
         payload = {"doctype": AUDIT_LOG_DOCTYPE, **fields}
@@ -173,7 +184,7 @@ def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id:
     if doctype in AUDIT_EXEMPT_DOCTYPES:
         return
     _audit_insert(cfg, {
-        "session": session_id or "",
+        "session": _session_or_fallback(session_id),
         "persona_code": persona_code or SKILL_LABEL,
         "environment_tag": cfg.get("tag", ""),
         "action": "Read",
