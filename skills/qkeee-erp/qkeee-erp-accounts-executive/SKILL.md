@@ -116,20 +116,39 @@ violations field, not a second gate.
    --tag <tag> health` before the first query. A passing health check
    confirms connectivity + auth only, not query/write-time permission —
    report a later permission error as its own distinct failure mode.
-3. **Route every ERPNext call through `scripts/erp_client.py`.** For AR/AP
+3. **Register this persona — unconditional, once per session,
+   best-effort.** Right after the health check, fire-and-forget: `python
+   scripts/erp_client.py --tag <tag> register-persona --persona-code
+   qkeee-erp-accounts-executive --persona-label "Accounts Executive"
+   --default-mode read-only`. This upserts the `Qkeee Bot Persona` master
+   row — it's not a log and isn't gated on `qkeee_erp.debug`. The call
+   already swallows its own failures; don't add extra prompt-level error
+   handling around it.
+4. **Session/message logging — only when `qkeee_erp.debug` is `true`.**
+   If debug is `false` (the default), skip this step entirely: no
+   `open-session`, no `log-message`, no `--session-id` threading. When
+   `qkeee_erp.debug` is `true`: after persona registration, call
+   `open-session --user <qkeee_erp.requested_by> --persona-code
+   qkeee-erp-accounts-executive --mode <qkeee_erp.mode>` once, and thread
+   the returned `session_id` into every subsequent `query`/`get`/`mutate`
+   call's `--session-id`. Call `log-message` at natural turns — `User` for
+   the user's ask, `Bot Analysis` for your reasoning, `Bot Response` for
+   what you tell the user, `Bot Action` around a `mutate` (e.g. a JE
+   create/submit) — and `close-session` when the session ends.
+5. **Route every ERPNext call through `scripts/erp_client.py`.** For AR/AP
    aging, sales/purchase registers, or any other built-in ERPNext report,
    prefer `erp_client.py report <report_name>` (wraps `run_query_report()`)
    over hand-aggregating raw invoice/GL rows — see
    `references/erpnext-accounting-docs.md` for the report-name map.
    Always check `has_more` on a `query` response before treating a result
    as complete.
-4. **Ground every capability in `references/domain-knowledge.md`**, and
+6. **Ground every capability in `references/domain-knowledge.md`**, and
    consult `references/erpnext-accounting-docs.md` (fetching the linked
    page directly, if a harness web-fetch tool is available) whenever an
    ERPNext-specific mechanic is uncertain — which report covers a
    request, whether a tax capability needs the India Compliance app, how
    a field actually behaves on the target instance.
-5. **Journal Entry drafting always goes through
+7. **Journal Entry drafting always goes through
    `scripts/render_je_draft.py`**, never reproduced inline — it's the
    only place the balance requirement is enforced. Present the rendered
    draft, get explicit confirmation, and only then call
@@ -160,18 +179,18 @@ violations field, not a second gate.
    skill's non-negotiable requires symmetrically with submit; never call
    `mutate_resource(..., "cancel", ...)` off a bare user request with
    nothing rendered first.
-6. **Operational reports (aging, 3-way match, bank reconciliation) go
+8. **Operational reports (aging, 3-way match, bank reconciliation) go
    through `scripts/render_report.py`.** Reach for a real reconciliation
    check first (bucket-sum vs party total, for example);
    `reconciliation_checks="not_applicable"` exists only for reports with
    nothing to tie out (e.g. a bare discrepancy list) and must carry a
    reason in `notes`.
-7. **3-way match walks PO → Receipt → Invoice in order** and reports
+9. **3-way match walks PO → Receipt → Invoice in order** and reports
    every discrepancy found, not just the first — see
    `references/domain-knowledge.md` for the concrete ERPNext fields
    (`per_received`, `per_billed`) that make this checkable without
    re-deriving match state by hand.
-8. **TDS is core ERPNext (Tax Withholding Category), not India-Compliance-
+10. **TDS is core ERPNext (Tax Withholding Category), not India-Compliance-
    gated — confirmed live against `<erp-instance>`.** Don't tell a user
    TDS requires an add-on app; only GST-specific mechanics (GSTIN
    validation, GSTR filing, e-invoicing, e-way bill) actually need the
@@ -181,11 +200,11 @@ violations field, not a second gate.
    end-to-end** in this skill's own build (no India-Compliance-enabled
    instance was available); say so if a user relies on them for the first
    time against a new instance.
-9. **Prefer a harness-native HTTP or report-artifact tool if
-   discoverable**, over this skill's bundled `urllib` client or plain
-   HTML wrapper. Degrade gracefully if the harness exposes no discovery
-   mechanism.
-10. **Only the active-environment tag name (not URL/credentials) may be
+11. **Prefer a harness-native HTTP or report-artifact tool if
+    discoverable**, over this skill's bundled `urllib` client or plain
+    HTML wrapper. Degrade gracefully if the harness exposes no discovery
+    mechanism.
+12. **Only the active-environment tag name (not URL/credentials) may be
     remembered across sessions.** Credentials and URLs never go into
     agent-curated memory.
 

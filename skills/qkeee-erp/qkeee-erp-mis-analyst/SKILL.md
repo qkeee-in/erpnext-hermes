@@ -81,7 +81,29 @@ decision 10 for why Read logging is debug-gated at all.
    fails with a permission/403 error, report that distinctly ("connected,
    but this user lacks read access to `<DocType>`"), never lumped in with
    a connectivity failure.
-3. **Route every ERPNext read through `scripts/erp_client.py`.** Don't
+3. **Register this persona — unconditional, once per session,
+   best-effort.** Right after the health check, fire-and-forget: `python
+   scripts/erp_client.py --tag <tag> register-persona --persona-code
+   qkeee-erp-mis-analyst --persona-label "MIS Analyst" --default-mode
+   read-only`. This upserts the `Qkeee Bot Persona` master row — it's not
+   a log and isn't gated on `qkeee_erp.debug`. The call already swallows
+   its own failures; don't add extra prompt-level error handling around
+   it.
+4. **Session/message logging — only when `qkeee_erp.debug` is `true`.**
+   If debug is `false` (the default), skip this step entirely: no
+   `open-session`, no `log-message`, no `--session-id` threading. When
+   `qkeee_erp.debug` is `true`: after persona registration, call
+   `open-session --user <the ERPNext user id/email of the person this
+   session serves, if known — this skill has no `qkeee_erp.requested_by`
+   config since it never writes, so ask if it's needed purely for session
+   logging> --persona-code qkeee-erp-mis-analyst --mode read-only` once,
+   and thread the returned `session_id` into every subsequent
+   `query`/`get`/`report` call's `--session-id`. Call `log-message` at
+   natural turns — `User` for the user's ask, `Bot Analysis` for your
+   reasoning/tie-out checks, `Bot Response` for the report you present —
+   and `close-session` when the session ends. This skill has no `mutate`
+   path, so there is no `Bot Action` turn.
+5. **Route every ERPNext read through `scripts/erp_client.py`.** Don't
    hand-roll HTTP calls elsewhere. For any of ERPNext's standard reports
    (General Ledger, Trial Balance, Profit and Loss Statement, Balance
    Sheet, Cash Flow Statement, Accounts Receivable/Payable, Budget
@@ -98,7 +120,7 @@ decision 10 for why Read logging is debug-gated at all.
    report that looks right but doesn't reconcile; re-query with a higher
    `--limit` or tighter filters rather than presenting a partial pull as
    final.
-4. **Ground every report in `references/domain-knowledge.md`** for how
+6. **Ground every report in `references/domain-knowledge.md`** for how
    the requested statement is constructed (trial balance, P&L, balance
    sheet, GL drill-down, segment reporting, variance analysis, or a
    custom ad hoc cut) and what its reconciliation check should be. **When
@@ -108,14 +130,14 @@ decision 10 for why Read logging is debug-gated at all.
    first — and if the harness has a web-fetch tool available, fetch the
    linked `docs.frappe.io` page directly rather than guessing from a
    summary that may have drifted from the live docs.
-5. **Before declaring a reconciliation mismatch, rule out a scope
+7. **Before declaring a reconciliation mismatch, rule out a scope
    mismatch first.** Confirm both figures being compared used the same
    Finance Book filter and the same currency basis (Company currency
    unless a report is deliberately presenting account-currency values) —
    comparing across either is a known false-anomaly source, not a real
    discrepancy. See `references/erpnext-accounting-docs.md`'s Finance
    Book and multi-currency notes.
-6. **Always render financial reports through `scripts/render_report.py`**,
+8. **Always render financial reports through `scripts/render_report.py`**,
    not reproduced inline — it's the only place the reconciliation-check
    requirement is actually enforced. Ask "Markdown or a formatted HTML
    report?" if the user hasn't said (default Markdown), per the library's
@@ -125,16 +147,16 @@ decision 10 for why Read logging is debug-gated at all.
    this year") and must always carry a one-line reason in `notes` — it's
    an explicit, visible opt-out the report renders in the open, never a
    silent bypass.
-7. **Prefer a harness-native HTTP or charting/report-artifact tool if
+9. **Prefer a harness-native HTTP or charting/report-artifact tool if
    discoverable**, per the harness-capability-discovery pattern — over
    this skill's bundled `urllib` client or plain HTML wrapper. Degrade
    gracefully if the harness exposes no discovery mechanism; never
    hard-fail over that.
-8. **Route statutory/compliance questions elsewhere.** GST/TDS/
+10. **Route statutory/compliance questions elsewhere.** GST/TDS/
    e-invoicing mechanics are `qkeee-erp-accounts-executive`'s domain, not
    this skill's — if a report surfaces a statutory question, point the
    user there rather than answering from this skill's analytical lens.
-9. **Only the active-environment tag name (not URL/credentials) may be
+11. **Only the active-environment tag name (not URL/credentials) may be
    remembered across sessions** for a "last used: `<tag>`" reminder.
    Credentials and URLs never go into agent-curated memory — only
    environment variables.

@@ -543,6 +543,28 @@ def _audit_insert_generic(cfg: dict, doctype: str, fields: dict) -> str:
         return None
 
 
+def ensure_persona_registered(tag: str, *, persona_code: str, persona_label: str,
+                               default_mode: str = "read-only", non_negotiables: str = None) -> None:
+    """Best-effort idempotent upsert of this persona's Qkeee Bot Persona row.
+    Unconditional — NOT debug-gated, not a log (master data, see
+    bot-doctypes-design.md's Persona section). No-ops silently if
+    Qkeee Bot Persona isn't provisioned yet (bot-init not run) or the
+    row already exists; never raises, never blocks the caller."""
+    cfg = get_env_config(tag)
+    if resource_exists(tag, PERSONA_DOCTYPE, persona_code):
+        return
+    try:
+        _request(cfg, "POST", f"/api/resource/{urllib.parse.quote(PERSONA_DOCTYPE)}", payload={
+            "doctype": PERSONA_DOCTYPE,
+            "persona_code": persona_code,
+            "persona_label": persona_label,
+            "default_mode": "Read Write" if default_mode == "read-write" else "Read Only",
+            "non_negotiables": non_negotiables or "",
+        })
+    except ConnectorError as e:
+        print(f"WARN: persona registration failed (non-fatal): {e}", file=sys.stderr)
+
+
 # --------------------------------------------------------------------------
 # Writes
 # --------------------------------------------------------------------------
@@ -824,9 +846,36 @@ def _cli():
     m.add_argument("--issued-at", type=int, required=True,
                     help="epoch seconds from render_draft.py's output")
 
+    rp = sub.add_parser("register-persona", help="Idempotent upsert of this persona's Qkeee Bot Persona row (master data, unconditional)")
+    rp.add_argument("--persona-code", required=True, help="e.g. qkeee-erp-catch-all")
+    rp.add_argument("--persona-label", required=True, help="display name, e.g. 'Catch-All'")
+    rp.add_argument("--default-mode", choices=["read-only", "read-write"], default="read-only",
+                     help="this persona's default qkeee_erp.mode")
+    rp.add_argument("--non-negotiables", help="free text copied from the persona's SKILL.md, informational only")
+
+    os_ = sub.add_parser("open-session", help="Create a Qkeee Bot Session row (debug-mode logging)")
+    os_.add_argument("--user", required=True, help="ERPNext user id/email this session acts on behalf of")
+    os_.add_argument("--persona-code", required=True, help="e.g. qkeee-erp-catch-all")
+    os_.add_argument("--mode", required=True, choices=["read-only", "read-write"],
+                      help="from qkeee_erp.mode at session start")
+    os_.add_argument("--no-debug", action="store_true", help="mark debug_mode=False on the Session row (default True)")
+
+    lm = sub.add_parser("log-message", help="Insert a Qkeee Bot Message row (debug-mode logging)")
+    lm.add_argument("--session-id", required=True)
+    lm.add_argument("--speaker", required=True,
+                     choices=["User", "Bot Analysis", "Bot Response", "Bot Action", "System"])
+    lm.add_argument("--content", required=True)
+    lm.add_argument("--related-capability", help="e.g. 'Journal Entry drafting'")
+    lm.add_argument("--in-reply-to", help="name of the Qkeee Bot Message this turn answers")
+
+    cs = sub.add_parser("close-session", help="Mark a Qkeee Bot Session row Closed/Error")
+    cs.add_argument("--session-id", required=True)
+    cs.add_argument("--status", choices=["Closed", "Error"], default="Closed")
+
     args = p.parse_args()
 
-    if args.command in ("health", "query", "get", "mutate") and not args.tag:
+    if args.command in ("health", "query", "get", "mutate",
+                         "register-persona", "open-session", "log-message", "close-session") and not args.tag:
         p.error(f"--tag is required for '{args.command}'")
     if args.command == "mutate" and not args.mode:
         p.error("--mode is required for 'mutate'")
@@ -868,6 +917,24 @@ def _cli():
                                        approval_note=args.approval_note),
                 indent=2,
             ))
+        elif args.command == "register-persona":
+            ensure_persona_registered(args.tag, persona_code=args.persona_code,
+                                       persona_label=args.persona_label,
+                                       default_mode=args.default_mode,
+                                       non_negotiables=args.non_negotiables)
+            print(json.dumps({"ok": True}, indent=2))
+        elif args.command == "open-session":
+            session_id = open_session(args.tag, user=args.user, persona_code=args.persona_code,
+                                       mode=args.mode, debug_mode=not args.no_debug)
+            print(json.dumps({"session_id": session_id}, indent=2))
+        elif args.command == "log-message":
+            message_id = log_message(args.tag, session_id=args.session_id, speaker=args.speaker,
+                                      content=args.content, related_capability=args.related_capability,
+                                      in_reply_to=args.in_reply_to)
+            print(json.dumps({"message_id": message_id}, indent=2))
+        elif args.command == "close-session":
+            close_session(args.tag, args.session_id, status=args.status)
+            print(json.dumps({"ok": True}, indent=2))
     except ConnectorError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)

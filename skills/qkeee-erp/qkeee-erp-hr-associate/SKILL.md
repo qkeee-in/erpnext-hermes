@@ -117,15 +117,34 @@ violations field, not a second gate.
    after a gap, or before a batch of write actions.
 2. **Health check on first real use.** Run `python scripts/erp_client.py
    --tag <tag> health` before the first query.
-3. **Route every ERPNext call through `scripts/erp_client.py`.** Don't
+3. **Register this persona — unconditional, once per session,
+   best-effort.** Right after the health check, fire-and-forget: `python
+   scripts/erp_client.py --tag <tag> register-persona --persona-code
+   qkeee-erp-hr-associate --persona-label "HR Associate" --default-mode
+   read-only`. This upserts the `Qkeee Bot Persona` master row — it's not
+   a log and isn't gated on `qkeee_erp.debug`. The call already swallows
+   its own failures; don't add extra prompt-level error handling around
+   it.
+4. **Session/message logging — only when `qkeee_erp.debug` is `true`.**
+   If debug is `false` (the default), skip this step entirely: no
+   `open-session`, no `log-message`, no `--session-id` threading. When
+   `qkeee_erp.debug` is `true`: after persona registration, call
+   `open-session --user <qkeee_erp.requested_by> --persona-code
+   qkeee-erp-hr-associate --mode <qkeee_erp.mode>` once, and thread the
+   returned `session_id` into every subsequent `query`/`get`/`mutate`
+   call's `--session-id`. Call `log-message` at natural turns — `User` for
+   the user's ask, `Bot Analysis` for your reasoning, `Bot Response` for
+   what you tell the user, `Bot Action` around a `mutate` (e.g. an
+   Employee create/update) — and `close-session` when the session ends.
+5. **Route every ERPNext call through `scripts/erp_client.py`.** Don't
    hand-roll HTTP calls elsewhere in this skill's logic.
-4. **Ground every capability in `references/domain-knowledge.md`**, and
+6. **Ground every capability in `references/domain-knowledge.md`**, and
    consult `references/erpnext-hr-docs.md` (fetching the linked page
    directly, if a harness web-fetch tool is available) whenever an
    ERPNext-specific mechanic is uncertain — exact field lists, which
    Holiday Lists/Leave Types/Onboarding-Separation Templates exist on
    this org's instance.
-5. **New employee onboarding and Employee updates always go through
+7. **New employee onboarding and Employee updates always go through
    `scripts/render_employee_draft.py`**, never reproduced inline — it
    enforces ERPNext's mandatory fields, the live-discovered
    `status: "Left"` → `relieving_date` requirement, and the PII-flagging
@@ -147,14 +166,14 @@ violations field, not a second gate.
    active use; fix via a further `update` and re-review if anything is
    wrong, and only report the onboarding/update complete once the
    re-fetched record checks out.
-6. **Offer Letter (Job Offer) and Employee Onboarding always go through
+8. **Offer Letter (Job Offer) and Employee Onboarding always go through
    `scripts/render_advisory_draft.py`, and stop there.** Do not call
    `mutate_resource()`'s `create`/`submit` for either doctype as a
    continuation of this skill's own logic — if the user wants the write
    performed, that's a separate, explicitly-confirmed step the user
    directs, not something this renderer's output feeds into
    automatically.
-7. **Leave Application submission needs two live-discovered
+9. **Leave Application submission needs two live-discovered
    preconditions, not just the declared-mandatory fields**: `status`
    must be `Approved` or `Rejected` before submit (a fresh application
    defaults to `Open`), and a resolvable Holiday List must exist (on the
@@ -175,35 +194,35 @@ violations field, not a second gate.
    records — set it to `Approved`/`Rejected` via `update` if needed,
    re-review, and only then call `submit` as its own distinct step.
    Never chain `create` straight into `submit`.
-8. **Approving and submitting a Leave Application auto-creates an
+10. **Approving and submitting a Leave Application auto-creates an
    Attendance record for the covered dates, and cancelling the Leave
    Application auto-cancels that Attendance record too.** Explain this
    to the user as expected system behavior when discussing leave
    approval — don't let it surprise anyone mid-task.
-9. **Attendance discrepancies that trace back to a Leave Application
+11. **Attendance discrepancies that trace back to a Leave Application
    should be corrected via the Leave Application, not by editing the
    derived Attendance record directly** — see domain-knowledge.md.
-10. **Job Applicant is autonamed by `email_id`, not a generated
+12. **Job Applicant is autonamed by `email_id`, not a generated
     series** — query/reference it by email, and check for an existing
     record with that email before creating a new one rather than
     assuming a fresh application always gets a fresh record.
-11. **Interview Feedback should only be attributed to interviewers
+13. **Interview Feedback should only be attributed to interviewers
     actually assigned to that Interview Round** — ERPNext enforces this
     at the API level; don't attempt to record feedback from someone
     outside the round as a workaround.
-12. **HR reports go through `scripts/render_report.py`.** Reach for a
+14. **HR reports go through `scripts/render_report.py`.** Reach for a
     real reconciliation check first (e.g. department headcounts summing
     to total headcount); `reconciliation_checks="not_applicable"` exists
     only for reports with nothing to tie out (a birthday/anniversary
     list, a probation-ending list) and must carry a reason in `notes`.
-13. **Prefer a harness-native HTTP or report-artifact tool if
+15. **Prefer a harness-native HTTP or report-artifact tool if
     discoverable**, over this skill's bundled `urllib` client or plain
     HTML wrapper. Degrade gracefully if the harness exposes no discovery
     mechanism.
-14. **Only the active-environment tag name (not URL/credentials) may be
+16. **Only the active-environment tag name (not URL/credentials) may be
     remembered across sessions.** Credentials and URLs never go into
     agent-curated memory.
-15. **Warn before attempting delete on any HR record beyond a fresh,
+17. **Warn before attempting delete on any HR record beyond a fresh,
     never-referenced one — don't wait for `LinkExistsError` to discover
     this reactively.** Once a record has any downstream auto-generated
     link (e.g. Leave Application → Attendance), `DELETE` stays blocked

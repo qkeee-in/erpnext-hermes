@@ -114,13 +114,33 @@ violations field, not a second gate.
    after a gap, or before a batch of write actions.
 2. **Health check on first real use.** Run `python scripts/erp_client.py
    --tag <tag> health` before the first query.
-3. **Route every ERPNext call through `scripts/erp_client.py`.** Don't
+3. **Register this persona — unconditional, once per session,
+   best-effort.** Right after the health check, fire-and-forget: `python
+   scripts/erp_client.py --tag <tag> register-persona --persona-code
+   qkeee-erp-inventory --persona-label "Inventory" --default-mode
+   read-only`. This upserts the `Qkeee Bot Persona` master row — it's not
+   a log and isn't gated on `qkeee_erp.debug`. The call already swallows
+   its own failures; don't add extra prompt-level error handling around
+   it.
+4. **Session/message logging — only when `qkeee_erp.debug` is `true`.**
+   If debug is `false` (the default), skip this step entirely: no
+   `open-session`, no `log-message`, no `--session-id` threading. When
+   `qkeee_erp.debug` is `true`: after persona registration, call
+   `open-session --user <qkeee_erp.requested_by> --persona-code
+   qkeee-erp-inventory --mode <qkeee_erp.mode>` once, and thread the
+   returned `session_id` into every subsequent `query`/`get`/`mutate`
+   call's `--session-id`. Call `log-message` at natural turns — `User` for
+   the user's ask, `Bot Analysis` for your reasoning, `Bot Response` for
+   what you tell the user, `Bot Action` around a `mutate` (e.g. a stock
+   transfer or reconciliation) — and `close-session` when the session
+   ends.
+5. **Route every ERPNext call through `scripts/erp_client.py`.** Don't
    hand-roll HTTP calls elsewhere in this skill's logic.
-4. **Ground every capability in `references/domain-knowledge.md`**, and
+6. **Ground every capability in `references/domain-knowledge.md`**, and
    consult `references/erpnext-stock-docs.md` (fetching the linked page
    directly, if a harness web-fetch tool is available) whenever an
    ERPNext-specific mechanic is uncertain.
-5. **Stock level queries always go through `scripts/render_report.py`'s
+7. **Stock level queries always go through `scripts/render_report.py`'s
    `build_stock_level_check()`.** Fetch `Bin` rows via
    `erp_client.get_bin_qty()` for every warehouse in scope, sum them
    with `build_stock_level_check()`, and feed the resulting check into
@@ -128,7 +148,7 @@ violations field, not a second gate.
    inline. Remember stock level is always item + warehouse; a "total"
    figure is only meaningful as an explicit sum across a named
    warehouse set.
-6. **Stock transfer (Issue/Receipt/Transfer/etc.) always goes through
+8. **Stock transfer (Issue/Receipt/Transfer/etc.) always goes through
    `scripts/render_stock_entry_draft.py`.** Before calling it, fetch a
    fresh `erp_client.get_bin_qty()` balance for every `(item_code,
    s_warehouse)` pair among the lines being drafted, convert it with
@@ -155,7 +175,7 @@ violations field, not a second gate.
    `actual_source_qty` it's given — it never calls ERPNext itself — so
    the freshness of that fetch, and the post-save review, are on you,
    not on the renderer.
-7. **Stock reconciliation always goes through `scripts/render_
+9. **Stock reconciliation always goes through `scripts/render_
    reconciliation_draft.py` — and always resolves current_qty via
    `erp_client.get_stock_reconciliation_items()` first, never a bare
    Bin read and never a guess.** Check `Item.has_batch_no` /
@@ -185,7 +205,7 @@ violations field, not a second gate.
    batch-inflation risk documented above, this review is not optional
    even when the render already refused to mark the line ready without a
    resolved current_qty.
-8. **Reorder / Material Request triggers always go through
+10. **Reorder / Material Request triggers always go through
    `scripts/render_material_request_draft.py`.** Single-confirm, not
    double — a Material Request is a request, not a commitment; the
    buy/make decision belongs downstream. Recommend (don't require) a
@@ -197,7 +217,7 @@ violations field, not a second gate.
    "Material Request" <name>` first (needed for the per-line child table)
    and check its Link fields (`item_code` per line, `warehouse`) before
    calling `submit` as its own step.
-9. **Batch/serial trace queries go through `scripts/render_report.py`'s
+11. **Batch/serial trace queries go through `scripts/render_report.py`'s
    `build_batch_serial_trace()`.** Query `Stock Ledger Entry` filtered
    to the item/batch/serial in question, in chronological order, and
    feed the rows straight in — don't hand-reconstruct the running
@@ -205,11 +225,11 @@ violations field, not a second gate.
    explicitly before presenting the trace as complete; it usually means
    either a query-limit truncation (check `has_more`) or a genuine gap
    worth investigating, not something to paper over.
-10. **Prefer a harness-native HTTP or report-artifact tool if
+12. **Prefer a harness-native HTTP or report-artifact tool if
     discoverable**, over this skill's bundled `urllib` client or plain
     HTML wrapper. Degrade gracefully if the harness exposes no discovery
     mechanism.
-11. **Only the active-environment tag name (not URL/credentials) may be
+13. **Only the active-environment tag name (not URL/credentials) may be
     remembered across sessions.** Credentials and URLs never go into
     agent-curated memory.
 

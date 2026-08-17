@@ -128,7 +128,27 @@ disposal activity specifically.
    after a gap, or before a batch of write actions.
 2. **Health check on first real use.** Run `python scripts/erp_client.py
    --tag <tag> health` before the first query.
-3. **Route every generic ERPNext call through `scripts/erp_client.py`'s
+3. **Register this persona — unconditional, once per session,
+   best-effort.** Right after the health check, fire-and-forget: `python
+   scripts/erp_client.py --tag <tag> register-persona --persona-code
+   qkeee-erp-fixed-asset-manager --persona-label "Fixed Asset Manager"
+   --default-mode read-only`. This upserts the `Qkeee Bot Persona` master
+   row — it's not a log and isn't gated on `qkeee_erp.debug`. The call
+   already swallows its own failures; don't add extra prompt-level error
+   handling around it.
+4. **Session/message logging — only when `qkeee_erp.debug` is `true`.**
+   If debug is `false` (the default), skip this step entirely: no
+   `open-session`, no `log-message`, no `--session-id` threading. When
+   `qkeee_erp.debug` is `true`: after persona registration, call
+   `open-session --user <qkeee_erp.requested_by> --persona-code
+   qkeee-erp-fixed-asset-manager --mode <qkeee_erp.mode>` once, and thread
+   the returned `session_id` into every subsequent `query`/`get`/`mutate`
+   call's `--session-id`. Call `log-message` at natural turns — `User` for
+   the user's ask, `Bot Analysis` for your reasoning, `Bot Response` for
+   what you tell the user, `Bot Action` around a `mutate`/
+   `call_whitelisted_method()` call (e.g. an asset capitalization or a
+   depreciation run) — and `close-session` when the session ends.
+5. **Route every generic ERPNext call through `scripts/erp_client.py`'s
    `mutate_resource()`/`query_resource()`.** The four disposal/
    depreciation whitelisted RPC methods (`make_depreciation_entry`,
    `scrap_asset`, `restore_asset`, `make_sales_invoice`) go through
@@ -140,11 +160,11 @@ disposal activity specifically.
    by `render_depreciation_run.py`/`render_disposal.py` — the call is
    refused without it. `restore_asset` is mode-gated but not
    token-gated (recovery action, not a write-off).
-4. **Ground every capability in `references/domain-knowledge.md`**, and
+6. **Ground every capability in `references/domain-knowledge.md`**, and
    consult `references/erpnext-assets-docs.md` (fetching the linked
    docs page directly, if a harness web-fetch tool is available)
    whenever an ERPNext-specific mechanic is uncertain.
-5. **Asset capitalization always goes through
+7. **Asset capitalization always goes through
    `scripts/render_asset_draft.py`**, never reproduced inline. It
    refuses "ready" status if: cost basis is missing/zero with no stated
    reason, the source is ambiguous (neither a linked purchase document
@@ -168,7 +188,7 @@ disposal activity specifically.
    Asset Depreciation Schedule in the same call, confirmed live, so the
    review must cover the schedule config too). Never chain create
    straight into submit without that review turn.
-6. **Depreciation runs always go through
+8. **Depreciation runs always go through
    `scripts/render_depreciation_run.py` — and require asking a second
    time after showing it.** Fetch every `Depreciation Schedule` row
    with `schedule_date <= today` and an empty `journal_entry` (the
@@ -185,7 +205,7 @@ disposal activity specifically.
    `erp_client.call_whitelisted_method()` with `"make_depreciation_entry"`
    and the `confirmation_token` printed in the render output — the call
    is refused without a matching token.
-7. **Asset transfer (Issue/Receipt/Transfer/Transfer and Issue) always
+9. **Asset transfer (Issue/Receipt/Transfer/Transfer and Issue) always
    goes through `scripts/render_movement_draft.py`.** Fetch the
    asset's real current `location` immediately before rendering (not a
    cached value) and pass it as `actual_current_locations`, along with
@@ -203,7 +223,7 @@ disposal activity specifically.
    `target_location`, `to_employee`/`from_employee` Link fields resolve
    to real records and match what was confirmed — before calling
    `submit` as its own step.
-8. **Disposal (scrap or sale) always goes through
+10. **Disposal (scrap or sale) always goes through
    `scripts/render_disposal.py` — and requires asking a second time
    after showing it, same as depreciation runs.** Require a stated
    `reason` (never accept a bare "dispose it"). For scrap, the entire
@@ -222,7 +242,7 @@ disposal activity specifically.
    live-tested end to end during this build** — see
    `references/erpnext-assets-docs.md`'s "Not live-tested" section;
    treat its exact field defaults/error modes as unconfirmed.
-9. **Asset maintenance scheduling and Asset Repair are moderate-risk,
+11. **Asset maintenance scheduling and Asset Repair are moderate-risk,
    single-confirm capabilities** (not double-confirm — they don't carry
    the same book-value/write-off stakes as depreciation/disposal).
    Stage a normal draft (fields + intent), confirm, then create/update/
@@ -237,7 +257,7 @@ disposal activity specifically.
    including the `asset` Link — before the final `submit` call;
    if `capitalize_repair_cost` is set, say so explicitly since it
    changes the asset's book value going forward.
-10. **Asset audit / physical verification checklists go through
+12. **Asset audit / physical verification checklists go through
     `scripts/render_report.py`**, same reconciliation-gate discipline
     as every other read-write persona skill's report renderer. An audit
     checklist has no single figure to tie out — declare
@@ -245,11 +265,11 @@ disposal activity specifically.
     A depreciation-schedule-review report DOES have a tie-out — use
     `build_schedule_reconciliation()` (sum of scheduled depreciation
     amounts vs. depreciable base) rather than hand-checking it.
-11. **Prefer a harness-native HTTP or report-artifact tool if
+13. **Prefer a harness-native HTTP or report-artifact tool if
     discoverable**, over this skill's bundled `urllib` client or plain
     HTML wrapper. Degrade gracefully if the harness exposes no discovery
     mechanism.
-12. **Only the active-environment tag name (not URL/credentials) may be
+14. **Only the active-environment tag name (not URL/credentials) may be
     remembered across sessions.** Credentials and URLs never go into
     agent-curated memory.
 

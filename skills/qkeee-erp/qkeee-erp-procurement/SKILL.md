@@ -110,15 +110,35 @@ violations field, not a second gate.
    after a gap, or before a batch of write actions.
 2. **Health check on first real use.** Run `python scripts/erp_client.py
    --tag <tag> health` before the first query.
-3. **Route every ERPNext call through `scripts/erp_client.py`.** Don't
+3. **Register this persona — unconditional, once per session,
+   best-effort.** Right after the health check, fire-and-forget: `python
+   scripts/erp_client.py --tag <tag> register-persona --persona-code
+   qkeee-erp-procurement --persona-label "Procurement" --default-mode
+   read-only`. This upserts the `Qkeee Bot Persona` master row — it's not
+   a log and isn't gated on `qkeee_erp.debug`. The call already swallows
+   its own failures; don't add extra prompt-level error handling around
+   it.
+4. **Session/message logging — only when `qkeee_erp.debug` is `true`.**
+   If debug is `false` (the default), skip this step entirely: no
+   `open-session`, no `log-message`, no `--session-id` threading. When
+   `qkeee_erp.debug` is `true`: after persona registration, call
+   `open-session --user <qkeee_erp.requested_by> --persona-code
+   qkeee-erp-procurement --mode <qkeee_erp.mode>` once, and thread the
+   returned `session_id` into every subsequent `query`/`get`/`mutate`
+   call's `--session-id`. Call `log-message` at natural turns — `User` for
+   the user's ask, `Bot Analysis` for your reasoning, `Bot Response` for
+   what you tell the user, `Bot Action` around a `mutate` (e.g. Supplier
+   onboarding or a Purchase Order create) — and `close-session` when the
+   session ends.
+5. **Route every ERPNext call through `scripts/erp_client.py`.** Don't
    hand-roll HTTP calls elsewhere in this skill's logic.
-4. **Ground every capability in `references/domain-knowledge.md`**, and
+6. **Ground every capability in `references/domain-knowledge.md`**, and
    consult `references/erpnext-buying-docs.md` (fetching the linked page
    directly, if a harness web-fetch tool is available) whenever an
    ERPNext-specific mechanic is uncertain — exact field lists, whether a
    Workflow exists on this org's Purchase Order, what a status value
    means.
-5. **Supplier onboarding always goes through
+7. **Supplier onboarding always goes through
    `scripts/render_supplier_draft.py`**, never reproduced inline — it's
    the only place the KYC-completeness bar is enforced. Present the
    rendered draft, get explicit confirmation, and only then call
@@ -134,7 +154,7 @@ violations field, not a second gate.
    `references/connector-reference.md`), so this post-save re-fetch is
    the only checkpoint before the supplier is usable on a PO; fix via a
    further `update` and re-review if anything is wrong.
-6. **Purchase Order drafting always goes through
+8. **Purchase Order drafting always goes through
    `scripts/render_po_draft.py`.** It checks the practical warehouse
    requirement for stock-tracked lines (not visible in the DocType's
    `reqd` flags — confirmed live, see `references/connector-
@@ -167,7 +187,7 @@ violations field, not a second gate.
    `warehouse`, `cost_center`) resolve to real, existing records — and
    only submit once that review confirms the draft is correct. Never
    chain create straight into submit even when authority is confirmed.
-7. **RFQ/Supplier Quotation comparison and GRN matching go through
+9. **RFQ/Supplier Quotation comparison and GRN matching go through
    `scripts/render_report.py`, using its `build_quotation_coverage()`
    and `build_grn_match()` helpers — don't hand-aggregate coverage or
    discrepancies inline.** `build_quotation_coverage()` returns, per
@@ -180,22 +200,22 @@ violations field, not a second gate.
    reconciliation check first; `reconciliation_checks="not_applicable"`
    exists only for reports with nothing to tie out (e.g. a PO status
    lookup) and must carry a reason in `notes`.
-8. **No dedicated built-in ERPNext report was found for RFQ/quotation
+10. **No dedicated built-in ERPNext report was found for RFQ/quotation
    comparison** (unlike PO/GRN status, which reads off DocType fields
    directly) — this capability queries `Request for Quotation Item` /
    `Supplier Quotation` / `Supplier Quotation Item` and builds the
    comparison itself. If a target org's ERPNext version has a dedicated
    report, prefer it over hand-aggregation.
-9. **Supplier Scorecard queries are documentation-grounded, not
+11. **Supplier Scorecard queries are documentation-grounded, not
    live-tested** — no scored supplier existed on `<erp-instance>` at
    build time. Say so if a user relies on this capability for the first
    time against a new instance, and treat the first real query as the
    effective validation.
-10. **Prefer a harness-native HTTP or report-artifact tool if
+12. **Prefer a harness-native HTTP or report-artifact tool if
     discoverable**, over this skill's bundled `urllib` client or plain
     HTML wrapper. Degrade gracefully if the harness exposes no discovery
     mechanism.
-11. **Only the active-environment tag name (not URL/credentials) may be
+13. **Only the active-environment tag name (not URL/credentials) may be
     remembered across sessions.** Credentials and URLs never go into
     agent-curated memory.
 

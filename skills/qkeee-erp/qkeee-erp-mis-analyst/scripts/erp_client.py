@@ -4,12 +4,14 @@ qkeee-erp-mis-analyst connector — read-only-only copy of the canonical
 qkeee-erp-core ERPNext (Frappe REST API) client.
 
 Self-contained: stdlib only (urllib). This copy deliberately omits the
-write path (mutate_resource, ReadOnlyModeError, the `mutate` CLI
-subcommand) entirely — per the module plan, this skill is read-only
-always, regardless of `qkeee_erp.mode`. That's a structural guarantee,
-not a self-imposed restraint: there is no write call in this file to
-invoke. The full read+write connector lives in qkeee-erp-core; sync
-read-path changes from there, never add mutate_resource here.
+write path (mutate_resource, _do_mutate, ReadOnlyModeError,
+MissingRequesterError, record_comment, the `mutate` CLI subcommand)
+entirely — per the module plan, this skill is read-only always,
+regardless of `qkeee_erp.mode`. That's a structural guarantee, not a
+self-imposed restraint: there is no call in this file that writes to an
+arbitrary ERPNext business DocType. The full read+write connector lives
+in qkeee-erp-core; sync read-path changes (and shared audit/session/
+persona bookkeeping infra) from there, never add mutate_resource here.
 
 Env/credential model (tagged, not fixed dev/test/qa/prod):
   QKEEE_ERP_<TAG>_BASE_URL
@@ -21,8 +23,15 @@ Env/credential model (tagged, not fixed dev/test/qa/prod):
 Audit-trail retrofit: reads can be logged to Qkeee Bot Audit Log when
 `debug=True` (best-effort — see
 qkeee-erp-bot-init/references/bot-doctypes-design.md). This skill has no
-write path, so nothing here touches the two-phase Attempted/Success
-write-logging machinery — only the single-shot Read logging applies.
+write path against ERPNext business DocTypes, so nothing here touches
+the two-phase Attempted/Success write-logging machinery for a real
+mutate — only the single-shot Read logging (_log_read) applies. The
+Session/Message/Persona bookkeeping helpers below (open_session(),
+log_message(), close_session(), ensure_persona_registered()) do write
+rows to the Qkeee Bot infra doctypes themselves — that's the same
+category of write the pre-existing audit-log insert already made, not
+a write to a business DocType, so it's consistent with the read-only
+guarantee above.
 """
 
 import argparse
@@ -36,10 +45,19 @@ from datetime import datetime, timezone
 
 SKILL_LABEL = "qkeee-erp-mis-analyst"
 
+# Qkeee Bot audit-trail doctypes (see qkeee-erp-bot-init). A target
+# instance may not have these provisioned yet — every call into them
+# below is best-effort and never blocks or fails the caller's actual
+# ERPNext read.
 AUDIT_LOG_DOCTYPE = "Qkeee Bot Audit Log"
 SESSION_DOCTYPE = "Qkeee Bot Session"
 MESSAGE_DOCTYPE = "Qkeee Bot Message"
 PERSONA_DOCTYPE = "Qkeee Bot Persona"
+
+# Doctypes exempt from audit-wrapping. Mandatory, not optional: without
+# this, logging a read of Qkeee Bot Audit Log itself would recurse
+# forever. "Comment" is exempt for symmetry with core (this file never
+# posts one, since record_comment() is part of the omitted write path).
 AUDIT_EXEMPT_DOCTYPES = {
     AUDIT_LOG_DOCTYPE, SESSION_DOCTYPE, MESSAGE_DOCTYPE, PERSONA_DOCTYPE,
     "Comment",
@@ -93,16 +111,17 @@ def _request(cfg: dict, method: str, path: str, params: dict = None, payload: di
     if params:
         url += "?" + urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
 
-    # `payload`/POST here is used only by run_query_report() below, to call
-    # a whitelisted *read* method (frappe.desk.query_report.run) that
-    # Frappe happens to expose over POST — it runs a report, it does not
-    # create/update/submit/cancel/delete a record. This is not the
-    # mutate_resource() write path (deliberately absent from this file);
-    # don't repurpose this for anything that actually writes data. The
-    # audit-log helpers below also use this for logging Read rows, which
-    # is itself a write to Qkeee Bot Audit Log — not exempt from that
-    # description, just exempt from AUDIT_EXEMPT_DOCTYPES's recursion
-    # guard by construction (the log write never re-triggers itself).
+    # `payload`/POST here is used by run_query_report() below, to call a
+    # whitelisted *read* method (frappe.desk.query_report.run) that Frappe
+    # happens to expose over POST — it runs a report, it does not
+    # create/update/submit/cancel/delete a record. It's also used by the
+    # audit/session/persona bookkeeping helpers, which write rows to the
+    # Qkeee Bot infra doctypes (not exempt from being a "write" in the
+    # general sense, just exempt from AUDIT_EXEMPT_DOCTYPES's recursion
+    # guard by construction — the log write never re-triggers itself).
+    # This is not the mutate_resource() write path (deliberately absent
+    # from this file); don't repurpose this for anything that actually
+    # writes an arbitrary ERPNext business DocType.
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Authorization", f"token {cfg['api_key']}:{cfg['api_secret']}")
@@ -147,56 +166,6 @@ def health_check(tag: str = "default") -> dict:
     return {"tag": tag, "base_url": cfg["base_url"], "status": "ok", "logged_in_as": result.get("message")}
 
 
-# --------------------------------------------------------------------------
-# Audit logging (Qkeee Bot Audit Log) — read-only side only.
-# Best-effort: if the target instance hasn't
-# run qkeee-erp-bot-init yet, this silently no-ops and the caller's real
-# read proceeds unaffected.
-# --------------------------------------------------------------------------
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
-
-
-def _session_or_fallback(session_id: str) -> str:
-    """`session` is a mandatory field on Qkeee Bot Audit Log. Callers that
-    never got/passed a real session_id (e.g. CLI invocations without
-    --session-id) must still produce a non-empty value here — an empty
-    string fails Audit Log's mandatory-field validation, and because
-    _audit_insert() swallows all exceptions by design, that failure is
-    otherwise invisible (the row is just silently never written). Same
-    `local-<timestamp>` fallback shape as open_session()'s own fallback."""
-    return session_id or f"local-{_now_iso()}"
-
-
-def _audit_insert(cfg: dict, fields: dict) -> str:
-    try:
-        payload = {"doctype": AUDIT_LOG_DOCTYPE, **fields}
-        result = _request(cfg, "POST", f"/api/resource/{urllib.parse.quote(AUDIT_LOG_DOCTYPE)}", payload=payload)
-        return (result.get("data") or {}).get("name")
-    except Exception:
-        # Broad by design: audit logging must never surface a failure mode
-        # that could be mistaken for the real read failing.
-        return None
-
-
-def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id: str, persona_code: str) -> None:
-    if doctype in AUDIT_EXEMPT_DOCTYPES:
-        return
-    _audit_insert(cfg, {
-        "session": _session_or_fallback(session_id),
-        "persona_code": persona_code or SKILL_LABEL,
-        "environment_tag": cfg.get("tag", ""),
-        "action": "Read",
-        "reference_doctype": doctype,
-        "reference_name": name or "",
-        "requested_by": requested_by or "",
-        "timestamp": _now_iso(),
-        "status": "Success",
-        "user_approved": "Not Required",
-    })
-
-
 def query_resource(tag: str, doctype: str, filters: list = None, fields: list = None, limit: int = 20,
                     *, debug: bool = False, session_id: str = None, persona_code: str = None,
                     requested_by: str = None) -> dict:
@@ -208,8 +177,12 @@ def query_resource(tag: str, doctype: str, filters: list = None, fields: list = 
     (e.g. a GL drill-down that silently drops rows past 20) is a bug in
     the calling report logic, not something this connector can prevent.
 
-    `debug=True` additionally logs this read to Qkeee Bot Audit Log
-    (best-effort).
+    `debug=True` additionally logs this read to Qkeee Bot Audit Log (best-
+    effort). Read logging is debug-gated, not unconditional — a
+    read-heavy persona like MIS Analyst can generate far more Read calls
+    than any other action type, so logging every read unconditionally
+    would have made Audit Log itself the volume/bloat problem the debug
+    gate exists to avoid. See bot-doctypes-design.md decision 10.
     """
     cfg = get_env_config(tag)
     params = {"limit_page_length": limit + 1}
@@ -266,7 +239,8 @@ def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
     presentation-only HTML fields before returning — see _NOISE_FIELDS.
 
     `debug=True` logs this read to Qkeee Bot Audit Log, same as
-    query_resource().
+    query_resource() — see that function's docstring for why this is
+    debug-gated rather than unconditional.
     """
     cfg = get_env_config(tag)
     path = f"/api/resource/{urllib.parse.quote(doctype)}/{urllib.parse.quote(name)}"
@@ -279,6 +253,18 @@ def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
         _log_read(cfg, doctype, name, requested_by, session_id, persona_code)
 
     return {"data": data}
+
+
+def resource_exists(tag: str, doctype: str, name: str) -> bool:
+    """404-tolerant existence check (e.g. "has bot-init provisioned the
+    audit doctypes on this instance yet"). Never logged, never gated."""
+    try:
+        get_resource(tag, doctype, name, strip_noise=False)
+        return True
+    except ConnectorError as e:
+        if "(404)" in str(e):
+            return False
+        raise
 
 
 def run_query_report(tag: str, report_name: str, filters: dict = None,
@@ -328,6 +314,165 @@ def run_query_report(tag: str, report_name: str, filters: dict = None,
     }
 
 
+# --------------------------------------------------------------------------
+# Audit logging (Qkeee Bot Audit Log / Session / Message / Persona)
+#
+# Audit logging is best-effort, not a gate. If the target instance hasn't
+# run qkeee-erp-bot-init yet, or the audit doctypes are unreachable for any
+# reason, every function below swallows the failure and the caller's real
+# ERPNext read proceeds unaffected. The alternative — refusing a user's
+# actual requested read because internal bookkeeping infra isn't
+# provisioned — would regress read availability behind an infra rollout,
+# which is a worse failure mode than an occasional unaudited call.
+# --------------------------------------------------------------------------
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
+def _session_or_fallback(session_id: str) -> str:
+    """`session` is a mandatory field on Qkeee Bot Audit Log. Callers that
+    never got/passed a real session_id (e.g. CLI invocations without
+    --session-id) must still produce a non-empty value here — an empty
+    string fails Audit Log's mandatory-field validation, and because
+    _audit_insert() swallows all exceptions by design, that failure is
+    otherwise invisible (the row is just silently never written). Same
+    `local-<timestamp>` fallback shape as open_session()'s own fallback."""
+    return session_id or f"local-{_now_iso()}"
+
+
+def _audit_insert(cfg: dict, fields: dict) -> str:
+    """Raw best-effort insert into Qkeee Bot Audit Log. Returns the created
+    record's name, or None on any failure (doctype not provisioned,
+    permission denied, network error, etc.) — never raises."""
+    try:
+        payload = {"doctype": AUDIT_LOG_DOCTYPE, **fields}
+        result = _request(cfg, "POST", f"/api/resource/{urllib.parse.quote(AUDIT_LOG_DOCTYPE)}", payload=payload)
+        return (result.get("data") or {}).get("name")
+    except Exception as e:
+        # Broad by design: audit logging must never surface a failure mode
+        # that could be mistaken for the real read failing. Still warn to
+        # stderr so a persistently-failing audit path (e.g. a mandatory
+        # field validation error) is visible in logs instead of just an
+        # empty Audit Log table with no trace of why.
+        print(f"WARN: audit log insert failed (non-fatal): {e}", file=sys.stderr)
+        return None
+
+
+def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id: str, persona_code: str) -> None:
+    """Single-shot (no two-phase — nothing to crash into inconsistently
+    for a read) best-effort Audit Log row for a debug-mode read."""
+    if doctype in AUDIT_EXEMPT_DOCTYPES:
+        return
+    _audit_insert(cfg, {
+        "session": _session_or_fallback(session_id),
+        "persona_code": persona_code or SKILL_LABEL,
+        "environment_tag": cfg.get("tag", ""),
+        "action": "Read",
+        "reference_doctype": doctype,
+        "reference_name": name or "",
+        "requested_by": requested_by or "",
+        "timestamp": _now_iso(),
+        "status": "Success",
+        "user_approved": "Not Required",
+    })
+
+
+# --------------------------------------------------------------------------
+# Session / Message logging — debug-mode only, opt-in per caller.
+#
+# Unlike Audit Log reads (debug-gated per-call), Session/Message rows are
+# only ever created when the calling skill explicitly opts in — normally
+# gated on qkeee_erp.debug at the SKILL.md level. This module doesn't
+# enforce that gate itself (it has no notion of "the current session's
+# debug flag" beyond what the caller passes); it's the caller's job to
+# only call these when qkeee_erp.debug is true.
+# --------------------------------------------------------------------------
+
+def open_session(tag: str, *, user: str, persona_code: str, mode: str, debug_mode: bool = True) -> str:
+    """Create a Qkeee Bot Session row. Returns the session id (the row's
+    `name`) on success, or a locally-generated fallback id if the insert
+    failed — callers always get a usable session_id string to thread
+    through subsequent calls (Audit Log's `session` field is Data, not a
+    Link, precisely so it can carry this fallback id — see
+    bot-doctypes-design.md decision 10). `mode` is recorded for context
+    only in this read-only-only skill (this connector never issues a
+    write against an ERPNext business DocType regardless of what mode
+    string is passed here)."""
+    cfg = get_env_config(tag)
+    name = _audit_insert_generic(cfg, SESSION_DOCTYPE, {
+        "user": user,
+        "persona": persona_code,
+        "environment_tag": tag,
+        "mode": "Read Write" if mode == "read-write" else "Read Only",
+        "debug_mode": 1 if debug_mode else 0,
+        "started_on": _now_iso(),
+        "status": "Active",
+    })
+    return name or f"local-{_now_iso()}"
+
+
+def close_session(tag: str, session_id: str, *, status: str = "Closed") -> None:
+    """Best-effort: mark a Session row Closed/Error. No-op if session_id
+    is a local fallback id (never persisted) or the update fails."""
+    if not session_id or session_id.startswith("local-"):
+        return
+    cfg = get_env_config(tag)
+    try:
+        path = f"/api/resource/{urllib.parse.quote(SESSION_DOCTYPE)}/{urllib.parse.quote(session_id)}"
+        _request(cfg, "PUT", path, payload={"status": status, "ended_on": _now_iso()})
+    except ConnectorError:
+        pass
+
+
+def log_message(tag: str, *, session_id: str, speaker: str, content: str,
+                 related_capability: str = None, in_reply_to: str = None) -> str:
+    """Best-effort insert of a Qkeee Bot Message row. Returns the row's
+    name (usable as a future in_reply_to target), or None on failure."""
+    cfg = get_env_config(tag)
+    return _audit_insert_generic(cfg, MESSAGE_DOCTYPE, {
+        "session": session_id,
+        "speaker": speaker,
+        "content": content,
+        "related_capability": related_capability,
+        "in_reply_to": in_reply_to,
+    })
+
+
+def _audit_insert_generic(cfg: dict, doctype: str, fields: dict) -> str:
+    """Same shape as _audit_insert() but for Session/Message rather than
+    Audit Log specifically — kept separate since Session/Message never
+    go through the two-phase Attempted/Success lifecycle Audit Log does."""
+    try:
+        payload = {"doctype": doctype, **{k: v for k, v in fields.items() if v is not None}}
+        result = _request(cfg, "POST", f"/api/resource/{urllib.parse.quote(doctype)}", payload=payload)
+        return (result.get("data") or {}).get("name")
+    except ConnectorError:
+        return None
+
+
+def ensure_persona_registered(tag: str, *, persona_code: str, persona_label: str,
+                               default_mode: str = "read-only", non_negotiables: str = None) -> None:
+    """Best-effort idempotent upsert of this persona's Qkeee Bot Persona row.
+    Unconditional — NOT debug-gated, not a log (master data, see
+    bot-doctypes-design.md's Persona section). No-ops silently if
+    Qkeee Bot Persona isn't provisioned yet (bot-init not run) or the
+    row already exists; never raises, never blocks the caller."""
+    cfg = get_env_config(tag)
+    if resource_exists(tag, PERSONA_DOCTYPE, persona_code):
+        return
+    try:
+        _request(cfg, "POST", f"/api/resource/{urllib.parse.quote(PERSONA_DOCTYPE)}", payload={
+            "doctype": PERSONA_DOCTYPE,
+            "persona_code": persona_code,
+            "persona_label": persona_label,
+            "default_mode": "Read Write" if default_mode == "read-write" else "Read Only",
+            "non_negotiables": non_negotiables or "",
+        })
+    except ConnectorError as e:
+        print(f"WARN: persona registration failed (non-fatal): {e}", file=sys.stderr)
+
+
 def list_configured_tags() -> list:
     """List environment tags with a full var set (BASE_URL+API_KEY+API_SECRET)
     already present in os.environ."""
@@ -345,7 +490,7 @@ def list_configured_tags() -> list:
 
 def _cli():
     p = argparse.ArgumentParser(description="qkeee-erp-mis-analyst connector CLI (read-only)")
-    p.add_argument("--tag", help="environment tag, from qkeee_erp.active_env (required for health/query)")
+    p.add_argument("--tag", help="environment tag, from qkeee_erp.active_env (required for health/query/get/report)")
     p.add_argument("--debug", action="store_true", help="from qkeee_erp.debug — logs reads to Qkeee Bot Audit Log")
     p.add_argument("--session-id", help="from the caller's open_session()")
     p.add_argument("--persona-code", default=SKILL_LABEL, help="threaded into audit rows")
@@ -370,10 +515,44 @@ def _cli():
     g.add_argument("name")
     g.add_argument("--no-strip", action="store_true", help="skip noise-stripping, return the raw doc verbatim")
 
+    rp = sub.add_parser("register-persona", help="Idempotent upsert of this persona's Qkeee Bot Persona row (master data, unconditional)")
+    rp.add_argument("--persona-code", required=True, help="e.g. qkeee-erp-mis-analyst")
+    rp.add_argument("--persona-label", required=True, help="display name, e.g. 'MIS Analyst'")
+    rp.add_argument("--default-mode", choices=["read-only", "read-write"], default="read-only",
+                     help="this persona's default qkeee_erp.mode")
+    rp.add_argument("--non-negotiables", help="free text copied from the persona's SKILL.md, informational only")
+
+    os_ = sub.add_parser("open-session", help="Create a Qkeee Bot Session row (debug-mode logging)")
+    os_.add_argument("--user", required=True, help="ERPNext user id/email this session acts on behalf of")
+    os_.add_argument("--persona-code", required=True, help="e.g. qkeee-erp-mis-analyst")
+    os_.add_argument("--mode", required=True, choices=["read-only", "read-write"],
+                      help="from qkeee_erp.mode at session start")
+    os_.add_argument("--no-debug", action="store_true", help="mark debug_mode=False on the Session row (default True)")
+
+    lm = sub.add_parser("log-message", help="Insert a Qkeee Bot Message row (debug-mode logging)")
+    lm.add_argument("--session-id", required=True)
+    lm.add_argument("--speaker", required=True,
+                     choices=["User", "Bot Analysis", "Bot Response", "Bot Action", "System"])
+    lm.add_argument("--content", required=True)
+    lm.add_argument("--related-capability", help="e.g. 'Trial Balance drill-down'")
+    lm.add_argument("--in-reply-to", help="name of the Qkeee Bot Message this turn answers")
+
+    cs = sub.add_parser("close-session", help="Mark a Qkeee Bot Session row Closed/Error")
+    cs.add_argument("--session-id", required=True)
+    cs.add_argument("--status", choices=["Closed", "Error"], default="Closed")
+
     args = p.parse_args()
 
-    if args.command in ("health", "query", "report", "get") and not args.tag:
+    if args.command in ("health", "query", "report", "get",
+                         "register-persona", "open-session", "log-message", "close-session") and not args.tag:
         p.error(f"--tag is required for '{args.command}'")
+    if args.command in ("query", "report", "get") and not args.session_id:
+        # No --session-id passed (no open_session() call preceded this CLI
+        # invocation) — generate a fallback now rather than relying solely
+        # on _session_or_fallback() deep inside audit logging, so a
+        # --debug query and a --debug report in the same shell session
+        # share the visible-to-the-caller id shape consistently.
+        args.session_id = _session_or_fallback(None)
 
     try:
         if args.command == "health":
@@ -398,6 +577,24 @@ def _cli():
                                            debug=args.debug, session_id=args.session_id,
                                            persona_code=args.persona_code,
                                            requested_by=args.requested_by), indent=2))
+        elif args.command == "register-persona":
+            ensure_persona_registered(args.tag, persona_code=args.persona_code,
+                                       persona_label=args.persona_label,
+                                       default_mode=args.default_mode,
+                                       non_negotiables=args.non_negotiables)
+            print(json.dumps({"ok": True}, indent=2))
+        elif args.command == "open-session":
+            session_id = open_session(args.tag, user=args.user, persona_code=args.persona_code,
+                                       mode=args.mode, debug_mode=not args.no_debug)
+            print(json.dumps({"session_id": session_id}, indent=2))
+        elif args.command == "log-message":
+            message_id = log_message(args.tag, session_id=args.session_id, speaker=args.speaker,
+                                      content=args.content, related_capability=args.related_capability,
+                                      in_reply_to=args.in_reply_to)
+            print(json.dumps({"message_id": message_id}, indent=2))
+        elif args.command == "close-session":
+            close_session(args.tag, args.session_id, status=args.status)
+            print(json.dumps({"ok": True}, indent=2))
     except ConnectorError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)

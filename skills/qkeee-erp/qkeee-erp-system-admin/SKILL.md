@@ -134,7 +134,26 @@ they're relying on the audit trail to cover permission-change activity.
    after a gap, or before a batch of write actions.
 2. **Health check on first real use.** Run `python scripts/erp_client.py
    --tag <tag> health` before the first query.
-3. **Route every generic ERPNext call through `scripts/erp_client.py`.**
+3. **Register this persona — unconditional, once per session,
+   best-effort.** Right after the health check, fire-and-forget: `python
+   scripts/erp_client.py --tag <tag> register-persona --persona-code
+   qkeee-erp-system-admin --persona-label "System Admin" --default-mode
+   read-only`. This upserts the `Qkeee Bot Persona` master row — it's not
+   a log and isn't gated on `qkeee_erp.debug`. The call already swallows
+   its own failures; don't add extra prompt-level error handling around
+   it.
+4. **Session/message logging — only when `qkeee_erp.debug` is `true`.**
+   If debug is `false` (the default), skip this step entirely: no
+   `open-session`, no `log-message`, no `--session-id` threading. When
+   `qkeee_erp.debug` is `true`: after persona registration, call
+   `open-session --user <qkeee_erp.requested_by> --persona-code
+   qkeee-erp-system-admin --mode <qkeee_erp.mode>` once, and thread the
+   returned `session_id` into every subsequent `query`/`get`/`mutate`
+   call's `--session-id`. Call `log-message` at natural turns — `User` for
+   the user's ask, `Bot Analysis` for your reasoning, `Bot Response` for
+   what you tell the user, `Bot Action` around a `mutate`/permission or
+   user-creation change — and `close-session` when the session ends.
+5. **Route every generic ERPNext call through `scripts/erp_client.py`.**
    `mutate_resource()` for moderate-risk writes (e.g. a Workflow
    `is_active` toggle, a Webhook create for review). The Role
    Permission Manager's own read/write methods
@@ -143,11 +162,11 @@ they're relying on the audit trail to cover permission-change activity.
    `query_resource()` against the `DocPerm` doctype fails live with a
    `PermissionError` (confirmed against <erp-instance>), so permission
    rows must go through these dedicated methods, never generic query.
-4. **Ground every capability in `references/domain-knowledge.md`**, and
+6. **Ground every capability in `references/domain-knowledge.md`**, and
    consult `references/erpnext-system-admin-docs.md` (fetching the
    linked docs page directly, if a harness web-fetch tool is available)
    whenever an ERPNext-specific mechanic is uncertain.
-5. **User creation always goes through `scripts/render_user_draft.py`,
+7. **User creation always goes through `scripts/render_user_draft.py`,
    then `erp_client.create_user()`.**
    Never infer roles from a vague request ("give them access to
    procurement") — resolve to the exact role names first (a Role query
@@ -177,7 +196,7 @@ they're relying on the audit trail to cover permission-change activity.
    submittable doctype, so this re-fetch-and-check is the only
    checkpoint before the account is live — fix via `update` and
    re-review if anything is off.
-6. **Permission/role matrix review is always read-only and never
+8. **Permission/role matrix review is always read-only and never
    gated.** `erp_client.get_roles_and_doctypes()` for the full
    role/doctype list, `erp_client.get_permissions(tag, doctype)` for a
    specific doctype's full permission matrix (standard rows merged with
@@ -185,7 +204,7 @@ they're relying on the audit trail to cover permission-change activity.
    Permission Manager page shows them) — confirmed live, this is the
    only working read path; plain `query_resource()` against `DocPerm`
    fails.
-7. **Any permission change always goes through
+9. **Any permission change always goes through
    `scripts/render_permission_change.py` — and requires asking a second
    time after showing it.** Four actions, all requiring a matching
    `confirmation_token` before `erp_client.call_permission_manager()`
@@ -218,7 +237,7 @@ they're relying on the audit trail to cover permission-change activity.
    actually matches the stated before/after — permission rows have no
    separate submit step, so this post-write re-fetch is the only
    checkpoint before reporting the change done.
-8. **Simple DocType customization (one Custom Field, or one Property
+10. **Simple DocType customization (one Custom Field, or one Property
    Setter value change) always goes through
    `scripts/render_customization_draft.py`.** Pass
    `existing_fieldnames` (from querying the `Custom Field` resource
@@ -239,11 +258,11 @@ they're relying on the audit trail to cover permission-change activity.
    persisted `dt` (target DocType) Link field matches what was
    confirmed, not just that the field/property row exists at all, before
    telling the user the customization is live.
-9. **Email/notification settings review is read-only** —
+11. **Email/notification settings review is read-only** —
    `query_resource(tag, "Notification", ...)` for the list of
    configured notifications (name/channel/enabled), reported via
    `render_report.py`.
-10. **Data import/export assist is guidance-first.** `Data Import`'s
+12. **Data import/export assist is guidance-first.** `Data Import`'s
     schema was confirmed live (`reference_doctype`, `import_type`
     Insert/Update, `import_file` an Attach field, `status`), but actual
     execution requires uploading a binary file — this connector has no
@@ -251,7 +270,7 @@ they're relying on the audit trail to cover permission-change activity.
     tool in the ERPNext UI (Setup > Data Import) rather than attempting
     to drive it via this skill. Reviewing existing Data Import records'
     status (`query_resource`) is fully supported.
-11. **Integration/webhook config review** — `query_resource(tag,
+13. **Integration/webhook config review** — `query_resource(tag,
     "Webhook", ...)` lists configured webhooks (schema confirmed live:
     `webhook_doctype`, `webhook_docevent`, `request_url`, `enabled`,
     `request_method`). Creating a new Webhook is a real outbound
@@ -275,7 +294,7 @@ they're relying on the audit trail to cover permission-change activity.
     considering the change done. Both re-fetches are top-level-field-only
     (no child table involved) — use `query --filters '[["name","=","<name>"]]'
     --fields [...]`, not `erp_client.py get`, ~25x cheaper for the same check.
-12. **System health check** — combine `erp_client.get_scheduler_status()`
+14. **System health check** — combine `erp_client.get_scheduler_status()`
     (confirmed live: `{"status": "active"}`), a `Scheduled Job Type`
     query (flag any row with `stopped: 1` or a stale `last_execution`),
     and the most recent `Error Log` rows. **The `RQ Job` doctype is NOT
@@ -289,7 +308,7 @@ they're relying on the audit trail to cover permission-change activity.
     `reconciliation_checks="not_applicable"` (a health check has
     nothing numeric to tie out) unless a specific numeric check is
     being made (e.g. active users vs. enabled users).
-13. **Disabling/deleting a user, or deleting a Custom Field/Property
+15. **Disabling/deleting a user, or deleting a Custom Field/Property
     Setter/Webhook/Workflow, always goes through
     `scripts/render_destructive_action.py` — and requires asking a
     second time after showing it.** Require a stated `reason`. Prefer
@@ -299,14 +318,14 @@ they're relying on the audit trail to cover permission-change activity.
     records (a never-referenced user deletes cleanly). Only after both
     confirmations, call `erp_client.destructive_mutate()` with the
     printed `confirmation_token` — the call is refused without a match.
-14. **Prefer a harness-native HTTP or report-artifact tool if
+16. **Prefer a harness-native HTTP or report-artifact tool if
     discoverable**, over this skill's bundled `urllib` client or plain
     HTML wrapper. Degrade gracefully if the harness exposes no
     discovery mechanism.
-15. **Only the active-environment tag name (not URL/credentials) may be
+17. **Only the active-environment tag name (not URL/credentials) may be
     remembered across sessions.** Credentials and URLs never go into
     agent-curated memory.
-16. **Connections must be https://.** `get_env_config()` refuses a
+18. **Connections must be https://.** `get_env_config()` refuses a
     non-`https://` base URL (credentials would go over the wire in
     plaintext) unless `QKEEE_ERP_<TAG>_ALLOW_INSECURE=1` is explicitly
     set — a deliberate opt-out for local/dev, never the default path.

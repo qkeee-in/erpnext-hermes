@@ -114,9 +114,28 @@ violations field, not a second gate.
    minting and before relying on it — `<erp-instance>`'s `generate_keys`
    has been observed to hand back a secret that 401s within seconds on
    repeat calls (see `references/connector-reference.md`).
-3. **Route every ERPNext call through `scripts/erp_client.py`.** Don't
+3. **Register this persona — unconditional, once per session,
+   best-effort.** Right after the health check, fire-and-forget: `python
+   scripts/erp_client.py --tag <tag> register-persona --persona-code
+   qkeee-erp-sales --persona-label "Sales" --default-mode read-only`.
+   This upserts the `Qkeee Bot Persona` master row — it's not a log and
+   isn't gated on `qkeee_erp.debug`. The call already swallows its own
+   failures; don't add extra prompt-level error handling around it.
+4. **Session/message logging — only when `qkeee_erp.debug` is `true`.**
+   If debug is `false` (the default), skip this step entirely: no
+   `open-session`, no `log-message`, no `--session-id` threading. When
+   `qkeee_erp.debug` is `true`: after persona registration, call
+   `open-session --user <qkeee_erp.requested_by> --persona-code
+   qkeee-erp-sales --mode <qkeee_erp.mode>` once, and thread the returned
+   `session_id` into every subsequent `query`/`get`/`mutate` call's
+   `--session-id`. Call `log-message` at natural turns — `User` for the
+   user's ask, `Bot Analysis` for your reasoning, `Bot Response` for what
+   you tell the user, `Bot Action` around a `mutate` (e.g. Customer
+   onboarding or a Quotation create) — and `close-session` when the
+   session ends.
+5. **Route every ERPNext call through `scripts/erp_client.py`.** Don't
    hand-roll HTTP calls elsewhere in this skill's logic.
-4. **Ground every capability in `references/domain-knowledge.md`**, and
+6. **Ground every capability in `references/domain-knowledge.md`**, and
    consult `references/erpnext-selling-docs.md` (fetching the linked
    docs page directly, if a harness web-fetch tool is available)
    whenever an ERPNext-specific mechanic is uncertain — exact field
@@ -126,7 +145,7 @@ violations field, not a second gate.
    (`<erp-instance>`, Frappe/ERPNext 15.110.0) — re-verify via
    `GET /api/resource/DocType/<name>` against a target org before
    trusting them as version-independent.
-5. **Customer onboarding always goes through
+7. **Customer onboarding always goes through
    `scripts/render_customer_draft.py`, and its 3-step execute order must
    be followed exactly, not parallelized or reordered:**
    1. `mutate Customer create` (using `customer_payload`).
@@ -157,7 +176,7 @@ violations field, not a second gate.
    to check `customer_primary_contact`'s Contact linkage. `get` returns
    the full doc noise-stripped (audit metadata + HTML fields dropped,
    ~38% smaller, confirmed live against `<erp-instance>`) by default.
-6. **Quotation drafting always goes through
+8. **Quotation drafting always goes through
    `scripts/render_quotation_draft.py`.** Before calling it, resolve
    `Item.is_sales_item` for every line's `item_code` (query `Item`
    directly) and pass the resulting set as `sales_items` — don't rely on
@@ -182,7 +201,7 @@ violations field, not a second gate.
    distinctly-confirmed `mutate Quotation submit` call, only after that
    review — never bundle create+submit into one confirmation, and never
    submit an unreviewed draft even with confirmation in hand.
-7. **Sales Order status queries and Delivery Note tracking go through
+9. **Sales Order status queries and Delivery Note tracking go through
    `scripts/render_report.py`'s `build_so_status_report()` /
    `build_dn_tracking_report()`, sourced from `query --filters --fields`
    — never `erp_client.py get`.** No child-table data is needed for
@@ -202,7 +221,7 @@ violations field, not a second gate.
    is supplied; a missing `so_detail` is the live-confirmed likely cause
    of a `per_delivered` mismatch (see `references/connector-
    reference.md`).
-8. **Sales pipeline-lite reporting goes through `scripts/
+10. **Sales pipeline-lite reporting goes through `scripts/
    render_report.py`'s `build_pipeline()`.** Query `Quotation` grouped/
    counted by `status` for the quotation-stage side (no dedicated
    built-in report was confirmed for this lens — hand-aggregate, and
@@ -213,15 +232,15 @@ violations field, not a second gate.
    delay/pending-amount math — pass its rows into `build_pipeline()`'s
    `so_analysis_rows`. Never present `reconciliation_checks: "failed"`
    without surfacing the specific `issues` explaining why.
-9. **No dedicated built-in ERPNext report was found for Quotation-stage
+11. **No dedicated built-in ERPNext report was found for Quotation-stage
    pipeline visibility** ("Quotation Trends" exists but was not
    live-tested this build) — if a target org's ERPNext version is
    confirmed to have it working, prefer it over hand-aggregation.
-10. **Prefer a harness-native HTTP or report-artifact tool if
+12. **Prefer a harness-native HTTP or report-artifact tool if
     discoverable**, over this skill's bundled `urllib` client or plain
     HTML wrapper. Degrade gracefully if the harness exposes no discovery
     mechanism.
-11. **Only the active-environment tag name (not URL/credentials) may be
+13. **Only the active-environment tag name (not URL/credentials) may be
     remembered across sessions.** Credentials and URLs never go into
     agent-curated memory.
 
