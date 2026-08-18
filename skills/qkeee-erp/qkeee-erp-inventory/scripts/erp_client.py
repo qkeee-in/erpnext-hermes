@@ -468,11 +468,14 @@ def _audit_submit(cfg: dict, log_name: str) -> bool:
 
 
 def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id: str, persona_code: str) -> None:
-    """Single-shot (no two-phase — nothing to crash into inconsistently
-    for a read) best-effort Audit Log row for a debug-mode read."""
+    """Best-effort insert+submit Audit Log row for a debug-mode read.
+    Insert/update are collapsed into one status ("Success") since a read
+    has no in-flight state to crash into, but submit still runs so the
+    row doesn't sit as an unsubmitted Draft like two-phase write rows
+    would if left unfinished."""
     if doctype in AUDIT_EXEMPT_DOCTYPES:
         return
-    _audit_insert(cfg, {
+    log_name = _audit_insert(cfg, {
         "session": _session_or_fallback(session_id),
         "persona_code": persona_code or "",
         "environment_tag": cfg.get("tag", ""),
@@ -484,6 +487,7 @@ def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id:
         "status": "Success",
         "user_approved": "Not Required",
     })
+    _audit_submit(cfg, log_name)
 
 
 def record_audit_log_start(cfg: dict, *, action: str, doctype: str, name: str, requested_by: str,
@@ -609,7 +613,14 @@ def _audit_insert_generic(cfg: dict, doctype: str, fields: dict) -> str:
         payload = {"doctype": doctype, **{k: v for k, v in fields.items() if v is not None}}
         result = _request(cfg, "POST", f"/api/resource/{urllib.parse.quote(doctype)}", payload=payload)
         return (result.get("data") or {}).get("name")
-    except ConnectorError:
+    except ConnectorError as e:
+        # Was silently returning None here — a failed Session/Message insert
+        # was indistinguishable from success to the caller (CLI still exits
+        # 0, just prints message_id/session_id: null). Warn to stderr, same
+        # as _audit_insert() does for Audit Log, so a persistently-failing
+        # doctype (not provisioned, missing Qkeee Bot role permission, a
+        # mandatory field rejected) is visible instead of invisible.
+        print(f"WARN: {doctype} insert failed (non-fatal): {e}", file=sys.stderr)
         return None
 
 
