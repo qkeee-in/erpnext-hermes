@@ -43,9 +43,9 @@ frontmatter declares exactly one literal tag, `DEFAULT`
 (`QKEEE_ERP_DEFAULT_BASE_URL`/`_API_KEY`/`_API_SECRET`) — `required_environment_variables`
 can only declare static names, so it can't pre-declare a tag the user
 hasn't chosen yet. A user who wants a different first tag name, or a
-second/third environment later, sets that tag's three vars in their shell
-themselves at runtime (the skill walks them through naming and var-setting,
-it doesn't declare the vars for them):
+second/third environment later, sets that tag's three vars themselves at
+runtime (the skill walks them through naming and var-setting, it doesn't
+declare the vars for them):
 
 | Variable | Purpose |
 | --- | --- |
@@ -60,6 +60,22 @@ then offer to switch `qkeee_erp.active_env`. Never store these values in
 `metadata.hermes.config` or in agent-curated memory (`MEMORY.md`) — only
 the **tag name** (not URL/credentials) may go there, per the
 active-environment-reminder convention.
+
+**Where these vars live — this agent profile's own `.env`, never a shared
+one.** Hermes resolves `os.environ` from the active agent profile's own
+`.env` file (`.hermes/profile/<profile-name>/.env`), not a repo-root or
+cross-profile `.hermes/.env`. When walking a user through setting a tag's
+three vars, always name that path explicitly (substituting the real
+profile name) rather than a bare "set this in your shell" — a var written
+to the wrong `.env` silently doesn't exist from this skill's point of view
+(`get_env_config()` only sees what the active profile's process actually
+inherited), which surfaces as a confusing "missing variable" error with no
+obvious cause. One profile folder can target multiple ERPNext
+environments at once: every tag's three vars can coexist as separate lines
+in that same profile `.env` (`QKEEE_ERP_QA_*` alongside
+`QKEEE_ERP_PROD_*`), with `qkeee_erp.active_env` selecting which tag is
+live for this session — adding a tag means appending three more lines to
+the existing file, never a separate file or a separate profile.
 
 Missing-var failures must name the exact variable
 (`QKEEE_ERP_QA_API_KEY`), never a generic "auth failed."
@@ -585,3 +601,19 @@ predating the audit-trail retrofit (read-only-gate + requester-attribution
 each persona skill's `scripts/`
 directory is the next mechanical step before any persona skill's writes
 actually reach `Qkeee Bot Audit Log`.
+
+## Interim / scratch files
+
+Any file this skill's tooling needs to write that isn't the final
+deliverable handed to the user — a JSON payload assembled for
+`render_report.py`/`render_*_draft.py`, a downloaded attachment staged for
+extraction, any other scratch artifact — is written under `terminal.cwd`
+(from `config.yaml`'s `terminal:` block; e.g.
+`/work/storage/hermes/agent-profiles/<profile-name>/cwd`), never `/tmp` or
+another ad hoc path. `/tmp` isn't guaranteed to be the same filesystem
+`terminal.cwd` runs against, isn't scoped to this profile (a second profile
+running concurrently could collide on file names), and isn't guaranteed to
+persist for the life of the session — writing there is how a mid-task file
+silently disappears or leaks across profiles. Clean up scratch files once
+they're no longer needed for the current task; don't leave them littering
+`terminal.cwd` across sessions.

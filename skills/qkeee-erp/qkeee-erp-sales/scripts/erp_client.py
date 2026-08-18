@@ -561,15 +561,25 @@ def _audit_insert_generic(cfg: dict, doctype: str, fields: dict) -> str:
 
 
 def ensure_persona_registered(tag: str, *, persona_code: str, persona_label: str,
-                               default_mode: str = "read-only", non_negotiables: str = None) -> None:
+                               default_mode: str = "read-only", non_negotiables: str = None) -> str:
     """Best-effort idempotent upsert of this persona's Qkeee Bot Persona row.
     Unconditional — NOT debug-gated, not a log (master data, see
-    bot-doctypes-design.md's Persona section). No-ops silently if
-    Qkeee Bot Persona isn't provisioned yet (bot-init not run) or the
-    row already exists; never raises, never blocks the caller."""
+    bot-doctypes-design.md's Persona section). Never raises, never blocks
+    the caller — but unlike the pure-logging helpers above, this returns a
+    status string instead of swallowing the outcome entirely, because a
+    caller silently getting no signal here is exactly how this went
+    invisible in practice: the doctype not being provisioned yet (bot-init
+    not run on this instance) and a genuinely successful no-op ("already
+    registered") were indistinguishable from the outside, so nothing ever
+    told the calling skill (or the user) that registration wasn't landing.
+
+    Returns "already_registered" | "created" | "failed". A caller that
+    gets "failed" should treat it as the same signal as a `logged_in_as`
+    that looks like a personal account — worth proactively surfacing and
+    suggesting `qkeee-erp-bot-init`, not silently ignoring."""
     cfg = get_env_config(tag)
     if resource_exists(tag, PERSONA_DOCTYPE, persona_code):
-        return
+        return "already_registered"
     try:
         _request(cfg, "POST", f"/api/resource/{urllib.parse.quote(PERSONA_DOCTYPE)}", payload={
             "doctype": PERSONA_DOCTYPE,
@@ -578,8 +588,10 @@ def ensure_persona_registered(tag: str, *, persona_code: str, persona_label: str
             "default_mode": "Read Write" if default_mode == "read-write" else "Read Only",
             "non_negotiables": non_negotiables or "",
         })
+        return "created"
     except ConnectorError as e:
         print(f"WARN: persona registration failed (non-fatal): {e}", file=sys.stderr)
+        return "failed"
 
 
 # --------------------------------------------------------------------------
@@ -916,11 +928,11 @@ def _cli():
                 indent=2,
             ))
         elif args.command == "register-persona":
-            ensure_persona_registered(args.tag, persona_code=args.persona_code,
-                                       persona_label=args.persona_label,
-                                       default_mode=args.default_mode,
-                                       non_negotiables=args.non_negotiables)
-            print(json.dumps({"ok": True}, indent=2))
+            status = ensure_persona_registered(args.tag, persona_code=args.persona_code,
+                                                persona_label=args.persona_label,
+                                                default_mode=args.default_mode,
+                                                non_negotiables=args.non_negotiables)
+            print(json.dumps({"ok": True, "status": status}, indent=2))
         elif args.command == "open-session":
             session_id = open_session(args.tag, user=args.user, persona_code=args.persona_code,
                                        mode=args.mode, debug_mode=not args.no_debug)

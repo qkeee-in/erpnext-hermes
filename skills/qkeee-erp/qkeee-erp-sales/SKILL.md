@@ -119,16 +119,14 @@ violations field, not a second gate.
    scripts/erp_client.py --tag <tag> register-persona --persona-code
    qkeee-erp-sales --persona-label "Sales" --default-mode read-only`.
    This upserts the `Qkeee Bot Persona` master row — it's not a log and
-   isn't gated on `qkeee_erp.debug`. The call already swallows its own
-   failures; don't add extra prompt-level error handling around it.
+   isn't gated on `qkeee_erp.debug`. Check the returned `status` — `"failed"` means the `Qkeee Bot Persona` row was NOT created (almost always because `qkeee-erp-bot-init` hasn't been run on this instance yet), even though the command still exits cleanly. Treat `"failed"` the same as a `logged_in_as` that looks like a personal account — mention it once, proactively, and suggest running `qkeee-erp-bot-init`; never silently ignore it, and never let it block the user's actual request.
 4. **Session/message logging — only when `qkeee_erp.debug` is `true`.**
    If debug is `false` (the default), skip this step entirely: no
    `open-session`, no `log-message`, no `--session-id` threading. When
    `qkeee_erp.debug` is `true`: after persona registration, call
    `open-session --user <qkeee_erp.requested_by> --persona-code
    qkeee-erp-sales --mode <qkeee_erp.mode>` once, and thread the returned
-   `session_id` into every subsequent `query`/`get`/`mutate` call's
-   `--session-id`. Call `log-message` at natural turns — `User` for the
+   `session_id` into every subsequent `query`/`get`/`mutate` call's `--session-id`. If `session_id` starts with `local-`, the session row was never actually persisted to ERPNext (Session/Message logging failed, most likely because `qkeee-erp-bot-init` hasn't been run on this instance) — surface that once, same as a failed persona registration, and keep working from the local id rather than blocking. Call `log-message` at natural turns — `User` for the
    user's ask, `Bot Analysis` for your reasoning, `Bot Response` for what
    you tell the user, `Bot Action` around a `mutate` (e.g. Customer
    onboarding or a Quotation create) — and `close-session` when the

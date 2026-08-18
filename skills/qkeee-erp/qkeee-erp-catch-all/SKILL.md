@@ -62,14 +62,45 @@ caution on top — see "Advisory-first, always" below.
    at session start, and re-surface the reminder after a gap or before a
    batch of writes.
 
-2. **Check whether this actually belongs to a named persona skill
+2. **Register this persona — unconditional, once per session,
+   best-effort.** Right after stating the active environment, fire-and-
+   forget: `python scripts/erp_client.py --tag <tag> register-persona
+   --persona-code qkeee-erp-catch-all --persona-label "Catch-All" --
+   default-mode read-only`. This upserts the `Qkeee Bot Persona` master
+   row — it's not a log and isn't gated on `qkeee_erp.debug`. Check the
+   returned `status` — `"failed"` means the row was NOT created (almost
+   always because `qkeee-erp-bot-init` hasn't been run on this instance
+   yet), even though the command still exits cleanly. Treat `"failed"`
+   the same as a `logged_in_as` that looks like a personal account —
+   mention it once, proactively, and suggest running `qkeee-erp-bot-init`;
+   never silently ignore it, and never let it block the user's actual
+   request.
+
+3. **Session/message logging — only when `qkeee_erp.debug` is `true`.**
+   If debug is `false` (the default), skip this step entirely: no
+   `open-session`, no `log-message`, no `--session-id` threading. When
+   `qkeee_erp.debug` is `true`: after persona registration, call
+   `open-session --user <qkeee_erp.requested_by> --persona-code
+   qkeee-erp-catch-all --mode <qkeee_erp.mode>` once, and thread the
+   returned `session_id` into every subsequent `query`/`get`/`mutate`
+   call's `--session-id`. If `session_id` starts with `local-`, the
+   session row was never actually persisted to ERPNext (Session/Message
+   logging failed, most likely because `qkeee-erp-bot-init` hasn't been
+   run on this instance) — surface that once, same as a failed persona
+   registration, and keep working from the local id rather than
+   blocking. Call `log-message` at natural turns — `User` for the user's
+   ask, `Bot Analysis` for your reasoning, `Bot Response` for what you
+   tell the user, `Bot Action` around a `mutate` — and `close-session`
+   when the session ends.
+
+4. **Check whether this actually belongs to a named persona skill
    first.** See the routing table in `references/domain-knowledge.md`.
    If the user's request clearly maps to Employee/Leave/Invoice/PO/
    Customer/Item/Asset/User-and-Role/GL-reporting territory, say so and
    point them to the relevant `qkeee-erp-*` skill rather than duplicating
    work a more expert-tuned skill already does better.
 
-3. **Resolve the doctype's live metadata before saying anything about
+5. **Resolve the doctype's live metadata before saying anything about
    its shape.** `python scripts/discover.py --tag <tag> resolve
    "<DocType>"` (module + owning app + submittable/custom flags) and
    `... meta "<DocType>"` (full live field list with mandatory flags and
@@ -88,7 +119,7 @@ caution on top — see "Advisory-first, always" below.
    relevant field list from the Customize Form screen instead), rather
    than retrying or guessing at the schema.
 
-4. **Discover installed apps + versions.** Try `python scripts/discover.py
+6. **Discover installed apps + versions.** Try `python scripts/discover.py
    --tag <tag> modules` first — a plain REST read (`Module Def` list)
    confirmed working across instances. `... apps` mirrors the Help →
    About dialog and includes version numbers `modules` can't derive, so
@@ -102,28 +133,28 @@ caution on top — see "Advisory-first, always" below.
    paste the Help → About dialog contents directly — never guess a
    version number.
 
-5. **Check the knowledge base before researching from scratch.**
+7. **Check the knowledge base before researching from scratch.**
    `references/knowledge-base/<env-tag>/<app-name>.md` — read it first if
    it exists. See `references/knowledge-base/README.md` for the file
    convention and template.
 
-6. **If the app is new to the knowledge base, research it and write the
+8. **If the app is new to the knowledge base, research it and write the
    KB entry** before proposing anything substantive — fetch the app's
    GitHub README/docs (most Frappe-ecosystem apps live under the `frappe`
    GitHub org) for what it's for, its key doctypes, and typical
-   workflows; cross-check against live metadata from step 3; note any
+   workflows; cross-check against live metadata from step 5; note any
    discrepancies rather than silently picking one source. For a
    genuinely org-specific custom app with no public repo, the KB entry is
    built from live metadata + whatever the user explains, and that's
    fine — say so explicitly rather than inventing an upstream source.
 
-7. **Follow the module plan's six-stage workflow pattern** for anything
+9. **Follow the module plan's six-stage workflow pattern** for anything
    that touches ERPNext data: Intake → Validate → Stage/Draft → Confirm →
    Execute → Report back (see `references/connector-reference.md` for the
    save-draft-then-review-then-submit discipline this implies for any
    create/update).
 
-8. **Advisory-first, always — the extra layer beyond the other
+10. **Advisory-first, always — the extra layer beyond the other
    persona skills, enforced in code, not just prompt.** Every
    write-capable capability here stages a draft and shows the user the
    exact payload — including which fields came from confirmed live
@@ -146,7 +177,7 @@ caution on top — see "Advisory-first, always" below.
    trusted and repeated, that's a signal it deserves to graduate into a
    proper persona skill, not a reason to loosen this skill's own default.
 
-9. **Route every ERPNext call through `scripts/erp_client.py` (reads/
+11. **Route every ERPNext call through `scripts/erp_client.py` (reads/
    writes — `gated_mutate_resource()` for writes, see above) or
    `scripts/discover.py` (metadata/app discovery)** — don't hand-roll
    HTTP calls elsewhere in this skill's logic.

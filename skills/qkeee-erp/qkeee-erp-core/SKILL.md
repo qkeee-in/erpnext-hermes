@@ -114,11 +114,28 @@ of this flag.
 `close_session()`) is fully opt-in per caller**, not wired into
 `mutate_resource()`/`query_resource()` automatically — call these
 explicitly, gated on `qkeee_erp.debug`, if this skill's SKILL.md adopts
-full conversation logging. None of the persona skills call these yet;
-this is infrastructure available to opt into, not a default behavior
-change for any already-built skill. Full schema, the two-phase mechanism,
-and the debug-mode volume-gating rationale:
+full conversation logging. Every write-capable persona skill now calls
+these when `qkeee_erp.debug` is `true`. Full schema, the two-phase
+mechanism, and the debug-mode volume-gating rationale:
 `qkeee-erp-bot-init/references/bot-doctypes-design.md`.
+
+**A "success" from `register-persona`/`open-session` does not mean the
+row actually landed — check the returned status, don't assume.** Every
+best-effort write into the `Qkeee Bot *` doctypes above swallows its own
+`ConnectorError` by design (a target instance that hasn't run
+`qkeee-erp-bot-init` yet must never block a user's real request), but
+that means the CLI exiting 0 is not proof the row was written:
+`register-persona` returns `{"status": "created"|"already_registered"|"failed"}`
+— `"failed"` means the `Qkeee Bot Persona` row was NOT created, almost
+always because the doctype isn't provisioned on this instance yet.
+`open-session` always prints a `session_id`, but on failure it's a
+locally-generated `local-<timestamp>` fallback rather than a real Frappe
+record name — a session/message logged under a `local-` id was never
+actually persisted to ERPNext. Either signal should be treated the same
+as a `logged_in_as` that looks like a personal account (see "Bot account"
+above): proactively mention it once per session and suggest
+`qkeee-erp-bot-init`, never silently ignore it and never let it block the
+user's actual request.
 
 ## What you must do when invoked
 
@@ -132,12 +149,18 @@ and the debug-mode volume-gating rationale:
    prompted for (tag `DEFAULT`). Adding a second/third environment is a
    runtime action, not a reinstall: walk the user through naming a new tag
    and setting `QKEEE_ERP_<NEWTAG>_BASE_URL` / `_API_KEY` / `_API_SECRET`
-   in their shell themselves (this skill cannot declare those var names
-   ahead of time since the tag is user-chosen), then offer to switch
-   `qkeee_erp.active_env` to it. `<TAG>` is always the sanitized, uppercased
-   form of the active tag. If any of the three vars for the active tag are
-   missing, tell the user exactly which variable is missing — never a
-   generic "auth failed."
+   in **this agent profile's own `.env` file**
+   (`.hermes/profile/<profile-name>/.env` — substitute the real profile
+   name, never a repo-root or cross-profile `.hermes/.env`), then offer to
+   switch `qkeee_erp.active_env` to it. This skill cannot declare those var
+   names ahead of time since the tag is user-chosen. `<TAG>` is always the
+   sanitized, uppercased form of the active tag. One profile's `.env` can
+   hold multiple tags' vars at once — adding an environment means appending
+   three more lines to that same file, not creating a new file or profile.
+   If any of the three vars for the active tag are missing, tell the user
+   exactly which variable is missing — never a generic "auth failed." Full
+   rationale: `references/connector-reference.md`'s "Environment / tag
+   model" section.
 3. **Health check on first real use.** Before the first query/mutate of a
    session, run a connectivity check (`python scripts/erp_client.py --tag
    <tag> health`) and surface a clear error if the URL/credentials are
@@ -159,7 +182,16 @@ and the debug-mode volume-gating rationale:
    remembered across sessions**, so a reminder like "last used: `qa`" can
    be given at the start of a new session. Credentials and URLs never go
    into agent-curated memory — they live only in environment variables.
-7. **Save as draft, review, then submit — never create-and-submit in one
+7. **Any interim/scratch file goes under `terminal.cwd`, never `/tmp`.**
+   A JSON payload assembled for `render_report.py`/`render_*_draft.py`, a
+   staged attachment, or any other file that isn't the final deliverable
+   is written under `terminal.cwd` from `config.yaml` — never `/tmp` or
+   another ad hoc path, which isn't guaranteed to be the same filesystem,
+   isn't scoped to this profile, and isn't guaranteed to persist for the
+   session. See `references/connector-reference.md`'s "Interim / scratch
+   files" section. Clean scratch files up once the task no longer needs
+   them.
+8. **Save as draft, review, then submit — never create-and-submit in one
    motion.** `create`/`update` and `submit` are always
    separate `mutate` calls (see the Generic resource mutate capability
    below); this skill's job is to keep them separate, not chain them. When
