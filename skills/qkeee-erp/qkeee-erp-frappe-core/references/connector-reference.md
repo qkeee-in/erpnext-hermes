@@ -1,12 +1,43 @@
-# qkeee-erp connector reference (`qkeee-erp-catch-all`'s synced copy)
+# qkeee-erp connector reference (canonical)
 
-This is `qkeee-erp-catch-all`'s copy of the canonical connector reference,
-synced from `qkeee-erp-core/references/connector-reference.md` per the
-module plan's self-contained-copies decision — `qkeee-erp-core` remains
-the source of truth; do not hand-diverge this copy. This skill also ships
-`scripts/discover.py` on top (app/module/doctype resolution — not part of
-the canonical connector, specific to catch-all's investigation workflow;
-see `references/domain-knowledge.md`).
+This is the canonical technical/connector layer for the `qkeee-erp` skill
+library, owned by `qkeee-erp-frappe-core`. Every persona skill
+(`qkeee-erp-hr-associate`, `qkeee-erp-accounts-executive`, etc.) ships its
+own copy of this reference and this skill's `scripts/` files —
+`erp_client.py`, `confirm_token.py`, `discover.py` — synced from here via
+the sync script (`scripts/sync_to_personas.py`), not hand-maintained per
+skill. If you're building/updating a persona skill's connector copy, this
+is the source of truth — do not hand-diverge persona copies; land the fix
+here and re-run the sync script instead.
+
+`qkeee-erp-frappe-core` also uses this connector directly as its OWN write
+path for whatever doesn't fit a named persona skill (merged in from the
+former `qkeee-erp-catch-all` skill, 2026-08-18) — see the next paragraph
+and `references/domain-knowledge.md` for the routing/investigation method
+that decides when this skill's own fallback mode applies versus deferring
+to a named persona.
+
+**Advisory-first write gate — this skill's own copy only (deliberately
+kept out of the `##`-heading sections below, so `sync_to_personas.py`
+never propagates it into a persona copy that has no `gated_mutate_resource()`
+or `render_draft.py` to document — see that script's docstring for how
+section-level sync works).** Every write `qkeee-erp-frappe-core` performs
+directly goes
+through `gated_mutate_resource()`, not plain `mutate_resource()`. It
+requires a `confirmation_token`/`issued_at` pair from `render_draft.py`
+(computed via `confirm_token.py`'s `advisory_write_token()`), refuses a
+missing/stale/mismatched token in code, and is unconditional — every
+create/update/submit/cancel/delete this skill performs is gated this way,
+not just its highest-risk ones (contrast `qkeee-erp-system-admin`/
+`qkeee-erp-fixed-asset-manager`, which gate only specific capabilities).
+Rationale: nothing this skill investigates has had the design-time
+capability review that lets the eight named persona skills call
+`mutate_resource()` directly — the doctype wasn't known in advance, so
+every write here gets the same unconditional caution. `render_draft.py`
+formats the exact payload, marks which fields came from confirmed live
+metadata (`discover.py meta`/`resolve`) vs. which are inferred from the
+user's request, and never itself calls ERPNext — it only stages the
+draft and computes the token the gated write later checks.
 
 ## What this layer does, and doesn't, know
 
@@ -93,6 +124,63 @@ the existing file, never a separate file or a separate profile.
 Missing-var failures must name the exact variable
 (`QKEEE_ERP_QA_API_KEY`), never a generic "auth failed."
 
+## Requester attribution and debug are per-tag, not global
+
+`QKEEE_ERP_<TAG>_DEBUG` / `QKEEE_ERP_<TAG>_REQUESTED_BY` used to be a
+single global `metadata.hermes.config` value (`qkeee_erp.debug` /
+`qkeee_erp.requested_by`) shared across every tag in a profile — one
+toggle, no matter which environment was active. Moved to per-tag env
+vars (2026-08-18 retrofit) specifically because that was wrong in
+practice: a profile juggling `hrms-demo` and `prod` had no way to run
+debug logging on `hrms-demo` without it also being on for `prod`, and no
+way to attribute writes to a different requester per environment without
+manually re-confirming on every switch.
+
+Both are OPTIONAL, unlike `BASE_URL`/`API_KEY`/`API_SECRET` — neither
+raises if absent:
+
+- **`QKEEE_ERP_<TAG>_DEBUG`** (`get_env_config()`'s `debug_default` key)
+  — parsed as a bool (`1`/`true`/`yes`/`on`, case-insensitive; anything
+  else is `false`). Defaults `false` if unset. A `--debug` CLI flag is a
+  per-call override that can only turn it *on* for that one call — there
+  is no equivalent to force it *off* for a single call on a tag that has
+  the env var set to `true`.
+- **`QKEEE_ERP_<TAG>_REQUESTED_BY`** (`requested_by_default` key) — no
+  default; empty string if unset. A `--requested-by` CLI flag overrides
+  it per-call. `mutate`/`open-session` refuse to run (a specific
+  `p.error` naming the exact env var, not a generic failure) if neither
+  the env var nor the flag resolves to a non-empty value.
+
+`erp_client.py`'s CLI resolves both once per invocation, right after
+argument parsing, by calling `get_env_config(args.tag)` — cheap (pure
+`os.environ` reads, no network call) even though the same function gets
+called again inside whichever real command runs. A resolution failure
+here (e.g. the tag's `BASE_URL`/`API_KEY`/`API_SECRET` are themselves
+missing) is swallowed at this point — the real command below raises its
+own specific error for that, no need to duplicate it.
+
+`qkeee_erp.active_env` and `qkeee_erp.mode` stay as global
+`metadata.hermes.config` values, deliberately NOT moved alongside
+debug/requested_by — switching environments should never silently also
+change write access, so `mode` needs to require its own explicit
+confirmation independent of which tag is active.
+
+## Interim / scratch files
+
+Any file this skill's tooling needs to write that isn't the final
+deliverable handed to the user — a JSON payload assembled for
+`render_report.py`/`render_*_draft.py`, a downloaded attachment staged for
+extraction, any other scratch artifact — is written under `terminal.cwd`
+(from `config.yaml`'s `terminal:` block; e.g.
+`/work/storage/hermes/agent-profiles/<profile-name>/cwd`), never `/tmp` or
+another ad hoc path. `/tmp` isn't guaranteed to be the same filesystem
+`terminal.cwd` runs against, isn't scoped to this profile (a second profile
+running concurrently could collide on file names), and isn't guaranteed to
+persist for the life of the session — writing there is how a mid-task file
+silently disappears or leaks across profiles. Clean up scratch files once
+they're no longer needed for the current task; don't leave them littering
+`terminal.cwd` across sessions.
+
 ## Verified against a live instance
 
 Checked against `<erp-instance>`: **ERPNext v15.112.0 / Frappe
@@ -119,7 +207,7 @@ Agent (`Python-urllib/3.11`) got blocked with a 403 by this instance's
 WAF/bot-protection (Cloudflare) — a `curl` request with the same token
 auth succeeded immediately.** The 403 body looked identical in shape to
 an ERPNext auth failure, which would have been actively misleading.
-`_request()` now sends an explicit `User-Agent: qkeee-erp-core/1.0` on
+`_request()` now sends an explicit `User-Agent: qkeee-erp-frappe-core/1.0` on
 every call. Any org fronting their ERPNext instance with a WAF/CDN is a
 plausible deployment, not a demo-only quirk — keep this header set in
 every persona skill's connector copy.
@@ -244,6 +332,101 @@ figures), use `query_resource()`/`--filters --fields`. If it does
 use `get_resource()`/`get`, not `query --filters` — `query` won't return
 the data being checked, it'll silently omit it rather than error.
 
+## Built-in reports vs. hand-aggregated queries
+
+`run_query_report()` (CLI: `erp_client.py report "<report_name>" --filters
+'{...}'`) runs one of ERPNext's own server-side Query/Script Reports via
+`frappe.desk.query_report.run`, instead of a persona skill hand-aggregating
+raw transactional rows into the same shape. Prefer it whenever a built-in
+report covers the need — report logic already implements Finance Book
+gates, Accounting Dimension filters, and currency conversion; reimplementing
+one of those from a raw `query_resource()` call risks silently missing a
+detail and producing a plausible-looking but wrong figure. **Confirmed
+live** ("Sales Order Analysis" against a real ERPNext v15 instance, real
+per-line delay/pending-amount data returned) using GET with `filters` as a
+JSON-encoded query string param — not POST with a JSON body, which is
+untested against a live instance and should not be assumed to work
+identically. `filters` field names are report-specific and undocumented by
+this generic endpoint; confirm them by opening the report in the ERPNext UI
+once. Falls back to `query_resource()` + hand aggregation only for a
+genuinely custom cut no built-in report covers.
+
+## Authority checks without a configured Workflow
+
+`get_user_roles()` (CLI: `erp_client.py roles [--user <id>]`) fetches a
+user's assigned roles from `User.roles` — the standard heuristic for "does
+this user plausibly hold authority for this write" when the target
+doctype has no ERPNext Workflow doctype configured (common on a default-
+configured instance; confirmed live for Purchase Order on at least one
+reference instance — no Workflow existed, role membership was the only
+signal available via REST). An **empty roles list is ambiguous** — it
+could mean the user genuinely holds no relevant role, or that the lookup
+silently came back thin (wrong username resolved, or this API key lacks
+permission to read `User.roles`). `get_user_roles()` returns a non-empty
+`warning` string in that case rather than letting a caller conflate
+"checked, no authority" with "didn't resolve" — treat both as "authority
+not confirmed" and corroborate with the user, never assume the former. An
+org with a real approval Workflow configured should be asked about it
+directly instead of relying on this heuristic.
+
+## Confirmation tokens for double-confirm writes
+
+`confirm_token.py` (new in core, not present before this sync) provides
+two shared primitives — `compute_token(**fields)` (deterministic hash over
+arbitrary facts) and `is_fresh(issued_at, max_age_seconds, now)` (rejects
+stale or implausibly-future tokens, default 15-minute TTL) — used to tie a
+render/stage step to its later execute step for any write a persona skill
+gates behind a DOUBLE confirm (depreciation runs, disposals, destructive
+sysadmin actions, bot-user provisioning). Capability-specific token
+constructors stay in the owning persona skill's own `confirm_token.py`,
+built on these two primitives — see the module's docstring for the
+expected shape. **Every token constructor must include an `issued_at`
+field and its execute step must call `is_fresh()` before honoring the
+token** — a token with no freshness check never expires, which defeats the
+anti-replay property the whole mechanism exists for. (Found during this
+sync: one persona skill's confirmation tokens omitted this check entirely
+— fixed as part of the same retrofit that added this file to core.)
+
+## Runtime metadata discovery
+
+`discover.py` (new in core, promoted from a persona skill during this
+sync) resolves what's actually installed/configured on a target instance
+— `list_installed_apps()`, `list_modules()`, `doctype_meta()`,
+`resolve_doctype()` — instead of trusting `docs.frappe.io` or a GitHub
+README, which describe the general shape of an app but not a specific
+org's customizations (custom fields, altered mandatory flags, locally
+added doctypes). `list_installed_apps()`'s underlying RPC
+(`frappe.utils.change_log.get_versions`) is opportunistic, not guaranteed
+— confirmed live to 403 with `PermissionError: ... is not whitelisted` on
+at least one real instance; `list_modules()` (a plain REST read against
+`Module Def`) is the confirmed-working primary app-discovery path, not a
+fallback. `resolve_doctype()` distinguishes "no module recorded" (`app:
+null, app_lookup_error: null`) from "the module lookup itself failed"
+(`app: null, app_lookup_error: "<message>"`) — collapsing both to a bare
+`app: null` risks a false "this is custom, no owning app" claim when a
+lookup had actually just errored. Every persona skill should attempt this
+discovery before proposing a field/doctype it hasn't confirmed live on the
+target instance.
+
+## Pitfalls found live, worth knowing before you hit them
+
+(Connector-layer only — REST mechanics/quirks that apply regardless of
+doctype. Doctype-specific business-logic pitfalls, e.g. Stock
+Reconciliation's batch-tracking behavior, belong in the owning persona
+skill's own `domain-knowledge.md`/connector-reference, not here — see
+"What this layer does, and doesn't, know" above.)
+
+- **`RQ Job` doctype is not usable via REST** — confirmed live 500
+  `TypeError`, unrelated to permissions/auth. Use
+  `frappe.utils.scheduler.get_scheduler_status` + `Scheduled Job Type` +
+  `Error Log` for system-health signals instead; report the RQ Job gap
+  explicitly in a health report rather than silently omitting queue depth.
+- **A freshly created Custom Field does not appear in a subsequent `GET
+  /api/resource/DocType/<dt>` meta fetch** — the meta cache isn't
+  invalidated by a REST create, and `frappe.clear_cache` isn't whitelisted
+  (403 even as Administrator). Verify a new Custom Field via a direct
+  `Custom Field` resource query by name, never by re-fetching DocType meta.
+
 ## The read-only/read-write gate
 
 `mutate_resource()` in `erp_client.py` takes `mode` as an explicit
@@ -278,7 +461,7 @@ calls `record_comment(cfg, doctype, name, content)`, which POSTs to
 
 Comment content follows the fixed shape `[<SKILL_LABEL>] <action> —
 requested by <requested_by>, applied via qkeee-erp bot.` `SKILL_LABEL` is a
-module-level constant in `erp_client.py` — set to `"qkeee-erp-core"` here,
+module-level constant in `erp_client.py` — set to `"qkeee-erp-frappe-core"` here,
 and to the persona skill's own name in every synced copy, so the comment
 identifies which skill acted. `record_comment()` is best-effort: a comment
 failure (e.g. a role lacking comment permission) is swallowed and never
@@ -430,155 +613,3 @@ predating the audit-trail retrofit (read-only-gate + requester-attribution
 each persona skill's `scripts/`
 directory is the next mechanical step before any persona skill's writes
 actually reach `Qkeee Bot Audit Log`.
-
-## Built-in reports vs. hand-aggregated queries
-
-`run_query_report()` (CLI: `erp_client.py report "<report_name>" --filters
-'{...}'`) runs one of ERPNext's own server-side Query/Script Reports via
-`frappe.desk.query_report.run`, instead of a persona skill hand-aggregating
-raw transactional rows into the same shape. Prefer it whenever a built-in
-report covers the need — report logic already implements Finance Book
-gates, Accounting Dimension filters, and currency conversion; reimplementing
-one of those from a raw `query_resource()` call risks silently missing a
-detail and producing a plausible-looking but wrong figure. **Confirmed
-live** ("Sales Order Analysis" against a real ERPNext v15 instance, real
-per-line delay/pending-amount data returned) using GET with `filters` as a
-JSON-encoded query string param — not POST with a JSON body, which is
-untested against a live instance and should not be assumed to work
-identically. `filters` field names are report-specific and undocumented by
-this generic endpoint; confirm them by opening the report in the ERPNext UI
-once. Falls back to `query_resource()` + hand aggregation only for a
-genuinely custom cut no built-in report covers.
-
-## Authority checks without a configured Workflow
-
-`get_user_roles()` (CLI: `erp_client.py roles [--user <id>]`) fetches a
-user's assigned roles from `User.roles` — the standard heuristic for "does
-this user plausibly hold authority for this write" when the target
-doctype has no ERPNext Workflow doctype configured (common on a default-
-configured instance; confirmed live for Purchase Order on at least one
-reference instance — no Workflow existed, role membership was the only
-signal available via REST). An **empty roles list is ambiguous** — it
-could mean the user genuinely holds no relevant role, or that the lookup
-silently came back thin (wrong username resolved, or this API key lacks
-permission to read `User.roles`). `get_user_roles()` returns a non-empty
-`warning` string in that case rather than letting a caller conflate
-"checked, no authority" with "didn't resolve" — treat both as "authority
-not confirmed" and corroborate with the user, never assume the former. An
-org with a real approval Workflow configured should be asked about it
-directly instead of relying on this heuristic.
-
-## Confirmation tokens for double-confirm writes
-
-`confirm_token.py` (new in core, not present before this sync) provides
-two shared primitives — `compute_token(**fields)` (deterministic hash over
-arbitrary facts) and `is_fresh(issued_at, max_age_seconds, now)` (rejects
-stale or implausibly-future tokens, default 15-minute TTL) — used to tie a
-render/stage step to its later execute step for any write a persona skill
-gates behind a DOUBLE confirm (depreciation runs, disposals, destructive
-sysadmin actions, bot-user provisioning). Capability-specific token
-constructors stay in the owning persona skill's own `confirm_token.py`,
-built on these two primitives — see the module's docstring for the
-expected shape. **Every token constructor must include an `issued_at`
-field and its execute step must call `is_fresh()` before honoring the
-token** — a token with no freshness check never expires, which defeats the
-anti-replay property the whole mechanism exists for. (Found during this
-sync: one persona skill's confirmation tokens omitted this check entirely
-— fixed as part of the same retrofit that added this file to core.)
-
-## Runtime metadata discovery
-
-`discover.py` (new in core, promoted from a persona skill during this
-sync) resolves what's actually installed/configured on a target instance
-— `list_installed_apps()`, `list_modules()`, `doctype_meta()`,
-`resolve_doctype()` — instead of trusting `docs.frappe.io` or a GitHub
-README, which describe the general shape of an app but not a specific
-org's customizations (custom fields, altered mandatory flags, locally
-added doctypes). `list_installed_apps()`'s underlying RPC
-(`frappe.utils.change_log.get_versions`) is opportunistic, not guaranteed
-— confirmed live to 403 with `PermissionError: ... is not whitelisted` on
-at least one real instance; `list_modules()` (a plain REST read against
-`Module Def`) is the confirmed-working primary app-discovery path, not a
-fallback. `resolve_doctype()` distinguishes "no module recorded" (`app:
-null, app_lookup_error: null`) from "the module lookup itself failed"
-(`app: null, app_lookup_error: "<message>"`) — collapsing both to a bare
-`app: null` risks a false "this is custom, no owning app" claim when a
-lookup had actually just errored. Every persona skill should attempt this
-discovery before proposing a field/doctype it hasn't confirmed live on the
-target instance.
-
-## Pitfalls found live, worth knowing before you hit them
-
-(Connector-layer only — REST mechanics/quirks that apply regardless of
-doctype. Doctype-specific business-logic pitfalls, e.g. Stock
-Reconciliation's batch-tracking behavior, belong in the owning persona
-skill's own `domain-knowledge.md`/connector-reference, not here — see
-"What this layer does, and doesn't, know" above.)
-
-- **`RQ Job` doctype is not usable via REST** — confirmed live 500
-  `TypeError`, unrelated to permissions/auth. Use
-  `frappe.utils.scheduler.get_scheduler_status` + `Scheduled Job Type` +
-  `Error Log` for system-health signals instead; report the RQ Job gap
-  explicitly in a health report rather than silently omitting queue depth.
-- **A freshly created Custom Field does not appear in a subsequent `GET
-  /api/resource/DocType/<dt>` meta fetch** — the meta cache isn't
-  invalidated by a REST create, and `frappe.clear_cache` isn't whitelisted
-  (403 even as Administrator). Verify a new Custom Field via a direct
-  `Custom Field` resource query by name, never by re-fetching DocType meta.
-
-## Interim / scratch files
-
-Any file this skill's tooling needs to write that isn't the final
-deliverable handed to the user — a JSON payload assembled for
-`render_report.py`/`render_*_draft.py`, a downloaded attachment staged for
-extraction, any other scratch artifact — is written under `terminal.cwd`
-(from `config.yaml`'s `terminal:` block; e.g.
-`/work/storage/hermes/agent-profiles/<profile-name>/cwd`), never `/tmp` or
-another ad hoc path. `/tmp` isn't guaranteed to be the same filesystem
-`terminal.cwd` runs against, isn't scoped to this profile (a second profile
-running concurrently could collide on file names), and isn't guaranteed to
-persist for the life of the session — writing there is how a mid-task file
-silently disappears or leaks across profiles. Clean up scratch files once
-they're no longer needed for the current task; don't leave them littering
-`terminal.cwd` across sessions.
-
-## Requester attribution and debug are per-tag, not global
-
-`QKEEE_ERP_<TAG>_DEBUG` / `QKEEE_ERP_<TAG>_REQUESTED_BY` used to be a
-single global `metadata.hermes.config` value (`qkeee_erp.debug` /
-`qkeee_erp.requested_by`) shared across every tag in a profile — one
-toggle, no matter which environment was active. Moved to per-tag env
-vars (2026-08-18 retrofit) specifically because that was wrong in
-practice: a profile juggling `hrms-demo` and `prod` had no way to run
-debug logging on `hrms-demo` without it also being on for `prod`, and no
-way to attribute writes to a different requester per environment without
-manually re-confirming on every switch.
-
-Both are OPTIONAL, unlike `BASE_URL`/`API_KEY`/`API_SECRET` — neither
-raises if absent:
-
-- **`QKEEE_ERP_<TAG>_DEBUG`** (`get_env_config()`'s `debug_default` key)
-  — parsed as a bool (`1`/`true`/`yes`/`on`, case-insensitive; anything
-  else is `false`). Defaults `false` if unset. A `--debug` CLI flag is a
-  per-call override that can only turn it *on* for that one call — there
-  is no equivalent to force it *off* for a single call on a tag that has
-  the env var set to `true`.
-- **`QKEEE_ERP_<TAG>_REQUESTED_BY`** (`requested_by_default` key) — no
-  default; empty string if unset. A `--requested-by` CLI flag overrides
-  it per-call. `mutate`/`open-session` refuse to run (a specific
-  `p.error` naming the exact env var, not a generic failure) if neither
-  the env var nor the flag resolves to a non-empty value.
-
-`erp_client.py`'s CLI resolves both once per invocation, right after
-argument parsing, by calling `get_env_config(args.tag)` — cheap (pure
-`os.environ` reads, no network call) even though the same function gets
-called again inside whichever real command runs. A resolution failure
-here (e.g. the tag's `BASE_URL`/`API_KEY`/`API_SECRET` are themselves
-missing) is swallowed at this point — the real command below raises its
-own specific error for that, no need to duplicate it.
-
-`qkeee_erp.active_env` and `qkeee_erp.mode` stay as global
-`metadata.hermes.config` values, deliberately NOT moved alongside
-debug/requested_by — switching environments should never silently also
-change write access, so `mode` needs to require its own explicit
-confirmation independent of which tag is active.

@@ -111,7 +111,7 @@ Every write through `mutate_resource()` also logs a two-phase
 (`Attempted` → `Success`/`Failure`) row to the `Qkeee Bot Audit Log`
 doctype, best-effort — never blocks a write if the target instance
 hasn't run `qkeee-erp-bot-init` yet. Reads log there too, but only when
-the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true` (default `false`). See `qkeee-erp-core/
+the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true` (default `false`). See `qkeee-erp-frappe-core/
 SKILL.md`'s "Audit trail" section and `qkeee-erp-bot-init/references/
 bot-doctypes-design.md` for the full mechanism.
 
@@ -318,7 +318,7 @@ disposal activity specifically.
   unstripped so it can feed `mutate_resource_with_concurrency()`'s
   `expected_modified` (this skill's own TOCTOU wrapper around the shared
   `mutate_resource()` — kept as a separate function, not a param bolted
-  onto the shared one, specifically so a future `qkeee-erp-core` sync
+  onto the shared one, specifically so a future `qkeee-erp-frappe-core` sync
   can't silently strip it again; see the function's own docstring for
   what happened the first time).
   Use `query --filters --fields` instead whenever child-table data isn't

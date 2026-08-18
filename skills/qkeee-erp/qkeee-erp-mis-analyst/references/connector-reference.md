@@ -1,21 +1,21 @@
 # qkeee-erp-mis-analyst connector reference (read-only-only copy)
 
 This is this skill's copy of the `qkeee-erp` connector layer, based on
-the canonical version in `qkeee-erp-core/references/connector-reference.md`.
+the canonical version in `qkeee-erp-frappe-core/references/connector-reference.md`.
 This copy is deliberately trimmed to the read path only — no
 `mutate_resource`, no `mutate` CLI subcommand, no write endpoints
 documented — per the module plan's decision that this persona is
 read-only always, independent of `qkeee_erp.mode`. If a future sync from
-`qkeee-erp-core` reintroduces write logic into `scripts/erp_client.py`
+`qkeee-erp-frappe-core` reintroduces write logic into `scripts/erp_client.py`
 here, that's a sync error, not an intended update — this skill's script
 should never gain a write path.
 
-**Not a mechanical copy — hand-rewritten.** `qkeee-erp-core`'s
+**Not a mechanical copy — hand-rewritten.** `qkeee-erp-frappe-core`'s
 `connector-reference.md` documents a full end-to-end round-trip validated
 against a live instance (`<erp-instance>`), but that validation
 covered the *original, untrimmed* `erp_client.py`. This skill's copy was
 written by hand to omit the write path rather than mechanically diffed
-from that file. Future syncs of read-path fixes from `qkeee-erp-core`
+from that file. Future syncs of read-path fixes from `qkeee-erp-frappe-core`
 must be reapplied by hand to this file too — there's no tooling that
 diffs the two copies automatically.
 
@@ -29,7 +29,7 @@ and "Qkeee LLP"). Done as a side effect of validating
 `qkeee-erp-accounts-executive`'s connector copy the same session (temporary
 API key/secret minted via session login +
 `frappe.core.doctype.user.user.generate_keys`, same technique
-`qkeee-erp-core`'s original validation used).
+`qkeee-erp-frappe-core`'s original validation used).
 
 ## Auth
 
@@ -173,7 +173,7 @@ python erp_client.py --tag qa query "GL Entry" --filters '[["account","=","Sales
 ## Extension point
 
 To target a different ERP backend, replace `scripts/erp_client.py` and
-this file (here and in `qkeee-erp-core`, the source of truth). Nothing in
+this file (here and in `qkeee-erp-frappe-core`, the source of truth). Nothing in
 `references/domain-knowledge.md` or this skill's `SKILL.md` needs to
 change — they're written to be ERP-agnostic in substance.
 
@@ -281,7 +281,7 @@ Agent (`Python-urllib/3.11`) got blocked with a 403 by this instance's
 WAF/bot-protection (Cloudflare) — a `curl` request with the same token
 auth succeeded immediately.** The 403 body looked identical in shape to
 an ERPNext auth failure, which would have been actively misleading.
-`_request()` now sends an explicit `User-Agent: qkeee-erp-core/1.0` on
+`_request()` now sends an explicit `User-Agent: qkeee-erp-frappe-core/1.0` on
 every call. Any org fronting their ERPNext instance with a WAF/CDN is a
 plausible deployment, not a demo-only quirk — keep this header set in
 every persona skill's connector copy.
@@ -535,7 +535,7 @@ calls `record_comment(cfg, doctype, name, content)`, which POSTs to
 
 Comment content follows the fixed shape `[<SKILL_LABEL>] <action> —
 requested by <requested_by>, applied via qkeee-erp bot.` `SKILL_LABEL` is a
-module-level constant in `erp_client.py` — set to `"qkeee-erp-core"` here,
+module-level constant in `erp_client.py` — set to `"qkeee-erp-frappe-core"` here,
 and to the persona skill's own name in every synced copy, so the comment
 identifies which skill acted. `record_comment()` is best-effort: a comment
 failure (e.g. a role lacking comment permission) is swallowed and never

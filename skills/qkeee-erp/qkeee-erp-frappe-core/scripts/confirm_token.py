@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-qkeee-erp-core — shared confirmation-token primitives.
+qkeee-erp-frappe-core — shared confirmation-token primitives, plus this
+skill's own advisory-first write-gate token constructor.
 
 Several persona skills gate an irreversible or high-blast-radius write
 (depreciation runs, asset disposal, destructive sysadmin actions, bot-user
@@ -12,17 +13,26 @@ render step to its execute step — without it, a caller could render a
 confirmation and immediately fire the write in the same turn without the
 user having actually seen the rendered facts.
 
-This module owns only the two primitives every such token needs:
+This module owns the two primitives every such token needs:
   - compute_token(**fields)  — deterministic hash over arbitrary facts.
   - is_fresh(issued_at, ...) — reject stale (replayed) or implausibly-
     future tokens.
 
-Capability-specific token constructors (e.g. depreciation_run_token(),
+...plus this skill's OWN token constructor, `advisory_write_token()` (see
+below) — merged in from the former qkeee-erp-catch-all skill, 2026-08-18.
+Unlike every other persona skill, which gates only its highest-risk
+actions, this skill's `gated_mutate_resource()` (erp_client.py) runs
+EVERY create/update/submit/cancel/delete through this one constructor,
+unconditionally — nothing this skill investigates has had the design-
+time capability review that lets the eight named persona skills be more
+assertive.
+
+Other capability-specific token constructors (e.g. depreciation_run_token(),
 permission_change_token(), destructive_action_token()) do NOT live here —
 those stay in the owning persona skill's own confirm_token.py, built on
-top of these two shared primitives, same as erp_client.py's split between
-generic connector primitives (core) and persona-specific business logic
-(the persona skill). A persona skill's confirm_token.py should:
+top of the two shared primitives, same as erp_client.py's split between
+generic connector primitives (this skill) and persona-specific business
+logic (the persona skill). A persona skill's confirm_token.py should:
 
     from confirm_token import compute_token, is_fresh, DEFAULT_TOKEN_TTL_SECONDS
 
@@ -72,3 +82,27 @@ def is_fresh(issued_at: int, max_age_seconds: int = DEFAULT_TOKEN_TTL_SECONDS,
     now = int(now) if now is not None else int(time.time())
     age = now - int(issued_at)
     return -CLOCK_SKEW_TOLERANCE_SECONDS <= age <= max_age_seconds
+
+
+def advisory_write_token(action: str, doctype: str, name: str, payload: dict,
+                          requested_by: str, issued_at: int = None) -> str:
+    """Gates every create/update/submit/cancel/delete this skill performs
+    — see module docstring for why this is unconditional here, unlike the
+    narrower gating in system-admin/fixed-asset-manager's copies.
+
+    payload is folded into the token as-is (sorted-key JSON) so the token
+    is bound to the exact drafted field values, not just the doctype/
+    action/name shape — a caller can't render one payload and execute a
+    different one under the same token.
+    """
+    if issued_at is None:
+        raise ValueError("issued_at is required — pass the render-time epoch seconds.")
+    return compute_token(
+        kind="advisory_write",
+        action=action,
+        doctype=doctype,
+        name=name or "",
+        payload=payload or {},
+        requested_by=requested_by or "",
+        issued_at=int(issued_at),
+    )

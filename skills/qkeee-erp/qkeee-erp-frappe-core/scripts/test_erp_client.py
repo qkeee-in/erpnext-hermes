@@ -4,12 +4,14 @@ missing must never produce an empty `session` field on Qkeee Bot Audit Log
 (that field is mandatory, and _audit_insert() swallows the resulting
 MandatoryError silently — see bot-doctypes-design.md decision 10)."""
 
+import time
 import unittest
 import unittest.mock
 from unittest.mock import patch
 
 import erp_client
 import erp_client as ec
+from confirm_token import advisory_write_token
 
 
 class GetEnvConfigDebugRequestedByTests(unittest.TestCase):
@@ -212,6 +214,77 @@ class GetUserRolesTests(unittest.TestCase):
         self.assertEqual(result["roles"], [])
         self.assertTrue(result["warning"])
         self.assertIn("not confirmed", result["warning"])
+
+
+class TestGatedMutateResource(unittest.TestCase):
+    """gated_mutate_resource() is this skill's own write entry point,
+    merged in from the former qkeee-erp-catch-all skill (2026-08-18) —
+    this skill's own extra layer on top of mutate_resource()'s
+    mode/requested_by gate, enforced in code, not just prompt."""
+
+    QA_ENV = {
+        "QKEEE_ERP_QA_BASE_URL": "https://example.com",
+        "QKEEE_ERP_QA_API_KEY": "key",
+        "QKEEE_ERP_QA_API_SECRET": "secret",
+    }
+
+    def test_refuses_without_token(self):
+        with patch.object(ec, "_request") as mocked_request:
+            with self.assertRaises(ec.ConnectorError):
+                ec.gated_mutate_resource("qa", "CRM Lead", "create", {"x": 1}, mode="read-write",
+                                          requested_by="priya@org.com")
+            mocked_request.assert_not_called()
+
+    def test_refuses_with_stale_token(self):
+        old_issued_at = int(time.time()) - 10_000  # well past DEFAULT_TOKEN_TTL_SECONDS
+        token = advisory_write_token("create", "CRM Lead", None, {"x": 1}, "priya@org.com", old_issued_at)
+        with patch.object(ec, "_request") as mocked_request:
+            with self.assertRaises(ec.StaleConfirmationError):
+                ec.gated_mutate_resource("qa", "CRM Lead", "create", {"x": 1}, mode="read-write",
+                                          requested_by="priya@org.com",
+                                          confirmation_token=token, issued_at=old_issued_at)
+            mocked_request.assert_not_called()
+
+    def test_refuses_with_mismatched_payload(self):
+        """The rendered token is bound to the exact payload — a caller
+        can't render one draft and execute a different one under the
+        same token."""
+        issued_at = int(time.time())
+        token = advisory_write_token("create", "CRM Lead", None, {"x": 1}, "priya@org.com", issued_at)
+        with patch.object(ec, "_request") as mocked_request:
+            with self.assertRaises(ec.ConnectorError):
+                ec.gated_mutate_resource("qa", "CRM Lead", "create", {"x": 2}, mode="read-write",
+                                          requested_by="priya@org.com",
+                                          confirmation_token=token, issued_at=issued_at)
+            mocked_request.assert_not_called()
+
+    def test_succeeds_with_matching_fresh_token(self):
+        issued_at = int(time.time())
+        payload = {"lead_name": "Acme"}
+        token = advisory_write_token("create", "CRM Lead", None, payload, "priya@org.com", issued_at)
+        with patch.object(ec, "record_comment"), \
+                patch.object(ec, "_audit_insert", return_value=None), \
+                patch.object(ec, "_audit_update", return_value=False), \
+                patch.object(ec, "_audit_submit", return_value=False), \
+                patch.dict("os.environ", self.QA_ENV, clear=True), \
+                patch.object(ec, "_request", return_value={"data": {"name": "CRM-LEAD-0001"}}) as mocked:
+            result = ec.gated_mutate_resource("qa", "CRM Lead", "create", payload, mode="read-write",
+                                               requested_by="priya@org.com",
+                                               confirmation_token=token, issued_at=issued_at)
+        self.assertEqual(result["data"]["name"], "CRM-LEAD-0001")
+        mocked.assert_called_once()
+
+    def test_still_refuses_read_only_even_with_valid_token(self):
+        """The token gate is additive, not a replacement for the
+        mode/requested_by gate mutate_resource() already enforces."""
+        issued_at = int(time.time())
+        token = advisory_write_token("create", "CRM Lead", None, {"x": 1}, "priya@org.com", issued_at)
+        with patch.object(ec, "_request") as mocked_request:
+            with self.assertRaises(ec.ReadOnlyModeError):
+                ec.gated_mutate_resource("qa", "CRM Lead", "create", {"x": 1}, mode="read-only",
+                                          requested_by="priya@org.com",
+                                          confirmation_token=token, issued_at=issued_at)
+            mocked_request.assert_not_called()
 
 
 if __name__ == "__main__":

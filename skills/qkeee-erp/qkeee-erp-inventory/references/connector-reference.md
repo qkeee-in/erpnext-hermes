@@ -1,7 +1,7 @@
 # qkeee-erp-inventory connector reference
 
 This skill's copy of the `qkeee-erp` connector layer, synced from the
-canonical version in `qkeee-erp-core/references/connector-reference.md`.
+canonical version in `qkeee-erp-frappe-core/references/connector-reference.md`.
 Carries the full read+write path (`mutate_resource`) plus two
 inventory-specific additions: `get_bin_qty()` (live on-hand balance) and
 `get_stock_reconciliation_items()` (ERPNext's own authoritative
@@ -276,7 +276,7 @@ calls `record_comment(cfg, doctype, name, content)`, which POSTs to
 
 Comment content follows the fixed shape `[<SKILL_LABEL>] <action> —
 requested by <requested_by>, applied via qkeee-erp bot.` `SKILL_LABEL` is a
-module-level constant in `erp_client.py` — set to `"qkeee-erp-core"` here,
+module-level constant in `erp_client.py` — set to `"qkeee-erp-frappe-core"` here,
 and to the persona skill's own name in every synced copy, so the comment
 identifies which skill acted. `record_comment()` is best-effort: a comment
 failure (e.g. a role lacking comment permission) is swallowed and never
@@ -403,7 +403,7 @@ python erp_client.py --tag qa --mode read-write --requested-by priya@org.com mut
 ## Extension point
 
 To target a different ERP backend, replace `scripts/erp_client.py` and
-this file (here and in `qkeee-erp-core`, the source of truth). Nothing
+this file (here and in `qkeee-erp-frappe-core`, the source of truth). Nothing
 in `references/domain-knowledge.md` or this skill's `SKILL.md` needs to
 change — they're written to be ERP-agnostic in substance.
 
@@ -511,7 +511,7 @@ Agent (`Python-urllib/3.11`) got blocked with a 403 by this instance's
 WAF/bot-protection (Cloudflare) — a `curl` request with the same token
 auth succeeded immediately.** The 403 body looked identical in shape to
 an ERPNext auth failure, which would have been actively misleading.
-`_request()` now sends an explicit `User-Agent: qkeee-erp-core/1.0` on
+`_request()` now sends an explicit `User-Agent: qkeee-erp-frappe-core/1.0` on
 every call. Any org fronting their ERPNext instance with a WAF/CDN is a
 plausible deployment, not a demo-only quirk — keep this header set in
 every persona skill's connector copy.

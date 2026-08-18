@@ -1,22 +1,28 @@
-# qkeee-erp-catch-all — domain knowledge
+# qkeee-erp-frappe-core — domain knowledge (fallback-investigation mode)
 
 This is the ERP-agnostic half of the split (per the module plan's
-Architecture decision): the *method* a seasoned ERPNext/Frappe SME uses to
-get productive on a doctype, module, or app they haven't worked with
-before — independent of which specific app happens to be installed on a
-given org's instance. `references/erpnext-connector.md` +
-`scripts/discover.py`/`erp_client.py` are the technical layer this method
-executes through.
+Architecture decision) for this skill's OWN fallback-investigation
+identity (merged in from the former `qkeee-erp-catch-all` skill,
+2026-08-18) — the *method* a seasoned ERPNext/Frappe SME uses to get
+productive on a doctype, module, or app they haven't worked with before,
+independent of which specific app happens to be installed on a given
+org's instance. `references/connector-reference.md` + `scripts/discover.py`/
+`erp_client.py` are the technical layer this method executes through.
 
-## When this skill is the right one
+This file covers only the fallback-investigation mode. This skill's OTHER
+identity — the canonical connector substrate every persona skill copies
+from — has no domain knowledge of its own; see `SKILL.md` and
+`references/connector-reference.md` for that side.
 
-The other eight `qkeee-erp-*` persona skills each own a named functional
+## When this skill's fallback mode is the right one
+
+The eight named `qkeee-erp-*` persona skills each own a named functional
 area (HR, Accounts, Fixed Assets, System Admin, Procurement, Sales,
 Inventory, MIS/Reporting) with hand-built domain knowledge and capability
-tables. This skill exists for everything *outside* that — check the
-routing table below first; if the user's request clearly maps to one of
-the eight, say so and hand off rather than reinventing coverage that
-already exists in a more expert-tuned skill.
+tables. This skill's fallback mode exists for everything *outside* that —
+check the routing table below first; if the user's request clearly maps
+to one of the eight, say so and hand off rather than reinventing coverage
+that already exists in a more expert-tuned skill.
 
 ### Routing table — defer to the named persona skill when the request is about:
 
@@ -31,7 +37,7 @@ already exists in a more expert-tuned skill.
 | `qkeee-erp-inventory` | Item, Warehouse, Stock Entry, Stock Reconciliation, Material Request, Batch, Serial No |
 | `qkeee-erp-mis-analyst` | GL Entry, Trial Balance/P&L/Balance Sheet reports, Cost Center, Accounting Dimension |
 
-### This skill is the right one when:
+### This skill's fallback mode is the right one when:
 
 - A doctype/feature belongs to a **companion Frappe app** the org has
   installed beyond core `frappe`+`erpnext` — e.g. Frappe CRM (`crm`),
@@ -129,10 +135,10 @@ bot ends up guessing field names that don't exist on this instance.
 
 The module plan's six-stage pattern (Intake → Validate → Stage/Draft →
 Confirm → Execute → Report back) still applies to every write this skill
-performs — see the module plan for the full definition. This skill adds
-one thing on top, because unlike the eight named personas it has no
-pre-vetted, human-reviewed capability table for whatever doctype comes
-up:
+performs — see the module plan for the full definition. This skill's
+fallback mode adds one thing on top, because unlike the eight named
+personas it has no pre-vetted, human-reviewed capability table for
+whatever doctype comes up:
 
 - **Every write-capable capability here is advisory-first by default,
   enforced in code — not just a prompt-level default.** Because the
@@ -144,13 +150,14 @@ up:
   go-ahead, before calling `erp_client.gated_mutate_resource()` with that
   token — even in `read-write` mode. `gated_mutate_resource()` recomputes
   the token from the actual call and refuses a missing/stale/mismatched
-  one, so there is no code path in this skill's `erp_client.py` copy that
+  one, so there is no code path in this skill's `erp_client.py` that
   writes without a matching rendered draft first. Live-write authority
-  for a specific, well-understood catch-all capability can be promoted
-  out of this advisory-first default once a human has actually reviewed
-  and trusted it repeatedly — at that point it arguably belongs in a
-  proper persona skill (or a new one, calling `mutate_resource()`
-  directly like the named personas do) rather than staying in catch-all.
+  for a specific, well-understood fallback-mode capability can be
+  promoted out of this advisory-first default once a human has actually
+  reviewed and trusted it repeatedly — at that point it arguably belongs
+  in a proper persona skill (or a new one, calling `mutate_resource()`
+  directly like the named personas do) rather than staying in this
+  skill's catch-all mode.
 - **Never invent a field name.** If the user asks for something a field
   list from step 2 doesn't show, say so explicitly rather than guessing
   a plausible-sounding fieldname — a wrong Link-field guess that happens
@@ -161,12 +168,12 @@ up:
   follows (see `references/connector-reference.md`) — doubly important
   here since the doctype hasn't been vetted before.
 
-## What this skill deliberately doesn't try to do
+## What this skill's fallback mode deliberately doesn't try to do
 
-- It doesn't replace a properly built persona skill. If a catch-all
+- It doesn't replace a properly built persona skill. If a fallback-mode
   investigation turns into repeated, trusted usage of some doctype/app,
   that's a signal to build (or extend) a real persona skill for it, not
-  to keep growing catch-all into a tenth monolith.
+  to keep growing this skill into a tenth monolith.
 - It doesn't assume every unfamiliar app is a Frappe-ecosystem app on
   GitHub — a genuinely org-specific custom app/doctype has no upstream
   docs to fetch, and step 5 above degrades to "live metadata + what the

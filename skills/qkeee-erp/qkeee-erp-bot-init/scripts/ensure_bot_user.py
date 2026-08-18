@@ -6,7 +6,7 @@ Session/Message/Audit Log doctypes + Role, which init_bot.py handles).
 
 Persona skills authenticate to ERPNext as ONE shared bot/service account
 per environment tag (QKEEE_ERP_<TAG>_API_KEY/_SECRET — see
-qkeee-erp-core/SKILL.md's "Bot account — mandatory" section). That
+qkeee-erp-frappe-core/SKILL.md's "Bot account — mandatory" section). That
 account must be a dedicated ERPNext User, never a real staff member's
 personal login, and should hold the `Qkeee Bot` role once it exists (see
 doctype_defs.py / init_bot.py) so the audit-trail doctypes' permission

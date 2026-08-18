@@ -88,7 +88,7 @@ Receive and Bill"`; cancelled, confirmed `docstatus: 2`, `status:
 "Cancelled"`. Test record left in place, cancelled, labeled via
 `user_remark`. Read-only gate behavior (refuses `create` before any HTTP
 call when `mode != "read-write"`) is identical to every other
-`qkeee-erp-*` connector copy — see `qkeee-erp-core`'s reference for
+`qkeee-erp-*` connector copy — see `qkeee-erp-frappe-core`'s reference for
 that mechanism, not re-tested here since it's shared, unmodified code.
 
 ## RFQ / Supplier Quotation / Purchase Receipt — field grounding (live)

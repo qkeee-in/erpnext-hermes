@@ -8,7 +8,7 @@ real ERPNext instance — no such instance is available in this build
 environment. Those two remain unverified end-to-end for this
 hand-rewritten (not mechanically copied) read-only-only client; confirm
 them against a live instance before treating this connector as fully
-field-validated, same caveat qkeee-erp-core's own reference notes for
+field-validated, same caveat qkeee-erp-frappe-core's own reference notes for
 its canonical copy.
 """
 
@@ -74,7 +74,7 @@ class TestRunQueryReport(unittest.TestCase):
         self.assertEqual(out["columns"], [{"fieldname": "account"}])
         self.assertEqual(out["result"], [{"account": "Cash"}])
         # GET + query-string params, not POST — confirmed live (2026-08-18
-        # core sync: see qkeee-erp-core/references/connector-reference.md
+        # core sync: see qkeee-erp-frappe-core/references/connector-reference.md
         # "Built-in reports vs. hand-aggregated queries").
         self.assertEqual(mocked.call_args[0][1], "GET")
         called_kwargs = mocked.call_args.kwargs

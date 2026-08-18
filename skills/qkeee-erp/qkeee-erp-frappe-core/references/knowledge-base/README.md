@@ -1,13 +1,14 @@
 # Knowledge base — convention
 
-This directory is where `qkeee-erp-catch-all` accumulates what it learns
-about a specific org's ERPNext instance across sessions, per the module
-plan's request that this skill "keep getting wiser and more accurate."
-Nothing here is secret — no URLs, API keys, or credentials belong in
-these files (those stay in environment variables, per the module plan's
-Configuration section). This is purely non-secret research notes:
-installed-app inventory, doctype/module mapping, and app-level
-documentation summaries.
+This directory is where `qkeee-erp-frappe-core`'s fallback-investigation
+mode (merged in from the former `qkeee-erp-catch-all` skill, 2026-08-18)
+accumulates what it learns about a specific org's ERPNext instance across
+sessions, per the module plan's request that this skill "keep getting
+wiser and more accurate." Nothing here is secret — no URLs, API keys, or
+credentials belong in these files (those stay in environment variables,
+per the module plan's Configuration section). This is purely non-secret
+research notes: installed-app inventory, doctype/module mapping, and
+app-level documentation summaries.
 
 **Caveat: requires a writable skill mount.** This design assumes the running harness lets the skill write
 back into its own `references/` directory. That does not hold universally
@@ -117,7 +118,7 @@ or vice versa — flag, don't silently prefer one>
 <anything not yet investigated — next session picks up here>
 ```
 
-Update the relevant file whenever a catch-all session researches
-something new about an app that's already in the KB, rather than
-creating a duplicate note — append to "Key doctypes" / "Workflows", bump
-"Last updated".
+Update the relevant file whenever a `qkeee-erp-frappe-core`
+fallback-mode session researches something new about an app that's
+already in the KB, rather than creating a duplicate note — append to
+"Key doctypes" / "Workflows", bump "Last updated".

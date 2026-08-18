@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 qkeee-erp-system-admin connector — read+write copy of the canonical
-qkeee-erp-core ERPNext (Frappe REST API) client, per the
+qkeee-erp-frappe-core ERPNext (Frappe REST API) client, per the
 self-contained-copies architecture decision. This persona has the
 widest blast radius in the qkeee-erp library (user/role/permission
 changes, destructive actions) — permission changes and destructive
@@ -25,7 +25,7 @@ Non-negotiable: never issue a write call while mode == "read-only".
 This is enforced in mutate_resource()/call_whitelisted_method()/
 destructive_mutate() below, not just in the calling skill's prompt.
 
-Audit-trail retrofit (synced from qkeee-erp-core): every
+Audit-trail retrofit (synced from qkeee-erp-frappe-core): every
 write through mutate_resource() is additionally logged to Qkeee Bot
 Audit Log (two-phase, best-effort — see qkeee-erp-bot-init/references/
 bot-doctypes-design.md). destructive_mutate(), gated_config_mutate(),
@@ -172,7 +172,7 @@ def _request(cfg: dict, method: str, path: str, params: dict = None, payload: di
     # instances, returning a 403 that looks like an auth failure but isn't
     # — confirmed against <erp-instance>, where curl succeeded and unmodified
     # urllib got blocked on UA alone. Always send an explicit UA.
-    req.add_header("User-Agent", "qkeee-erp-core/1.0")
+    req.add_header("User-Agent", "qkeee-erp-frappe-core/1.0")
 
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -337,7 +337,7 @@ def resource_exists(tag: str, doctype: str, name: str) -> bool:
 
 
 # --------------------------------------------------------------------------
-# Audit logging (Qkeee Bot Audit Log) — synced from qkeee-erp-core.
+# Audit logging (Qkeee Bot Audit Log) — synced from qkeee-erp-frappe-core.
 # Best-effort throughout: if the target instance hasn't run
 # qkeee-erp-bot-init yet, every function below swallows the failure and the
 # caller's real ERPNext read/write proceeds unaffected.

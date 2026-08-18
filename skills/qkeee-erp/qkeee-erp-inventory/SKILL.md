@@ -94,7 +94,7 @@ Every write also logs a two-phase (`Attempted` → `Success`/`Failure`) row
 to the `Qkeee Bot Audit Log` doctype, best-effort — never blocks a write
 if the target instance hasn't run `qkeee-erp-bot-init` yet. Reads log
 there too, but only when the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true` (default `false`) —
-see `qkeee-erp-core/SKILL.md`'s "Audit trail" section and
+see `qkeee-erp-frappe-core/SKILL.md`'s "Audit trail" section and
 `qkeee-erp-bot-init/references/bot-doctypes-design.md` for the full
 mechanism. Pass `user_approved=True` to `mutate_resource()` only when
 this write's confirm stage actually ran with the user — it's a scan-for-

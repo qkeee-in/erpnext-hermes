@@ -1,7 +1,7 @@
 # qkeee-erp-fixed-asset-manager connector reference
 
 This skill's copy of the `qkeee-erp` connector layer, synced from the
-canonical version in `qkeee-erp-core/references/connector-reference.md`.
+canonical version in `qkeee-erp-frappe-core/references/connector-reference.md`.
 Carries the full read+write path (`mutate_resource`) — no
 capability-specific addition to `erp_client.py` itself for this skill
 (unlike `qkeee-erp-procurement`'s `get_user_roles()`); the
@@ -189,7 +189,7 @@ calls `record_comment(cfg, doctype, name, content)`, which POSTs to
 
 Comment content follows the fixed shape `[<SKILL_LABEL>] <action> —
 requested by <requested_by>, applied via qkeee-erp bot.` `SKILL_LABEL` is a
-module-level constant in `erp_client.py` — set to `"qkeee-erp-core"` here,
+module-level constant in `erp_client.py` — set to `"qkeee-erp-frappe-core"` here,
 and to the persona skill's own name in every synced copy, so the comment
 identifies which skill acted. `record_comment()` is best-effort: a comment
 failure (e.g. a role lacking comment permission) is swallowed and never
@@ -269,11 +269,11 @@ methods) the confirmation-token check.
 ## Extension point
 
 To target a different ERP backend, replace `scripts/erp_client.py` and
-this file (here and in `qkeee-erp-core`, the source of truth). Nothing
+this file (here and in `qkeee-erp-frappe-core`, the source of truth). Nothing
 in `references/domain-knowledge.md` or this skill's `SKILL.md` needs to
 change — they're written to be ERP-agnostic in substance.
 
-## Audit-trail retrofit (synced from qkeee-erp-core)
+## Audit-trail retrofit (synced from qkeee-erp-frappe-core)
 
 `mutate_resource()` wraps every write with a two-phase log to the
 `Qkeee Bot Audit Log` doctype (`Attempted` before the real call,
@@ -296,7 +296,7 @@ audit row. Closing this means either a bespoke two-phase log call inside
 deferred as follow-up work, not fixed in this pass.
 
 Full mechanism, decision log, and doctype schema:
-`qkeee-erp-core/references/connector-reference.md`'s own "Audit-trail
+`qkeee-erp-frappe-core/references/connector-reference.md`'s own "Audit-trail
 retrofit" section and `qkeee-erp-bot-init/references/bot-doctypes-
 design.md`.
 
@@ -338,7 +338,7 @@ Agent (`Python-urllib/3.11`) got blocked with a 403 by this instance's
 WAF/bot-protection (Cloudflare) — a `curl` request with the same token
 auth succeeded immediately.** The 403 body looked identical in shape to
 an ERPNext auth failure, which would have been actively misleading.
-`_request()` now sends an explicit `User-Agent: qkeee-erp-core/1.0` on
+`_request()` now sends an explicit `User-Agent: qkeee-erp-frappe-core/1.0` on
 every call. Any org fronting their ERPNext instance with a WAF/CDN is a
 plausible deployment, not a demo-only quirk — keep this header set in
 every persona skill's connector copy.

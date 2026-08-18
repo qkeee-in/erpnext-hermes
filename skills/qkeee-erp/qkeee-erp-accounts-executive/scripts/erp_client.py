@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 qkeee-erp-accounts-executive connector — read+write copy of the canonical
-qkeee-erp-core ERPNext (Frappe REST API) client, per the self-contained-
+qkeee-erp-frappe-core ERPNext (Frappe REST API) client, per the self-contained-
 copies architecture decision. This persona is read-write-capable (gated
 by qkeee_erp.mode), unlike qkeee-erp-mis-analyst's read-only-only copy.
 
@@ -24,7 +24,7 @@ Journal Entry submission) lives in scripts/render_je_draft.py, not here
 — this file enforces the library-wide mode gate; the JE-specific
 never-auto-submit rule is enforced closer to where JE drafts are built.
 
-Audit-trail retrofit (synced from qkeee-erp-core): every
+Audit-trail retrofit (synced from qkeee-erp-frappe-core): every
 write is additionally logged to Qkeee Bot Audit Log (two-phase,
 best-effort — see qkeee-erp-bot-init/references/bot-doctypes-design.md).
 """
@@ -147,7 +147,7 @@ def _request(cfg: dict, method: str, path: str, params: dict = None, payload: di
     # instances, returning a 403 that looks like an auth failure but isn't
     # — confirmed against <erp-instance>, where curl succeeded and unmodified
     # urllib got blocked on UA alone. Always send an explicit UA.
-    req.add_header("User-Agent", "qkeee-erp-core/1.0")
+    req.add_header("User-Agent", "qkeee-erp-frappe-core/1.0")
 
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -340,7 +340,7 @@ def record_comment(cfg: dict, doctype: str, name: str, content: str) -> bool:
 
 
 # --------------------------------------------------------------------------
-# Audit logging (Qkeee Bot Audit Log) — synced from qkeee-erp-core.
+# Audit logging (Qkeee Bot Audit Log) — synced from qkeee-erp-frappe-core.
 # Best-effort throughout: if the target instance hasn't run
 # qkeee-erp-bot-init yet, every function below swallows the failure and the
 # caller's real ERPNext read/write proceeds unaffected.

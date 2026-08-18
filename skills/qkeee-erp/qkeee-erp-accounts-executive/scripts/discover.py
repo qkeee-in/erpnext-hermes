@@ -170,7 +170,7 @@ def resolve_doctype(tag: str, doctype: str, *, debug: bool = False, requested_by
 
 
 def _cli():
-    p = argparse.ArgumentParser(description="qkeee-erp-core discovery CLI")
+    p = argparse.ArgumentParser(description="qkeee-erp-frappe-core discovery CLI")
     p.add_argument("--tag", required=True, help="environment tag, from qkeee_erp.active_env")
     p.add_argument("--debug", action="store_true",
                    help="from qkeee_erp.debug — logs this metadata read to Qkeee Bot Audit Log")

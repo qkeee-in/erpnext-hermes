@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 qkeee-erp-fixed-asset-manager connector — read+write copy of the
-canonical qkeee-erp-core ERPNext (Frappe REST API) client, per the
+canonical qkeee-erp-frappe-core ERPNext (Frappe REST API) client, per the
 self-contained-copies architecture decision. This persona is
 read-write-capable (gated by qkeee_erp.mode) for the full asset
 lifecycle. Depreciation runs and disposals additionally require a
@@ -25,7 +25,7 @@ Non-negotiable: never issue a write call while mode == "read-only".
 This is enforced in write_resource()/mutate below, not just in the
 calling skill's prompt.
 
-Audit-trail retrofit (synced from qkeee-erp-core): every
+Audit-trail retrofit (synced from qkeee-erp-frappe-core): every
 write through mutate_resource() is additionally logged to Qkeee Bot
 Audit Log (two-phase, best-effort — see qkeee-erp-bot-init/references/
 bot-doctypes-design.md). Known gap: call_whitelisted_method() below
@@ -34,7 +34,7 @@ make_sales_invoice) bypasses mutate_resource() entirely — these RPC-
 style writes are NOT yet audit-logged. Flagged in
 references/connector-reference.md; not fixed in this pass.
 
-Session/Message logging (synced from qkeee-erp-core): opt-in per
+Session/Message logging (synced from qkeee-erp-frappe-core): opt-in per
 caller via open_session()/log_message()/close_session(), best-effort,
 normally gated on qkeee_erp.debug at the SKILL.md level. Persona
 registration (ensure_persona_registered()) is a best-effort,
@@ -162,7 +162,7 @@ def _request(cfg: dict, method: str, path: str, params: dict = None, payload: di
     # instances, returning a 403 that looks like an auth failure but isn't
     # — confirmed against <erp-instance>, where curl succeeded and unmodified
     # urllib got blocked on UA alone. Always send an explicit UA.
-    req.add_header("User-Agent", "qkeee-erp-core/1.0")
+    req.add_header("User-Agent", "qkeee-erp-frappe-core/1.0")
 
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -319,7 +319,7 @@ def record_comment(cfg: dict, doctype: str, name: str, content: str) -> bool:
 
 
 # --------------------------------------------------------------------------
-# Audit logging (Qkeee Bot Audit Log) — synced from qkeee-erp-core.
+# Audit logging (Qkeee Bot Audit Log) — synced from qkeee-erp-frappe-core.
 # Best-effort throughout: if the target instance hasn't run
 # qkeee-erp-bot-init yet, every function below swallows the failure and the
 # caller's real ERPNext read/write proceeds unaffected.
@@ -785,7 +785,7 @@ def mutate_resource_with_concurrency(tag: str, doctype: str, action: str, payloa
     `sync_to_personas.py` by using a name `mutate_resource()` doesn't
     have: a prior version of this file defined `expected_modified` as a
     parameter directly on `mutate_resource()` itself, which meant every
-    `qkeee-erp-core` sync silently overwrote it with core's canonical
+    `qkeee-erp-frappe-core` sync silently overwrote it with core's canonical
     signature (which has no such param) — the loss went unnoticed because
     nothing tested the CLI's `mutate` dispatch end-to-end. Restored
     2026-08-18 as a wrapper specifically so this can never happen again:

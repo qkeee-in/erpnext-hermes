@@ -183,7 +183,7 @@ addition beyond the plan's original list, same as
   every statement above, and the reconciliation-check convention.
 - `references/connector-reference.md` — this skill's read-only-only copy
   of the `qkeee-erp` connector reference; documents what was deliberately
-  left out relative to `qkeee-erp-core`'s canonical version.
+  left out relative to `qkeee-erp-frappe-core`'s canonical version.
 - `references/erpnext-accounting-docs.md` — curated map into
   `docs.frappe.io`'s ERPNext accounting documentation (Chart of Accounts,
   Journal Entry, Opening Balances, Fiscal Year, Period Closing Voucher,

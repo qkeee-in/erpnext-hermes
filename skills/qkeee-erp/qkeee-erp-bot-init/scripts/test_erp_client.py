@@ -94,7 +94,7 @@ class TestMutateGates(unittest.TestCase):
             mocked_request.assert_not_called()
 
     def test_refuses_submit_action_this_skill_never_uses(self):
-        """Divergence from qkeee-erp-core's connector: this copy only ever
+        """Divergence from qkeee-erp-frappe-core's connector: this copy only ever
         creates/updates DocType/Role records, never submits/cancels/deletes."""
         with mock.patch("erp_client._request") as mocked_request:
             with self.assertRaises(ConnectorError):

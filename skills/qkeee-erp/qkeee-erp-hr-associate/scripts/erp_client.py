@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 qkeee-erp-hr-associate connector — read+write copy of the canonical
-qkeee-erp-core ERPNext (Frappe REST API) client, per the self-contained-
+qkeee-erp-frappe-core ERPNext (Frappe REST API) client, per the self-contained-
 copies architecture decision. This persona is read-write-capable (gated
 by qkeee_erp.mode) for routine HR transactions (Employee updates, Leave
 Application, Attendance, Job Opening, Job Applicant, Interview). Two
@@ -166,7 +166,7 @@ def _request(cfg: dict, method: str, path: str, params: dict = None, payload: di
     # instances, returning a 403 that looks like an auth failure but isn't
     # — confirmed against <erp-instance>, where curl succeeded and unmodified
     # urllib got blocked on UA alone. Always send an explicit UA.
-    req.add_header("User-Agent", "qkeee-erp-core/1.0")
+    req.add_header("User-Agent", "qkeee-erp-frappe-core/1.0")
 
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-qkeee-erp-core connector — canonical ERPNext (Frappe REST API) client.
+qkeee-erp-frappe-core connector — canonical ERPNext (Frappe REST API)
+client, and this skill's own write entry point for whatever doesn't fit
+a named persona skill (the merged former qkeee-erp-catch-all identity —
+see "Advisory-first write gate" below).
 
 Self-contained: stdlib only (urllib), no third-party deps, so any
 persona skill can copy this file verbatim into its own scripts/ dir
@@ -10,11 +13,21 @@ Env/credential model (tagged, not fixed dev/test/qa/prod):
   QKEEE_ERP_<TAG>_BASE_URL
   QKEEE_ERP_<TAG>_API_KEY
   QKEEE_ERP_<TAG>_API_SECRET
+  QKEEE_ERP_<TAG>_DEBUG          (optional, default false)
+  QKEEE_ERP_<TAG>_REQUESTED_BY   (optional, no default — mutate/open-session
+                                   error without it unless overridden per call)
 
 <TAG> defaults to "DEFAULT" if the user didn't name one at install.
-Active tag + read-only/read-write mode are non-secret and live in
-metadata.hermes.config (qkeee_erp.active_env, qkeee_erp.mode), passed
-in here via CLI flags / env — never hardcoded.
+DEBUG/REQUESTED_BY are per-tag deliberately — a profile juggling
+`hrms-demo` and `prod` can debug-log one and not the other, and
+attribute writes to a different requester per environment, without one
+global toggle bleeding across both (this used to be a single
+metadata.hermes.config qkeee_erp.debug/.requested_by shared across every
+tag; moved here so switching --tag also switches these). Active tag +
+read-only/read-write mode stay non-secret and live in
+metadata.hermes.config (qkeee_erp.active_env, qkeee_erp.mode) — those
+two are deliberately still global: an environment switch should never
+silently also change write access.
 
 Non-negotiable: never issue a write call while mode == "read-only".
 This is enforced in write_resource()/mutate below, not just in the
@@ -24,13 +37,14 @@ Bot account + requester attribution: the API key/secret above must
 belong to a dedicated ERPNext integration/bot user, never an
 individual's personal login (see Configuration in the module plan).
 Every write additionally requires `requested_by` (the ERPNext user
-id/email of the human who asked for the change, sourced from
-metadata.hermes.config qkeee_erp.requested_by) and, on success, posts
-a best-effort audit Comment on the affected record naming that
-requester — so ERPNext's own audit trail shows who asked, not just
-that the bot acted. See record_comment()/mutate_resource() below.
+id/email of the human who asked for the change, sourced per-tag from
+QKEEE_ERP_<TAG>_REQUESTED_BY, with a CLI --requested-by as a per-call
+override) and, on success, posts a best-effort audit Comment on the
+affected record naming that requester — so ERPNext's own audit trail
+shows who asked, not just that the bot acted. See
+record_comment()/mutate_resource() below.
 
-Audit-trail retrofit: every write is additionally
+Every write is additionally
 logged to the `Qkeee Bot Audit Log` doctype (two-phase: an `Attempted`
 row inserted before the real write, updated to `Success`/`Failure`
 after), and every read is logged there too when `debug=True` is passed.
@@ -41,15 +55,22 @@ best-effort, not a gate" below for why, and
 qkeee-erp-bot-init/references/bot-doctypes-design.md for the full
 schema/decision log this implements.
 
-Catch-all-specific write gate:
-this copy also ships `gated_mutate_resource()`, the actual write entry
-point for this skill — it requires a confirmation_token + issued_at from
-`render_draft.py`, matching this skill's "advisory-first, always"
-non-negotiable in code, not just prompt discipline. Every catch-all
-write is gated this way (not just the highest-risk ones, unlike the
-narrower per-capability gating in system-admin/fixed-asset-manager's
-copies) since nothing here has had the design-time capability review the
-eight named persona skills' writes had. See confirm_token.py.
+Advisory-first write gate (merged in from the former qkeee-erp-catch-all
+skill, 2026-08-18): this file also ships `gated_mutate_resource()`, this
+skill's OWN write entry point (wired into `_cli()`'s `mutate` subcommand
+below) — it requires a confirmation_token + issued_at from
+`render_draft.py`, matching the "never propose a field/doctype/workflow
+step that isn't confirmed against live metadata or an explicit user
+statement, and never write without an unconditionally-advisory-first
+draft" non-negotiable in code, not just prompt discipline. Every write
+THIS skill performs is gated this way — unlike the eight named persona
+skills, which call `mutate_resource()` directly because their capability
+tables were reviewed at design time, nothing this skill investigates has
+had that review (the doctype wasn't known in advance). Persona-skill
+copies of this file keep using plain `mutate_resource()` unchanged — the
+sync script never touches `gated_mutate_resource()` or `_cli()`, so this
+stricter entry point stays specific to this skill's own copy. See
+confirm_token.py's `advisory_write_token()`.
 """
 
 import argparse
@@ -65,8 +86,8 @@ from confirm_token import advisory_write_token, is_fresh
 
 # Persona-skill copies of this file should change this to their own
 # skill name (e.g. "qkeee-erp-accounts-executive") so audit comments
-# are traceable to the acting skill, not just "core".
-SKILL_LABEL = "qkeee-erp-catch-all"
+# are traceable to the acting skill, not just "frappe-core".
+SKILL_LABEL = "qkeee-erp-frappe-core"
 
 # Qkeee Bot audit-trail doctypes (see qkeee-erp-bot-init). A target
 # instance may not have these provisioned yet — every call into them
@@ -109,6 +130,10 @@ class StaleConfirmationError(ConnectorError):
 def _tag_env_var(tag: str, suffix: str) -> str:
     sanitized = "".join(c if c.isalnum() else "_" for c in tag.upper()) or "DEFAULT"
     return f"QKEEE_ERP_{sanitized}_{suffix}"
+
+
+def _parse_bool_env(raw: str) -> bool:
+    return (raw or "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def get_env_config(tag: str = "default") -> dict:
@@ -188,7 +213,7 @@ def _request(cfg: dict, method: str, path: str, params: dict = None, payload: di
     # instances, returning a 403 that looks like an auth failure but isn't
     # — confirmed against <erp-instance>, where curl succeeded and unmodified
     # urllib got blocked on UA alone. Always send an explicit UA.
-    req.add_header("User-Agent", "qkeee-erp-core/1.0")
+    req.add_header("User-Agent", "qkeee-erp-frappe-core/1.0")
 
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -320,6 +345,87 @@ def resource_exists(tag: str, doctype: str, name: str) -> bool:
         if "(404)" in str(e):
             return False
         raise
+
+
+def run_query_report(tag: str, report_name: str, filters: dict = None,
+                      *, debug: bool = False, session_id: str = None, persona_code: str = None,
+                      requested_by: str = None) -> dict:
+    """Run one of ERPNext's own built-in reports server-side (Query Report
+    or Script Report) via frappe.desk.query_report.run, instead of hand-
+    aggregating raw transactional rows into the same shape. Prefer this
+    whenever a built-in report covers the need — report logic already
+    implements dimension filters, Finance Book gates, and currency
+    conversion correctly; a hand-rolled aggregation risks silently
+    missing one of those. Read-only in effect (runs a report, creates
+    nothing).
+
+    GET + query-string filters, not POST — confirmed live ("Sales Order
+    Analysis" against a real ERPNext v15 instance, real per-line data
+    returned). `filters` is a plain dict of report-specific filter values;
+    field names vary per report — confirm the exact filter keys a given
+    report expects by opening it in the ERPNext UI once, since this
+    generic endpoint doesn't self-document per-report filter schemas.
+
+    `debug=True` logs this read to Qkeee Bot Audit Log, against
+    reference_doctype "Report" with reference_name=report_name, since a
+    query report isn't itself a DocType record being read.
+    """
+    cfg = get_env_config(tag)
+    params = {"report_name": report_name}
+    if filters:
+        params["filters"] = json.dumps(filters)
+    result = _request(cfg, "GET", "/api/method/frappe.desk.query_report.run", params=params)
+    message = result.get("message", {})
+
+    if debug:
+        _log_read(cfg, "Report", report_name, requested_by, session_id, persona_code)
+
+    return {
+        "report_name": report_name,
+        "columns": message.get("columns", []),
+        "result": message.get("result", []),
+    }
+
+
+def get_user_roles(tag: str, user: str = "") -> dict:
+    """Fetch a user's assigned roles — the standard (heuristic, not
+    guaranteed) signal for whether the acting user plausibly holds
+    authority for a given write, when no ERPNext Workflow doctype is
+    configured for the record type in question (common on a default-
+    configured instance — role membership is then the only signal
+    available via the REST API). An org with a real approval Workflow
+    should be asked about it directly rather than relying on this alone.
+
+    `user` defaults to the empty string, in which case this resolves the
+    currently-authenticated user's own roles via the health-check
+    endpoint first — get_env_config() has no notion of "which user this
+    API key belongs to" (Frappe token auth doesn't expose that directly).
+    """
+    cfg = get_env_config(tag)
+    target = user
+    if not target:
+        who = _request(cfg, "GET", "/api/method/frappe.auth.get_logged_user")
+        target = who.get("message", "")
+    path = f"/api/resource/User/{urllib.parse.quote(target)}"
+    result = _request(cfg, "GET", path)
+    doc = result.get("data", {})
+    roles = [r.get("role") for r in doc.get("roles", []) if r.get("role")]
+    # An empty roles list is ambiguous: it could mean "confirmed, this user
+    # genuinely holds no relevant role" or a lookup that silently came back
+    # thin (wrong username resolved, a permission restriction on the User
+    # doctype for this API key, etc). Surface that ambiguity explicitly
+    # rather than letting the caller treat empty the same as "checked, no
+    # authority" — either way the safe default is to treat authority as
+    # unconfirmed, but the caller deserves to know which case it's in.
+    warning = (
+        "No roles returned for this user — could mean the user genuinely "
+        "holds no relevant role, or that the lookup didn't resolve "
+        "correctly (wrong username, or this API key lacks permission to "
+        "read User.roles). Treat as 'authority not confirmed' either way, "
+        "but corroborate with the user rather than assuming the former."
+        if not roles else ""
+    )
+    return {"user": target, "roles": roles, "warning": warning}
 
 
 def record_comment(cfg: dict, doctype: str, name: str, content: str) -> bool:
@@ -710,20 +816,21 @@ def gated_mutate_resource(tag: str, doctype: str, action: str, payload: dict = N
                            *, confirmation_token: str = None, issued_at: int = None,
                            session_id: str = None, persona_code: str = None,
                            approval_note: str = None) -> dict:
-    """qkeee-erp-catch-all's write entry point — wraps mutate_resource()
-    with the token-gated advisory-first check every catch-all write goes
-    through, unconditionally (SKILL.md step 8: advisory-first, always,
-    regardless of qkeee_erp.mode). Unlike the narrower per-capability
-    gating in system-admin/fixed-asset-manager's copies, EVERY
-    create/update/submit/cancel/delete this skill performs is gated here
-    — nothing in catch-all has had the design-time capability review that
-    lets the eight named persona skills call mutate_resource() directly.
+    """This skill's write entry point — wraps mutate_resource() with the
+    token-gated advisory-first check every write this skill performs goes
+    through, unconditionally (SKILL.md's advisory-first rule: never write
+    without staging a draft and getting explicit go-ahead first, regardless
+    of qkeee_erp.mode). Unlike the narrower per-capability gating in
+    system-admin/fixed-asset-manager's copies, EVERY create/update/submit/
+    cancel/delete this skill performs is gated here — nothing this skill
+    investigates has had the design-time capability review that lets the
+    eight named persona skills call mutate_resource() directly.
 
     confirmation_token/issued_at must come from render_draft.py's output
     for this exact (action, doctype, name, payload, requested_by) — see
     confirm_token.py for the token/freshness mechanics. A caller that
-    tries to skip render_draft.py (e.g. passing a token computed
-    ad hoc, or an old one) is refused here, in code, not just by prompt
+    tries to skip render_draft.py (e.g. passing a token computed ad hoc,
+    or an old one) is refused here, in code, not just by prompt
     discipline.
     """
     if not confirmation_token or issued_at is None:
@@ -872,7 +979,7 @@ def discover_harness_http_tool() -> dict:
 
 
 def _cli():
-    p = argparse.ArgumentParser(description="qkeee-erp-core connector CLI")
+    p = argparse.ArgumentParser(description="qkeee-erp-frappe-core connector CLI")
     # No env-var fallback for --tag/--mode: these must come from the caller
     # (resolved from metadata.hermes.config qkeee_erp.active_env / .mode),
     # never picked up ambiently from an unrelated shell var — that would
@@ -882,16 +989,19 @@ def _cli():
     p.add_argument("--mode", choices=["read-only", "read-write"],
                    help="from qkeee_erp.mode (required for mutate)")
     p.add_argument("--requested-by",
-                   help="ERPNext user id/email of the human requesting the change, "
-                        "from qkeee_erp.requested_by (required for mutate)")
+                   help="ERPNext user id/email of the human requesting the change, for THIS call "
+                        "only — overrides QKEEE_ERP_<TAG>_REQUESTED_BY, doesn't replace it "
+                        "(required for mutate, one or the other must resolve to a value)")
     p.add_argument("--debug", action="store_true",
-                   help="from qkeee_erp.debug — logs this read to Qkeee Bot Audit Log (query/get only)")
+                   help="force debug logging on for THIS call only — QKEEE_ERP_<TAG>_DEBUG is the "
+                        "normal per-tag source; this flag only ever turns it on, never off")
     p.add_argument("--session-id", help="from the caller's open_session() — threaded into audit rows")
-    p.add_argument("--persona-code", help="e.g. qkeee-erp-catch-all — threaded into audit rows")
-    # No --user-approved flag here, unlike qkeee-erp-core's CLI: catch-all's 'mutate'
-    # is gated_mutate_resource(), which requires --confirmation-token/--issued-at from
-    # render_draft.py and always logs user_approved="Approved" once that check passes —
-    # there's no unconfirmed write path to flag in the first place.
+    p.add_argument("--persona-code", help="e.g. qkeee-erp-accounts-executive — threaded into audit rows")
+    # No --user-approved flag: this skill's 'mutate' is gated_mutate_resource(),
+    # which requires --confirmation-token/--issued-at from render_draft.py and
+    # always logs user_approved="Approved" once that check passes — there's no
+    # unconfirmed write path to flag in the first place (unlike a persona
+    # skill's own copy, which still exposes plain mutate_resource()).
     p.add_argument("--approval-note", help="free text of what was confirmed (mutate only) — "
                         "defaults to a fixed note if omitted")
     sub = p.add_subparsers(dest="command", required=True)
@@ -910,6 +1020,13 @@ def _cli():
     g.add_argument("name")
     g.add_argument("--no-strip", action="store_true", help="skip noise-stripping, return the raw doc verbatim")
 
+    r = sub.add_parser("report", help="Run a built-in ERPNext report (e.g. 'Accounts Receivable')")
+    r.add_argument("report_name")
+    r.add_argument("--filters", help="JSON object, e.g. '{\"company\":\"Acme\"}'")
+
+    ur = sub.add_parser("roles", help="Fetch a user's assigned roles (authority-check heuristic)")
+    ur.add_argument("--user", default="", help="defaults to the authenticated bot account's own user")
+
     m = sub.add_parser("mutate", help="Gated write — requires a token from render_draft.py "
                                        "(this skill's writes are advisory-first, always)")
     m.add_argument("doctype")
@@ -922,15 +1039,18 @@ def _cli():
                     help="epoch seconds from render_draft.py's output")
 
     rp = sub.add_parser("register-persona", help="Idempotent upsert of this persona's Qkeee Bot Persona row (master data, unconditional)")
-    rp.add_argument("--persona-code", required=True, help="e.g. qkeee-erp-catch-all")
-    rp.add_argument("--persona-label", required=True, help="display name, e.g. 'Catch-All'")
+    rp.add_argument("--persona-code", required=True, help="e.g. qkeee-erp-accounts-executive")
+    rp.add_argument("--persona-label", required=True, help="display name, e.g. 'Accounts Executive'")
     rp.add_argument("--default-mode", choices=["read-only", "read-write"], default="read-only",
                      help="this persona's default qkeee_erp.mode")
     rp.add_argument("--non-negotiables", help="free text copied from the persona's SKILL.md, informational only")
 
     os_ = sub.add_parser("open-session", help="Create a Qkeee Bot Session row (debug-mode logging)")
-    os_.add_argument("--user", help="ERPNext user id/email this session acts on behalf of")
-    os_.add_argument("--persona-code", required=True, help="e.g. qkeee-erp-catch-all")
+    os_.add_argument("--user",
+                      help="ERPNext user id/email this session acts on behalf of — overrides "
+                           "QKEEE_ERP_<TAG>_REQUESTED_BY, doesn't replace it (one or the other "
+                           "must resolve to a value)")
+    os_.add_argument("--persona-code", required=True, help="e.g. qkeee-erp-accounts-executive")
     os_.add_argument("--mode", required=True, choices=["read-only", "read-write"],
                       help="from qkeee_erp.mode at session start")
     os_.add_argument("--no-debug", action="store_true", help="mark debug_mode=False on the Session row (default True)")
@@ -949,12 +1069,12 @@ def _cli():
 
     args = p.parse_args()
 
-    if args.command in ("health", "query", "get", "mutate",
+    if args.command in ("health", "query", "get", "report", "roles", "mutate",
                          "register-persona", "open-session", "log-message", "close-session") and not args.tag:
         p.error(f"--tag is required for '{args.command}'")
     if args.command == "mutate" and not args.mode:
         p.error("--mode is required for 'mutate'")
-    if args.command in ("query", "get", "mutate") and not args.session_id:
+    if args.command in ("query", "get", "report", "mutate") and not args.session_id:
         # No --session-id passed (no open_session() call preceded this CLI
         # invocation) — generate a fallback now rather than relying solely
         # on _session_or_fallback() deep inside audit logging, so a
@@ -963,12 +1083,13 @@ def _cli():
         args.session_id = _session_or_fallback(None)
 
     # debug/requested-by default from the active TAG's own env vars
-    # (QKEEE_ERP_<TAG>_DEBUG / _REQUESTED_BY) — per-tag, not a single
-    # global qkeee_erp.debug/.requested_by. --debug/--requested-by on the
-    # CLI are a per-call override on top of that default, never a
+    # (QKEEE_ERP_<TAG>_DEBUG / _REQUESTED_BY) — per-tag, not the old
+    # single global qkeee_erp.debug/.requested_by. --debug/--requested-by
+    # on the CLI are a per-call override on top of that default, never a
     # replacement for it. Swallow a resolution failure here — a genuinely
     # missing/misconfigured tag surfaces its own specific error from the
-    # real call below.
+    # real call below (query_resource/mutate_resource/etc. each call
+    # get_env_config() themselves), no need to duplicate that here.
     tag_debug_default, tag_requested_by_default = False, ""
     if args.command in ("query", "get", "report", "mutate", "open-session"):
         try:
@@ -1008,6 +1129,14 @@ def _cli():
                                            debug=effective_debug, session_id=args.session_id,
                                            persona_code=args.persona_code,
                                            requested_by=effective_requested_by), indent=2))
+        elif args.command == "report":
+            filters = json.loads(args.filters) if args.filters else None
+            print(json.dumps(run_query_report(args.tag, args.report_name, filters,
+                                               debug=effective_debug, session_id=args.session_id,
+                                               persona_code=args.persona_code,
+                                               requested_by=effective_requested_by), indent=2))
+        elif args.command == "roles":
+            print(json.dumps(get_user_roles(args.tag, args.user), indent=2))
         elif args.command == "mutate":
             payload = json.loads(args.payload) if args.payload else None
             print(json.dumps(
@@ -1024,6 +1153,12 @@ def _cli():
                                                 persona_label=args.persona_label,
                                                 default_mode=args.default_mode,
                                                 non_negotiables=args.non_negotiables)
+            # "ok": True regardless of status — this call never raises by
+            # design (best-effort). "status" is the real signal: "failed"
+            # means the row did NOT get created, most likely because
+            # Qkeee Bot Persona isn't provisioned on this instance yet
+            # (qkeee-erp-bot-init hasn't been run here). Callers must
+            # check "status", not just that this command exited 0.
             print(json.dumps({"ok": True, "status": status}, indent=2))
         elif args.command == "open-session":
             session_id = open_session(args.tag, user=effective_requested_by, persona_code=args.persona_code,
@@ -1040,93 +1175,6 @@ def _cli():
     except ConnectorError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
-
-
-
-
-def run_query_report(tag: str, report_name: str, filters: dict = None,
-                      *, debug: bool = False, session_id: str = None, persona_code: str = None,
-                      requested_by: str = None) -> dict:
-    """Run one of ERPNext's own built-in reports server-side (Query Report
-    or Script Report) via frappe.desk.query_report.run, instead of hand-
-    aggregating raw transactional rows into the same shape. Prefer this
-    whenever a built-in report covers the need — report logic already
-    implements dimension filters, Finance Book gates, and currency
-    conversion correctly; a hand-rolled aggregation risks silently
-    missing one of those. Read-only in effect (runs a report, creates
-    nothing).
-
-    GET + query-string filters, not POST — confirmed live ("Sales Order
-    Analysis" against a real ERPNext v15 instance, real per-line data
-    returned). `filters` is a plain dict of report-specific filter values;
-    field names vary per report — confirm the exact filter keys a given
-    report expects by opening it in the ERPNext UI once, since this
-    generic endpoint doesn't self-document per-report filter schemas.
-
-    `debug=True` logs this read to Qkeee Bot Audit Log, against
-    reference_doctype "Report" with reference_name=report_name, since a
-    query report isn't itself a DocType record being read.
-    """
-    cfg = get_env_config(tag)
-    params = {"report_name": report_name}
-    if filters:
-        params["filters"] = json.dumps(filters)
-    result = _request(cfg, "GET", "/api/method/frappe.desk.query_report.run", params=params)
-    message = result.get("message", {})
-
-    if debug:
-        _log_read(cfg, "Report", report_name, requested_by, session_id, persona_code)
-
-    return {
-        "report_name": report_name,
-        "columns": message.get("columns", []),
-        "result": message.get("result", []),
-    }
-
-
-def get_user_roles(tag: str, user: str = "") -> dict:
-    """Fetch a user's assigned roles — the standard (heuristic, not
-    guaranteed) signal for whether the acting user plausibly holds
-    authority for a given write, when no ERPNext Workflow doctype is
-    configured for the record type in question (common on a default-
-    configured instance — role membership is then the only signal
-    available via the REST API). An org with a real approval Workflow
-    should be asked about it directly rather than relying on this alone.
-
-    `user` defaults to the empty string, in which case this resolves the
-    currently-authenticated user's own roles via the health-check
-    endpoint first — get_env_config() has no notion of "which user this
-    API key belongs to" (Frappe token auth doesn't expose that directly).
-    """
-    cfg = get_env_config(tag)
-    target = user
-    if not target:
-        who = _request(cfg, "GET", "/api/method/frappe.auth.get_logged_user")
-        target = who.get("message", "")
-    path = f"/api/resource/User/{urllib.parse.quote(target)}"
-    result = _request(cfg, "GET", path)
-    doc = result.get("data", {})
-    roles = [r.get("role") for r in doc.get("roles", []) if r.get("role")]
-    # An empty roles list is ambiguous: it could mean "confirmed, this user
-    # genuinely holds no relevant role" or a lookup that silently came back
-    # thin (wrong username resolved, a permission restriction on the User
-    # doctype for this API key, etc). Surface that ambiguity explicitly
-    # rather than letting the caller treat empty the same as "checked, no
-    # authority" — either way the safe default is to treat authority as
-    # unconfirmed, but the caller deserves to know which case it's in.
-    warning = (
-        "No roles returned for this user — could mean the user genuinely "
-        "holds no relevant role, or that the lookup didn't resolve "
-        "correctly (wrong username, or this API key lacks permission to "
-        "read User.roles). Treat as 'authority not confirmed' either way, "
-        "but corroborate with the user rather than assuming the former."
-        if not roles else ""
-    )
-    return {"user": target, "roles": roles, "warning": warning}
-
-
-def _parse_bool_env(raw: str) -> bool:
-    return (raw or "").strip().lower() in ("1", "true", "yes", "on")
 
 
 if __name__ == "__main__":

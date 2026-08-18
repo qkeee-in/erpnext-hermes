@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-qkeee-erp-catch-all — advisory-first draft renderer.
+qkeee-erp-frappe-core — advisory-first draft renderer.
 
 Formats the exact payload a create/update/submit/cancel/delete is about
 to send, marks which fields came from confirmed live metadata
@@ -9,8 +9,8 @@ request, and computes the confirmation token erp_client.gated_mutate_resource()
 requires. This script NEVER calls ERPNext — it only formats a draft
 already assembled by the caller and shows it to the user before anything
 is written, per this skill's "advisory-first, always" non-negotiable
-(SKILL.md step 8) — unconditional here, unlike the narrower
-per-capability gating in system-admin/fixed-asset-manager.
+(SKILL.md) — unconditional here, unlike the narrower per-capability
+gating in system-admin/fixed-asset-manager.
 """
 
 import json
@@ -71,7 +71,7 @@ def render_draft(action: str, doctype: str, payload: dict, requested_by: str,
         f"# Advisory draft — {action.upper()} `{doctype}`" + (f" `{name}`" if name else ""),
         "",
         "**Status: NOT DONE YET. This is a staged draft, not an action already taken.** "
-        "qkeee-erp-catch-all stages every write regardless of qkeee_erp.mode, since this "
+        "qkeee-erp-frappe-core stages every write regardless of qkeee_erp.mode, since this "
         "doctype hasn't had the design-time review the named persona skills' capabilities "
         "have — confirm this exact draft with the user before calling "
         "`gated_mutate_resource()`.",

@@ -106,7 +106,7 @@ class TestSubmitTwoStep(unittest.TestCase):
     (frappe.client.submit needs a DB-loaded doc, not a sparse payload —
     see erp_client.py's mutate_resource docstring), then POST it. This is
     exactly the mechanic that was previously found broken in
-    qkeee-erp-core's build; regression-test it here rather than relying
+    qkeee-erp-frappe-core's build; regression-test it here rather than relying
     solely on the one-time live validation record."""
 
     def test_submit_fetches_full_doc_then_posts_it(self):
@@ -173,7 +173,7 @@ class TestRunQueryReport(unittest.TestCase):
         self.assertEqual(out["report_name"], "Accounts Receivable")
         self.assertEqual(out["result"], [{"party": "Acme"}])
         # GET + query-string params, not POST — confirmed live (2026-08-18
-        # core sync: see qkeee-erp-core/references/connector-reference.md
+        # core sync: see qkeee-erp-frappe-core/references/connector-reference.md
         # "Built-in reports vs. hand-aggregated queries").
         self.assertEqual(mocked.call_args[0][1], "GET")
         self.assertEqual(mocked.call_args.kwargs["params"]["report_name"], "Accounts Receivable")

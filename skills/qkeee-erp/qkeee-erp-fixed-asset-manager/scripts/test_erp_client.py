@@ -230,7 +230,7 @@ class TestQueryResource(unittest.TestCase):
 
 class TestMutateResourceWithConcurrency(unittest.TestCase):
     """`mutate_resource_with_concurrency()` — this skill's own TOCTOU
-    wrapper, restored 2026-08-18 after `qkeee-erp-core` syncs had twice
+    wrapper, restored 2026-08-18 after `qkeee-erp-frappe-core` syncs had twice
     silently clobbered an `expected_modified` param bolted directly onto
     `mutate_resource()` (a shared-function name). Locks in the wrapper's
     contract so a regression here fails a test instead of only surfacing

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-qkeee-erp-core -> persona-skill sync script.
+qkeee-erp-frappe-core -> persona-skill sync script.
 
 Pushes core's canonical connector layer out to every persona skill's own
 copy WITHOUT clobbering persona-specific additions. This is a merge, not
@@ -58,14 +58,14 @@ CORE_DIR = Path(__file__).resolve().parent.parent
 SKILLS_DIR = CORE_DIR.parent
 
 PERSONA_SKILLS = [
-    "qkeee-erp-accounts-executive", "qkeee-erp-bot-init", "qkeee-erp-catch-all",
+    "qkeee-erp-accounts-executive", "qkeee-erp-bot-init",
     "qkeee-erp-fixed-asset-manager", "qkeee-erp-hr-associate", "qkeee-erp-inventory",
     "qkeee-erp-mis-analyst", "qkeee-erp-procurement", "qkeee-erp-sales",
     "qkeee-erp-system-admin",
 ]
 
 CONFIRM_TOKEN_SKILLS = [
-    "qkeee-erp-bot-init", "qkeee-erp-catch-all", "qkeee-erp-fixed-asset-manager",
+    "qkeee-erp-bot-init", "qkeee-erp-fixed-asset-manager",
     "qkeee-erp-system-admin",
 ]
 
@@ -296,8 +296,8 @@ def sync_confirm_token(skill: str, apply: bool) -> dict:
 def sync_discover(skill: str, apply: bool) -> dict:
     core_script = read(CORE_DIR / "scripts" / "discover.py")
     core_test = read(CORE_DIR / "scripts" / "test_discover.py")
-    persona_script = core_script.replace("qkeee-erp-core discovery helper", f"{skill} discovery helper") \
-                                 .replace('default="qkeee-erp-core"', f'default="{skill}"')
+    persona_script = core_script.replace("qkeee-erp-frappe-core discovery helper", f"{skill} discovery helper") \
+                                 .replace('default="qkeee-erp-frappe-core"', f'default="{skill}"')
     target_script = SKILLS_DIR / skill / "scripts" / "discover.py"
     target_test = SKILLS_DIR / skill / "scripts" / "test_discover.py"
     existed = target_script.exists()

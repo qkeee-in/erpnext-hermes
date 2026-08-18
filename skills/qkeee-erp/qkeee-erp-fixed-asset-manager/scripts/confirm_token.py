@@ -20,7 +20,7 @@ happen. This does not replace the human "ask again" step; it makes it
 impossible to skip straight from render to execute without at least
 round-tripping the rendered facts back in.
 
-**Freshness retrofit (2026-08-18, synced from qkeee-erp-core):** this
+**Freshness retrofit (2026-08-18, synced from qkeee-erp-frappe-core):** this
 file previously had no is_fresh() / issued_at — a computed token never
 expired, so a stale render (against numbers that have since changed,
 e.g. a revalued asset or an amended schedule) could still validate at

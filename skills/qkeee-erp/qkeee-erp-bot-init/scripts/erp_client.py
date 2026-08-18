@@ -2,10 +2,10 @@
 """
 qkeee-erp-bot-init connector — ERPNext (Frappe REST API) client.
 
-Self-contained copy of qkeee-erp-core's erp_client.py, per the
+Self-contained copy of qkeee-erp-frappe-core's erp_client.py, per the
 self-contained-copies architecture decision (every qkeee-erp-* skill ships
-its own copy rather than depending on qkeee-erp-core at runtime). Synced
-from qkeee-erp-core/scripts/erp_client.py, including its audit-trail
+its own copy rather than depending on qkeee-erp-frappe-core at runtime). Synced
+from qkeee-erp-frappe-core/scripts/erp_client.py, including its audit-trail
 retrofit — do not hand-diverge except for the two things noted below.
 
 Deliberate divergences from the core copy (keep these on re-sync):
@@ -168,7 +168,7 @@ def _request(cfg: dict, method: str, path: str, params: dict = None, payload: di
     # instances, returning a 403 that looks like an auth failure but isn't
     # — confirmed against <erp-instance>, where curl succeeded and unmodified
     # urllib got blocked on UA alone. Always send an explicit UA.
-    req.add_header("User-Agent", "qkeee-erp-core/1.0")
+    req.add_header("User-Agent", "qkeee-erp-frappe-core/1.0")
 
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:

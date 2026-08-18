@@ -67,7 +67,7 @@ capability and offer to run it, rather than waiting to be asked by name.
 4. **Run for real only after the user explicitly confirms** — including
    confirming that this email really is meant to be a dedicated bot
    account, not someone's personal login (the whole point of the
-   Bot-account non-negotiable in `qkeee-erp-core`'s SKILL.md). Pass the
+   Bot-account non-negotiable in `qkeee-erp-frappe-core`'s SKILL.md). Pass the
    token back verbatim.
 5. **If new keys are generated, they print to stdout exactly once.** Tell
    the user to copy `QKEEE_ERP_<TAG>_API_KEY` / `_API_SECRET` into
@@ -142,7 +142,7 @@ requirement above and the confirm-token flow below.
    audit logging.** Actually calling into these doctypes on every
    read/write (the two-phase `Attempted`→`Success`/`Failure` Audit Log
    write, the `in_reply_to` message linkage, the `AUDIT_EXEMPT_DOCTYPES`
-   recursion guard) is `qkeee-erp-core` connector work — a follow-up
+   recursion guard) is `qkeee-erp-frappe-core` connector work — a follow-up
    retrofit across `erp_client.py` and the persona skills that copy it,
    not something this skill does at init time. Say so if a user expects
    audit rows to start appearing immediately after running this.
@@ -185,7 +185,7 @@ requirement above and the confirm-token flow below.
   later (live-confirmed that Frappe rejects that at create
   time) — currently just `Qkeee Bot Message.linked_audit_log`.
 - `scripts/erp_client.py` — connector copy (self-contained-copies pattern,
-  synced from `qkeee-erp-core` including its two-phase audit-log write
+  synced from `qkeee-erp-frappe-core` including its two-phase audit-log write
   path), plus `resource_exists()` — a 404-tolerant existence check this
   skill adds on top of the shared connector shape. Credentials for this
   copy must be elevated (see non-negotiable above). Diverges from core
@@ -219,7 +219,7 @@ by design, not ERP-agnostic.
 
 ## Relationships
 
-Provisions the schema `qkeee-erp-core`'s connector (and every persona
+Provisions the schema `qkeee-erp-frappe-core`'s connector (and every persona
 skill's copy of it) will eventually write to, once the audit-logging
 retrofit described in step 5 above is built. Run this once per target
 environment tag, before that retrofit lands or as soon as it does.

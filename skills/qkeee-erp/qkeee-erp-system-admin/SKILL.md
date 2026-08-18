@@ -106,7 +106,7 @@ hasn't run `qkeee-erp-bot-init` yet. `destructive_mutate()`,
 `mutate_resource()` internally, so they inherit this logging
 automatically — no separate wiring for those three. Reads log there
 too, but only when the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true` (default `false`). See
-`qkeee-erp-core/SKILL.md`'s "Audit trail" section and `qkeee-erp-bot-
+`qkeee-erp-frappe-core/SKILL.md`'s "Audit trail" section and `qkeee-erp-bot-
 init/references/bot-doctypes-design.md` for the full mechanism.
 
 **Known gap, and it's the one that matters most in this skill:

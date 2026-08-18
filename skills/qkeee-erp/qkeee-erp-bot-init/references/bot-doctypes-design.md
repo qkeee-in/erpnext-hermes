@@ -15,7 +15,7 @@ Every field/permission decision below assumes: doctypes are created at
 runtime as `custom: 1` records via `POST /api/resource/DocType`, attached
 to Frappe's built-in `Custom` module. No new Frappe app, no module folder,
 no Python controller, no Server Script. `mutate_resource()` in
-`qkeee-erp-core`'s connector already supports this with zero changes — a
+`qkeee-erp-frappe-core`'s connector already supports this with zero changes — a
 `DocType` record is just another doctype to `create`; `DocType` itself is
 simply not one of `qkeee_erp.mode`'s usual business-write targets.
 
@@ -212,7 +212,7 @@ Session + Message creation and Audit Log's Read rows, per the split
 above. `qkeee_erp.active_env`/`qkeee_erp.mode` remain global
 `metadata.hermes.config` keys; `QKEEE_ERP_<TAG>_REQUESTED_BY` moved
 alongside `_DEBUG` for the same per-tag reason. See
-`qkeee-erp-core/references/connector-reference.md`'s "Requester
+`qkeee-erp-frappe-core/references/connector-reference.md`'s "Requester
 attribution and debug are per-tag, not global" for the full rationale.
 
 ## Extension points
