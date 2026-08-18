@@ -17,7 +17,22 @@ an overwrite:
   hand-extended CLI wiring for its own extra functions; overwriting it
   would delete that. Functions core has that a persona copy is missing
   are appended near the end of the file (before a trailing
-  `if __name__ == "__main__":` guard, if present).
+  `if __name__ == "__main__":` guard, if present) — UNLESS the function
+  is in WRITE_PATH_FUNCTIONS and the target skill is in
+  READ_ONLY_SKILLS, in which case it's deliberately never (re)appended.
+  This "append what's missing" behavior is exactly what silently broke
+  qkeee-erp-mis-analyst once already (2026-08-18 postmortem): mis-analyst
+  intentionally ships no write path at all, but a routine sync run had no
+  way to know that "missing" here meant "deliberately omitted" rather
+  than "never built yet," and reintroduced mutate_resource/_do_mutate/
+  record_comment/_diff_fields/_audit_update/_audit_submit/
+  record_audit_log_start/record_audit_log_finish as dead, unreachable
+  code (no `mutate` CLI subcommand ever called them) — worse, the
+  exception classes mutate_resource() raised on failure,
+  ReadOnlyModeError/MissingRequesterError, were never even defined in
+  that file, since SHARED_FUNCTIONS matching only looks at `def` blocks,
+  not `class`. READ_ONLY_SKILLS/WRITE_PATH_FUNCTIONS below close that gap
+  structurally instead of relying on nobody ever forgetting again.
 - confirm_token.py: same function-level merge, applied only to the skills
   that already have this file (opt-in infra, not every persona needs
   double-confirm tokens).
@@ -54,11 +69,30 @@ CONFIRM_TOKEN_SKILLS = [
     "qkeee-erp-system-admin",
 ]
 
+# Skills that deliberately ship no write path at all (structural
+# read-only guarantee, not a config-driven restraint — see each such
+# skill's own module docstring). Sync must never (re)introduce
+# WRITE_PATH_FUNCTIONS into these, even though they're "missing" by the
+# normal missing-in-target-but-present-in-core-and-shared_names logic.
+READ_ONLY_SKILLS = ["qkeee-erp-mis-analyst"]
+
+# The write-path subset of SHARED_FUNCTIONS — withheld from
+# READ_ONLY_SKILLS specifically (see READ_ONLY_SKILLS above and the
+# module docstring's postmortem). Every name here still gets synced
+# normally (updated-if-present) for every skill NOT in READ_ONLY_SKILLS;
+# this list only controls whether merge_py() is allowed to APPEND one of
+# these to a read-only skill that has never had it.
+WRITE_PATH_FUNCTIONS = {
+    "record_comment", "_diff_fields", "_audit_update", "_audit_submit",
+    "record_audit_log_start", "record_audit_log_finish", "mutate_resource",
+    "_do_mutate",
+}
+
 # Every top-level function in core's erp_client.py that is shared connector
 # plumbing, never persona-specific business logic. `_cli` is intentionally
 # excluded — see module docstring.
 SHARED_FUNCTIONS = [
-    "_tag_env_var", "get_env_config", "_request", "health_check",
+    "_tag_env_var", "_parse_bool_env", "get_env_config", "_request", "health_check",
     "query_resource", "_strip_noise", "get_resource", "resource_exists",
     "run_query_report", "get_user_roles", "record_comment", "_now_iso",
     "_session_or_fallback", "_diff_fields", "_audit_insert", "_audit_update",
@@ -117,7 +151,18 @@ def blocks_by_name(blocks):
     return {b["name"]: b for b in blocks if b["type"] == "match"}
 
 
-def merge_py(core_src: str, target_src: str, shared_names: list, keyword: str) -> tuple:
+def merge_py(core_src: str, target_src: str, shared_names: list, keyword: str,
+             appendable_names: list = None) -> tuple:
+    """`shared_names` controls the update-if-present pass (a block already
+    in the target under one of these names always gets replaced with
+    core's version, or left alone if identical). `appendable_names`
+    (defaults to `shared_names`) separately controls the missing-in-
+    target -> append pass — pass a narrower set here for a target that
+    deliberately omits some shared-named functions entirely, so "missing"
+    doesn't get silently reinterpreted as "never built yet, add it" (see
+    module docstring's mis-analyst postmortem)."""
+    if appendable_names is None:
+        appendable_names = shared_names
     core_blocks = blocks_by_name(split_py_blocks(core_src, keyword))
     target_blocks = split_py_blocks(target_src, keyword)
     target_by_name = blocks_by_name(target_blocks)
@@ -138,7 +183,7 @@ def merge_py(core_src: str, target_src: str, shared_names: list, keyword: str) -
                 report["persona_only_kept"].append(b["name"])
             new_blocks.append(b)
 
-    missing = [name for name in shared_names if name in core_blocks and name not in target_by_name]
+    missing = [name for name in appendable_names if name in core_blocks and name not in target_by_name]
     to_append = [core_blocks[name] for name in missing]
     report["added"] = missing
 
@@ -227,7 +272,11 @@ def sync_erp_client(skill: str, apply: bool) -> dict:
     target_path = SKILLS_DIR / skill / "scripts" / "erp_client.py"
     if not target_path.exists():
         return {"skipped": "no erp_client.py in target"}
-    merged, report = merge_py(read(core_path), read(target_path), SHARED_FUNCTIONS, "def")
+    appendable = SHARED_FUNCTIONS
+    if skill in READ_ONLY_SKILLS:
+        appendable = [n for n in SHARED_FUNCTIONS if n not in WRITE_PATH_FUNCTIONS]
+    merged, report = merge_py(read(core_path), read(target_path), SHARED_FUNCTIONS, "def",
+                               appendable_names=appendable)
     if apply:
         target_path.write_text(merged, encoding="utf-8", newline="\n")
     return report

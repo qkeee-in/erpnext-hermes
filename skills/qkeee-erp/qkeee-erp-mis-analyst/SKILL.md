@@ -10,9 +10,6 @@ metadata:
       - key: qkeee_erp.mode
         prompt: "This skill is always read-only regardless of your answer (its connector ships no write path) — kept only for config-shape consistency across the qkeee-erp library. Accept the default unless you have a reason not to."
         default: "read-only"
-      - key: qkeee_erp.debug
-        prompt: "Log read-access rows to the Qkeee Bot audit trail? Off by default — this skill has no writes to audit, so this only affects Read-row logging."
-        default: "false"
     required_environment_variables:
       - name: "QKEEE_ERP_DEFAULT_BASE_URL"
         prompt: "ERPNext site URL for this environment (e.g. https://org.erpnext.com)"
@@ -60,7 +57,7 @@ prominent anomaly, per `references/domain-knowledge.md`'s
 This skill has no write path, so only the read side of the retrofit
 applies: `query_resource()`/`get_resource()`/`run_query_report()` log a
 `Read` row to `Qkeee Bot Audit Log` when `debug=True` (sourced from
-`qkeee_erp.debug`, default `false`), best-effort. Given this skill's
+the active tag's `QKEEE_ERP_<TAG>_DEBUG`, default `false`), best-effort. Given this skill's
 read-heavy, report-driven nature, expect debug mode to generate the
 highest Read-row volume of any `qkeee-erp-*` skill if left on for a long
 session — see `qkeee-erp-bot-init/references/bot-doctypes-design.md`
@@ -86,16 +83,17 @@ decision 10 for why Read logging is debug-gated at all.
    scripts/erp_client.py --tag <tag> register-persona --persona-code
    qkeee-erp-mis-analyst --persona-label "MIS Analyst" --default-mode
    read-only`. This upserts the `Qkeee Bot Persona` master row — it's not
-   a log and isn't gated on `qkeee_erp.debug`. Check the returned `status` — `"failed"` means the `Qkeee Bot Persona` row was NOT created (almost always because `qkeee-erp-bot-init` hasn't been run on this instance yet), even though the command still exits cleanly. Treat `"failed"` the same as a `logged_in_as` that looks like a personal account — mention it once, proactively, and suggest running `qkeee-erp-bot-init`; never silently ignore it, and never let it block the user's actual request.
-4. **Session/message logging — only when `qkeee_erp.debug` is `true`.**
+   a log and isn't gated on the active tag's `QKEEE_ERP_<TAG>_DEBUG`. Check the returned `status` — `"failed"` means the `Qkeee Bot Persona` row was NOT created (almost always because `qkeee-erp-bot-init` hasn't been run on this instance yet), even though the command still exits cleanly. Treat `"failed"` the same as a `logged_in_as` that looks like a personal account — mention it once, proactively, and suggest running `qkeee-erp-bot-init`; never silently ignore it, and never let it block the user's actual request.
+4. **Session/message logging — only when the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true`.**
    If debug is `false` (the default), skip this step entirely: no
    `open-session`, no `log-message`, no `--session-id` threading. When
-   `qkeee_erp.debug` is `true`: after persona registration, call
-   `open-session --user <the ERPNext user id/email of the person this
-   session serves, if known — this skill has no `qkeee_erp.requested_by`
-   config since it never writes, so ask if it's needed purely for session
-   logging> --persona-code qkeee-erp-mis-analyst --mode read-only` once,
-   and thread the returned `session_id` into every subsequent
+   the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true`: after persona registration, call
+   `open-session --persona-code qkeee-erp-mis-analyst --mode read-only`
+   once (omit `--user` — it falls back to `QKEEE_ERP_<TAG>_REQUESTED_BY`
+   for the active tag if set by another skill sharing that environment;
+   if unset, ask the human who this session serves purely for the
+   session log, since this skill never writes and has no other reason to
+   need an identity), and thread the returned `session_id` into every subsequent
    `query`/`get`/`report` call's `--session-id`. If `session_id` starts with `local-`, the session row was never actually persisted to ERPNext (Session/Message logging failed, most likely because `qkeee-erp-bot-init` hasn't been run on this instance) — surface that once, same as a failed persona registration, and keep working from the local id rather than blocking. Call `log-message` at
    natural turns — `User` for the user's ask, `Bot Analysis` for your
    reasoning/tie-out checks, `Bot Response` for the report you present —

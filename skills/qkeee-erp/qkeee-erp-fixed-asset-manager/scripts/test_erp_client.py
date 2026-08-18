@@ -228,6 +228,73 @@ class TestQueryResource(unittest.TestCase):
         self.assertFalse(result["has_more"])
 
 
+class TestMutateResourceWithConcurrency(unittest.TestCase):
+    """`mutate_resource_with_concurrency()` — this skill's own TOCTOU
+    wrapper, restored 2026-08-18 after `qkeee-erp-core` syncs had twice
+    silently clobbered an `expected_modified` param bolted directly onto
+    `mutate_resource()` (a shared-function name). Locks in the wrapper's
+    contract so a regression here fails a test instead of only surfacing
+    live against a real ERPNext instance."""
+
+    def setUp(self):
+        os.environ["QKEEE_ERP_QA_BASE_URL"] = "https://x"
+        os.environ["QKEEE_ERP_QA_API_KEY"] = "k"
+        os.environ["QKEEE_ERP_QA_API_SECRET"] = "s"
+
+    @mock.patch("erp_client.mutate_resource")
+    @mock.patch("erp_client.get_resource")
+    def test_submit_refuses_on_modified_mismatch(self, mock_get_resource, mock_mutate):
+        mock_get_resource.return_value = {"data": {"modified": "2026-01-01 00:00:00.000000"}}
+        with self.assertRaises(erp_client.ConnectorError) as ctx:
+            erp_client.mutate_resource_with_concurrency(
+                "qa", "Asset", "submit", name="ASSET-001", mode="read-write",
+                expected_modified="2025-12-31 00:00:00.000000", requested_by="priya@org.com",
+            )
+        self.assertIn("was modified since it was last staged", str(ctx.exception))
+        mock_mutate.assert_not_called()
+
+    @mock.patch("erp_client.mutate_resource", return_value={"ok": True})
+    @mock.patch("erp_client.get_resource")
+    def test_submit_passes_through_on_match(self, mock_get_resource, mock_mutate):
+        mock_get_resource.return_value = {"data": {"modified": "2026-01-01 00:00:00.000000"}}
+        result = erp_client.mutate_resource_with_concurrency(
+            "qa", "Asset", "submit", name="ASSET-001", mode="read-write",
+            expected_modified="2026-01-01 00:00:00.000000", requested_by="priya@org.com",
+        )
+        self.assertEqual(result, {"ok": True})
+        mock_mutate.assert_called_once()
+
+    @mock.patch("erp_client.mutate_resource", return_value={"ok": True})
+    @mock.patch("erp_client.get_resource")
+    def test_submit_without_expected_modified_skips_check(self, mock_get_resource, mock_mutate):
+        result = erp_client.mutate_resource_with_concurrency(
+            "qa", "Asset", "submit", name="ASSET-001", mode="read-write", requested_by="priya@org.com",
+        )
+        self.assertEqual(result, {"ok": True})
+        mock_get_resource.assert_not_called()
+        mock_mutate.assert_called_once()
+
+    @mock.patch("erp_client.mutate_resource", return_value={"ok": True})
+    @mock.patch("erp_client.get_resource")
+    def test_non_submit_action_never_checks_concurrency(self, mock_get_resource, mock_mutate):
+        result = erp_client.mutate_resource_with_concurrency(
+            "qa", "Asset", "create", {"asset_name": "Laptop"}, mode="read-write",
+            requested_by="priya@org.com",
+        )
+        self.assertEqual(result, {"ok": True})
+        mock_get_resource.assert_not_called()
+        mock_mutate.assert_called_once()
+
+    @mock.patch("erp_client.mutate_resource")
+    def test_submit_without_name_refuses_before_checking(self, mock_mutate):
+        with self.assertRaises(erp_client.ConnectorError) as ctx:
+            erp_client.mutate_resource_with_concurrency(
+                "qa", "Asset", "submit", mode="read-write",
+                expected_modified="2026-01-01 00:00:00.000000", requested_by="priya@org.com",
+            )
+        self.assertIn("requires a record 'name'", str(ctx.exception))
+        mock_mutate.assert_not_called()
+
 
 import erp_client
 import unittest.mock

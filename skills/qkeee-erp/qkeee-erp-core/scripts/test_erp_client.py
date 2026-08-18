@@ -12,6 +12,55 @@ import erp_client
 import erp_client as ec
 
 
+class GetEnvConfigDebugRequestedByTests(unittest.TestCase):
+    """QKEEE_ERP_<TAG>_DEBUG / _REQUESTED_BY are optional, per-tag, and
+    must never block connection like BASE_URL/API_KEY/API_SECRET do."""
+
+    ENV_BASE = {
+        "QKEEE_ERP_DEFAULT_BASE_URL": "https://org.erpnext.com",
+        "QKEEE_ERP_DEFAULT_API_KEY": "key",
+        "QKEEE_ERP_DEFAULT_API_SECRET": "secret",
+    }
+
+    def test_defaults_when_absent(self):
+        with patch.dict("os.environ", self.ENV_BASE, clear=True):
+            cfg = ec.get_env_config("default")
+        self.assertEqual(cfg["debug_default"], False)
+        self.assertEqual(cfg["requested_by_default"], "")
+
+    def test_resolves_per_tag_values(self):
+        env = dict(self.ENV_BASE, QKEEE_ERP_DEFAULT_DEBUG="true",
+                   QKEEE_ERP_DEFAULT_REQUESTED_BY="priya@org.com")
+        with patch.dict("os.environ", env, clear=True):
+            cfg = ec.get_env_config("default")
+        self.assertEqual(cfg["debug_default"], True)
+        self.assertEqual(cfg["requested_by_default"], "priya@org.com")
+
+    def test_debug_env_truthy_variants(self):
+        for raw, expected in (("1", True), ("true", True), ("True", True),
+                               ("yes", True), ("on", True), ("0", False),
+                               ("false", False), ("", False), ("nope", False)):
+            env = dict(self.ENV_BASE, QKEEE_ERP_DEFAULT_DEBUG=raw)
+            with patch.dict("os.environ", env, clear=True):
+                cfg = ec.get_env_config("default")
+            self.assertEqual(cfg["debug_default"], expected, f"raw={raw!r}")
+
+    def test_different_tags_are_independent(self):
+        env = dict(self.ENV_BASE,
+                    QKEEE_ERP_QA_BASE_URL="https://qa.erpnext.com",
+                    QKEEE_ERP_QA_API_KEY="qa-key",
+                    QKEEE_ERP_QA_API_SECRET="qa-secret",
+                    QKEEE_ERP_QA_DEBUG="true",
+                    QKEEE_ERP_QA_REQUESTED_BY="qa-user@org.com")
+        with patch.dict("os.environ", env, clear=True):
+            default_cfg = ec.get_env_config("default")
+            qa_cfg = ec.get_env_config("qa")
+        self.assertEqual(default_cfg["debug_default"], False)
+        self.assertEqual(default_cfg["requested_by_default"], "")
+        self.assertEqual(qa_cfg["debug_default"], True)
+        self.assertEqual(qa_cfg["requested_by_default"], "qa-user@org.com")
+
+
 class SessionFallbackTests(unittest.TestCase):
     def test_session_or_fallback_passthrough(self):
         self.assertEqual(ec._session_or_fallback("sess-123"), "sess-123")

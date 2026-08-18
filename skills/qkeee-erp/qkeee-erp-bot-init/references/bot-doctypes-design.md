@@ -203,11 +203,17 @@ level, not a hard code path in the connector.
 
 ## Config key
 
-`qkeee_erp.debug` — new `metadata.hermes.config` key, default `false`,
-declared alongside `qkeee_erp.active_env`/`qkeee_erp.mode`/
-`qkeee_erp.requested_by` on every persona skill that adopts this audit
-trail. Gates Session + Message creation and Audit Log's Read rows, per
-the split above.
+`QKEEE_ERP_<TAG>_DEBUG` — OPTIONAL per-tag env var in this agent
+profile's own `.env`, default `false` if unset (2026-08-18 retrofit;
+originally a single global `metadata.hermes.config` key,
+`qkeee_erp.debug`, shared across every tag — moved per-tag so a profile
+juggling multiple environments can debug-log one and not another). Gates
+Session + Message creation and Audit Log's Read rows, per the split
+above. `qkeee_erp.active_env`/`qkeee_erp.mode` remain global
+`metadata.hermes.config` keys; `QKEEE_ERP_<TAG>_REQUESTED_BY` moved
+alongside `_DEBUG` for the same per-tag reason. See
+`qkeee-erp-core/references/connector-reference.md`'s "Requester
+attribution and debug are per-tag, not global" for the full rationale.
 
 ## Extension points
 

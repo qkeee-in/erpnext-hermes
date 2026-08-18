@@ -50,6 +50,8 @@ declare the vars for them):
 | `QKEEE_ERP_<TAG>_BASE_URL` | e.g. `https://org.erpnext.com` |
 | `QKEEE_ERP_<TAG>_API_KEY` | API key for that site/user |
 | `QKEEE_ERP_<TAG>_API_SECRET` | API secret for that site/user |
+| `QKEEE_ERP_<TAG>_DEBUG` | OPTIONAL, default `false`. Per-tag debug logging — see "Requester attribution and debug are per-tag" below |
+| `QKEEE_ERP_<TAG>_REQUESTED_BY` | OPTIONAL, no default. Per-tag requester identity — same section below |
 
 `<TAG>` is uppercased/sanitized from whatever the user names it (`qa`,
 `client-a-prod`, etc). Adding a second/third environment is a runtime
@@ -190,10 +192,11 @@ can omit the write path entirely if desired.
 
 Because every write authenticates as the shared bot identity above,
 `mutate_resource()` also requires `requested_by` — the ERPNext user
-id/email of the human who asked for the change, sourced from
-`metadata.hermes.config` → `qkeee_erp.requested_by`. Missing it raises
-`MissingRequesterError`, same enforcement style as the read-only gate
-(checked in code, immediately before the HTTP call).
+id/email of the human who asked for the change, sourced per-tag from
+`QKEEE_ERP_<TAG>_REQUESTED_BY` (see "Requester attribution and debug are
+per-tag" above), with a CLI `--requested-by` as a per-call override.
+Missing it raises `MissingRequesterError`, same enforcement style as the
+read-only gate (checked in code, immediately before the HTTP call).
 
 On a successful create/update/submit/cancel/delete, `mutate_resource()`
 calls `record_comment(cfg, doctype, name, content)`, which POSTs to
@@ -308,7 +311,8 @@ the volume/bloat problem the debug gate exists to prevent.
 `log_message()`/`close_session()`.** None of these are called from inside
 `mutate_resource()`/`query_resource()` automatically — a persona skill
 adopting full conversation logging must call them explicitly (typically
-gated on `qkeee_erp.debug` at the SKILL.md level) and thread the returned
+gated on the active tag's `QKEEE_ERP_<TAG>_DEBUG` at the SKILL.md level)
+and thread the returned
 `session_id` through subsequent `mutate`/`query`/`get` calls. `open_session()`
 returns a locally-generated fallback id (`local-<timestamp>`) if the insert
 itself failed, so callers always have a usable `session_id` string to pass
@@ -551,12 +555,16 @@ function at all; it's the calling skill using the existing `query_resource`
 
 ## CLI usage (for manual/ad hoc use, or reference by persona skills)
 
-`--tag` is required for `health`/`query`/`get`/`mutate`; `--mode` and
-`--requested-by` are required for `mutate` only. None fall back to an
-ambient shell variable — all must be passed explicitly by the caller
-(sourced from `qkeee_erp.active_env` / `qkeee_erp.mode` /
-`qkeee_erp.requested_by`), so a stray env var left in someone's shell
-profile can never silently pick the mode or spoof a requester.
+`--tag` is required for `health`/`query`/`get`/`mutate`; `--mode` is
+required for `mutate` only. Neither falls back to an ambient value —
+both must be passed explicitly by the caller (sourced from
+`qkeee_erp.active_env` / `qkeee_erp.mode`), so a stray env var left in
+someone's shell can never silently pick the mode. `--requested-by` and
+`--debug` are different: they DO have a fallback, but a deliberate,
+scoped one — the active tag's own `QKEEE_ERP_<TAG>_REQUESTED_BY` /
+`_DEBUG` (see "Requester attribution and debug are per-tag" above), not
+an arbitrary shell variable. `mutate`/`open-session` still refuse to run
+if neither the env var nor the flag resolves to a requester.
 
 ```
 python erp_client.py list-envs
@@ -581,3 +589,44 @@ persist for the life of the session — writing there is how a mid-task file
 silently disappears or leaks across profiles. Clean up scratch files once
 they're no longer needed for the current task; don't leave them littering
 `terminal.cwd` across sessions.
+
+## Requester attribution and debug are per-tag, not global
+
+`QKEEE_ERP_<TAG>_DEBUG` / `QKEEE_ERP_<TAG>_REQUESTED_BY` used to be a
+single global `metadata.hermes.config` value (`qkeee_erp.debug` /
+`qkeee_erp.requested_by`) shared across every tag in a profile — one
+toggle, no matter which environment was active. Moved to per-tag env
+vars (2026-08-18 retrofit) specifically because that was wrong in
+practice: a profile juggling `hrms-demo` and `prod` had no way to run
+debug logging on `hrms-demo` without it also being on for `prod`, and no
+way to attribute writes to a different requester per environment without
+manually re-confirming on every switch.
+
+Both are OPTIONAL, unlike `BASE_URL`/`API_KEY`/`API_SECRET` — neither
+raises if absent:
+
+- **`QKEEE_ERP_<TAG>_DEBUG`** (`get_env_config()`'s `debug_default` key)
+  — parsed as a bool (`1`/`true`/`yes`/`on`, case-insensitive; anything
+  else is `false`). Defaults `false` if unset. A `--debug` CLI flag is a
+  per-call override that can only turn it *on* for that one call — there
+  is no equivalent to force it *off* for a single call on a tag that has
+  the env var set to `true`.
+- **`QKEEE_ERP_<TAG>_REQUESTED_BY`** (`requested_by_default` key) — no
+  default; empty string if unset. A `--requested-by` CLI flag overrides
+  it per-call. `mutate`/`open-session` refuse to run (a specific
+  `p.error` naming the exact env var, not a generic failure) if neither
+  the env var nor the flag resolves to a non-empty value.
+
+`erp_client.py`'s CLI resolves both once per invocation, right after
+argument parsing, by calling `get_env_config(args.tag)` — cheap (pure
+`os.environ` reads, no network call) even though the same function gets
+called again inside whichever real command runs. A resolution failure
+here (e.g. the tag's `BASE_URL`/`API_KEY`/`API_SECRET` are themselves
+missing) is swallowed at this point — the real command below raises its
+own specific error for that, no need to duplicate it.
+
+`qkeee_erp.active_env` and `qkeee_erp.mode` stay as global
+`metadata.hermes.config` values, deliberately NOT moved alongside
+debug/requested_by — switching environments should never silently also
+change write access, so `mode` needs to require its own explicit
+confirmation independent of which tag is active.

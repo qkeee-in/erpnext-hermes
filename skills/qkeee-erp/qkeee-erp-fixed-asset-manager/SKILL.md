@@ -10,12 +10,6 @@ metadata:
       - key: qkeee_erp.mode
         prompt: "Should this skill be allowed to create/update/submit/cancel records in ERPNext, or strictly read-only?"
         default: "read-only"
-      - key: qkeee_erp.requested_by
-        prompt: "ERPNext user id/email of the person this session is acting on behalf of (used to attribute writes)"
-        default: ""
-      - key: qkeee_erp.debug
-        prompt: "Log full conversation detail (Session/Message rows) and read-access rows to the Qkeee Bot audit trail? Off by default — writes are always audited regardless of this setting."
-        default: "false"
     required_environment_variables:
       - name: "QKEEE_ERP_DEFAULT_BASE_URL"
         prompt: "ERPNext site URL for this environment (e.g. https://org.erpnext.com)"
@@ -65,6 +59,17 @@ would be silently accepted. `scripts/render_movement_draft.py` performs
 this check itself; never skip straight to `mutate_resource()` for a
 Transfer/Issue without it.
 
+**Every `submit` in this skill goes through
+`mutate_resource_with_concurrency()`, never `mutate_resource()`
+directly.** `create`/`update`/`cancel`/`delete` call `mutate_resource()`
+as normal — the concurrency check only applies to `submit`, since that's
+the step that locks a record in. Pass `expected_modified` (the `modified`
+timestamp from whatever `get` call last re-fetched the record for
+review) so a change that landed between staging and submit is caught and
+refused rather than silently submitted. This applies to every submit
+in the skill — Asset capitalization, Asset Movement, Asset Repair — not
+only depreciation/disposal.
+
 ## Bot account — mandatory
 
 The API key/secret configured above must be generated against a
@@ -89,7 +94,7 @@ a blocker — don't refuse the user's actual request over it.
 
 ## Requester attribution — mandatory on every write
 
-Before the first write of a session, resolve `qkeee_erp.requested_by`
+Before the first write of a session, resolve `QKEEE_ERP_<TAG>_REQUESTED_BY`
 to the ERPNext user id/email of the human this session is acting on
 behalf of — ask if not already set, and re-confirm it same as the
 active-environment reminder on long gaps or before a new batch of
@@ -106,7 +111,7 @@ Every write through `mutate_resource()` also logs a two-phase
 (`Attempted` → `Success`/`Failure`) row to the `Qkeee Bot Audit Log`
 doctype, best-effort — never blocks a write if the target instance
 hasn't run `qkeee-erp-bot-init` yet. Reads log there too, but only when
-`qkeee_erp.debug` is `true` (default `false`). See `qkeee-erp-core/
+the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true` (default `false`). See `qkeee-erp-core/
 SKILL.md`'s "Audit trail" section and `qkeee-erp-bot-init/references/
 bot-doctypes-design.md` for the full mechanism.
 
@@ -133,13 +138,13 @@ disposal activity specifically.
    scripts/erp_client.py --tag <tag> register-persona --persona-code
    qkeee-erp-fixed-asset-manager --persona-label "Fixed Asset Manager"
    --default-mode read-only`. This upserts the `Qkeee Bot Persona` master
-   row — it's not a log and isn't gated on `qkeee_erp.debug`. Check the returned `status` — `"failed"` means the `Qkeee Bot Persona` row was NOT created (almost always because `qkeee-erp-bot-init` hasn't been run on this instance yet), even though the command still exits cleanly. Treat `"failed"` the same as a `logged_in_as` that looks like a personal account — mention it once, proactively, and suggest running `qkeee-erp-bot-init`; never silently ignore it, and never let it block the user's actual request.
-4. **Session/message logging — only when `qkeee_erp.debug` is `true`.**
+   row — it's not a log and isn't gated on the active tag's `QKEEE_ERP_<TAG>_DEBUG`. Check the returned `status` — `"failed"` means the `Qkeee Bot Persona` row was NOT created (almost always because `qkeee-erp-bot-init` hasn't been run on this instance yet), even though the command still exits cleanly. Treat `"failed"` the same as a `logged_in_as` that looks like a personal account — mention it once, proactively, and suggest running `qkeee-erp-bot-init`; never silently ignore it, and never let it block the user's actual request.
+4. **Session/message logging — only when the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true`.**
    If debug is `false` (the default), skip this step entirely: no
    `open-session`, no `log-message`, no `--session-id` threading. When
-   `qkeee_erp.debug` is `true`: after persona registration, call
-   `open-session --user <qkeee_erp.requested_by> --persona-code
-   qkeee-erp-fixed-asset-manager --mode <qkeee_erp.mode>` once, and thread
+   the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true`: after persona registration, call
+   `open-session --persona-code
+   qkeee-erp-fixed-asset-manager --mode <qkeee_erp.mode>` once (omit `--user` — it falls back to `QKEEE_ERP_<TAG>_REQUESTED_BY`; pass it explicitly only to override that for this one call), and thread
    the returned `session_id` into every subsequent `query`/`get`/`mutate`
    call's `--session-id`. If `session_id` starts with `local-`, the session row was never actually persisted to ERPNext (Session/Message logging failed, most likely because `qkeee-erp-bot-init` hasn't been run on this instance) — surface that once, same as a failed persona registration, and keep working from the local id rather than blocking. Call `log-message` at natural turns — `User` for
    the user's ask, `Bot Analysis` for your reasoning, `Bot Response` for
@@ -177,8 +182,10 @@ disposal activity specifically.
    endpoint silently drops the `finance_books` child table even when
    named in `--fields`, confirmed live; `get` is the only path that
    returns it, and keeps `modified` unstripped so it can be passed
-   through as `mutate_resource()`'s `expected_modified` for the
-   submit-time TOCTOU check) and check every persisted field — cost basis, category, and
+   through as `mutate_resource_with_concurrency()`'s `expected_modified`
+   for the submit-time TOCTOU check — call this wrapper for every
+   `submit`, never call `mutate_resource()` directly for one, or the
+   concurrency check is silently skipped) and check every persisted field — cost basis, category, and
    every Link field (`asset_category`, `location`, `company`,
    `purchase_receipt`/`purchase_invoice`, `cost_center`) resolve to real,
    existing records — before calling `submit` as its own distinct,
@@ -243,8 +250,9 @@ disposal activity specifically.
 11. **Asset maintenance scheduling and Asset Repair are moderate-risk,
    single-confirm capabilities** (not double-confirm — they don't carry
    the same book-value/write-off stakes as depreciation/disposal).
-   Stage a normal draft (fields + intent), confirm, then create/update/
-   submit via `mutate_resource()`. Asset Repair's create -> update
+   Stage a normal draft (fields + intent), confirm, then create/update
+   via `mutate_resource()` and submit via
+   `mutate_resource_with_concurrency()`. Asset Repair's create -> update
    (status, cost) -> submit sequence is confirmed live to work cleanly.
    **Save-draft-then-review-then-submit:** after the update that sets
    final status/cost, re-fetch the record via `query --filters
@@ -307,7 +315,12 @@ disposal activity specifically.
   `get <DocType> <name>` — single-resource full-doc fetch, the only path
   that returns child-table data (Asset `finance_books`, Asset Movement
   rows), noise-stripped by default (~38% smaller) but keeps `modified`
-  unstripped so it can feed `mutate_resource()`'s `expected_modified`.
+  unstripped so it can feed `mutate_resource_with_concurrency()`'s
+  `expected_modified` (this skill's own TOCTOU wrapper around the shared
+  `mutate_resource()` — kept as a separate function, not a param bolted
+  onto the shared one, specifically so a future `qkeee-erp-core` sync
+  can't silently strip it again; see the function's own docstring for
+  what happened the first time).
   Use `query --filters --fields` instead whenever child-table data isn't
   needed (e.g. Asset Repair review) — ~25x cheaper.
 - `scripts/confirm_token.py` — computes the confirmation tokens tying a

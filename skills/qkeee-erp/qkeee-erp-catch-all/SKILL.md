@@ -10,12 +10,6 @@ metadata:
       - key: qkeee_erp.mode
         prompt: "Should this skill be allowed to create/update/submit/cancel records in ERPNext, or strictly read-only?"
         default: "read-only"
-      - key: qkeee_erp.requested_by
-        prompt: "ERPNext user id/email of the person this session is acting on behalf of (used to attribute writes)"
-        default: ""
-      - key: qkeee_erp.debug
-        prompt: "Log full conversation detail (Session/Message rows) and read-access rows to the Qkeee Bot audit trail? Off by default — writes are always audited regardless of this setting."
-        default: "false"
     required_environment_variables:
       - name: "QKEEE_ERP_DEFAULT_BASE_URL"
         prompt: "ERPNext site URL for this environment (e.g. https://org.erpnext.com)"
@@ -67,7 +61,7 @@ caution on top — see "Advisory-first, always" below.
    forget: `python scripts/erp_client.py --tag <tag> register-persona
    --persona-code qkeee-erp-catch-all --persona-label "Catch-All" --
    default-mode read-only`. This upserts the `Qkeee Bot Persona` master
-   row — it's not a log and isn't gated on `qkeee_erp.debug`. Check the
+   row — it's not a log and isn't gated on the active tag's `QKEEE_ERP_<TAG>_DEBUG`. Check the
    returned `status` — `"failed"` means the row was NOT created (almost
    always because `qkeee-erp-bot-init` hasn't been run on this instance
    yet), even though the command still exits cleanly. Treat `"failed"`
@@ -76,12 +70,12 @@ caution on top — see "Advisory-first, always" below.
    never silently ignore it, and never let it block the user's actual
    request.
 
-3. **Session/message logging — only when `qkeee_erp.debug` is `true`.**
+3. **Session/message logging — only when the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true`.**
    If debug is `false` (the default), skip this step entirely: no
    `open-session`, no `log-message`, no `--session-id` threading. When
-   `qkeee_erp.debug` is `true`: after persona registration, call
-   `open-session --user <qkeee_erp.requested_by> --persona-code
-   qkeee-erp-catch-all --mode <qkeee_erp.mode>` once, and thread the
+   the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true`: after persona registration, call
+   `open-session --persona-code
+   qkeee-erp-catch-all --mode <qkeee_erp.mode>` once (omit `--user` — it falls back to `QKEEE_ERP_<TAG>_REQUESTED_BY`; pass it explicitly only to override that for this one call), and thread the
    returned `session_id` into every subsequent `query`/`get`/`mutate`
    call's `--session-id`. If `session_id` starts with `local-`, the
    session row was never actually persisted to ERPNext (Session/Message
@@ -194,7 +188,7 @@ caution on top — see "Advisory-first, always" below.
 | Knowledge-base research + write-up | GitHub README/docs fetch + `references/knowledge-base/<env-tag>/<app>.md` write, per the template in the KB README | Cross-check against live metadata; flag discrepancies, don't silently prefer one source |
 | Generic resource query / get | `erp_client.py query\|get` (own copy) | Read-only, always allowed — same connector every other persona skill uses |
 | Advisory draft rendering | `render_draft.py <input.json>` | Produces the draft + `confirmation_token`/`issued_at` — always the step before any write, see step 8 |
-| Generic resource mutate | `erp_client.py mutate` → `gated_mutate_resource()` (own copy) | Gated by `qkeee_erp.mode` + `qkeee_erp.requested_by` in code (inherited from `mutate_resource()`), **plus** a `confirmation_token`/`issued_at` from `render_draft.py` required in code — unconditionally, regardless of mode (see step 8); no separate un-gated mutate path exists in this skill's copy |
+| Generic resource mutate | `erp_client.py mutate` → `gated_mutate_resource()` (own copy) | Gated by `qkeee_erp.mode` + `QKEEE_ERP_<TAG>_REQUESTED_BY` in code (inherited from `mutate_resource()`), **plus** a `confirmation_token`/`issued_at` from `render_draft.py` required in code — unconditionally, regardless of mode (see step 8); no separate un-gated mutate path exists in this skill's copy |
 
 ## Files
 

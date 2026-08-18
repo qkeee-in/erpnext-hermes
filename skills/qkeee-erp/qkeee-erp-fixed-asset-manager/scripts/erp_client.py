@@ -96,6 +96,19 @@ def get_env_config(tag: str = "default") -> dict:
     call, so a plaintext http:// target means those credentials cross the
     wire in the clear. Set QKEEE_ERP_<TAG>_ALLOW_INSECURE=1 to override
     for a genuine local/dev http instance.
+
+    Also resolves two OPTIONAL per-tag values — QKEEE_ERP_<TAG>_DEBUG and
+    QKEEE_ERP_<TAG>_REQUESTED_BY — as `debug_default`/`requested_by_default`
+    on the returned dict. Unlike BASE_URL/API_KEY/API_SECRET these are
+    never required and never raise if absent (default False / ""). Moved
+    here from `metadata.hermes.config` (was a single global
+    qkeee_erp.debug/qkeee_erp.requested_by value shared across every tag
+    in a profile) specifically so switching `--tag` also switches these —
+    a profile juggling `hrms-demo` and `prod` can have debug on for one
+    and off for the other, and a different requester identity per
+    environment, without a global toggle bleeding across both. CLI
+    callers pass `--debug`/`--requested-by` as a per-invocation override
+    on top of this default; they never replace it as the source of truth.
     """
     base_url = os.environ.get(_tag_env_var(tag, "BASE_URL"))
     api_key = os.environ.get(_tag_env_var(tag, "API_KEY"))
@@ -113,7 +126,7 @@ def get_env_config(tag: str = "default") -> dict:
     if missing:
         raise ConnectorError(
             f"Missing environment variable(s) for tag '{tag}': {', '.join(missing)}. "
-            f"Set them in your shell profile / OS credential manager, then retry."
+            f"Set them in this agent profile's own .env file, then retry."
         )
 
     base_url = base_url.rstrip("/")
@@ -130,6 +143,8 @@ def get_env_config(tag: str = "default") -> dict:
         "base_url": base_url,
         "api_key": api_key,
         "api_secret": api_secret,
+        "debug_default": _parse_bool_env(os.environ.get(_tag_env_var(tag, "DEBUG"))),
+        "requested_by_default": os.environ.get(_tag_env_var(tag, "REQUESTED_BY"), ""),
     }
 
 
@@ -586,12 +601,12 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
     guess a safe default and refuses to write unless mode == "read-write".
 
     `requested_by` (the ERPNext user id/email of the human who asked for
-    this change, sourced from metadata.hermes.config
-    qkeee_erp.requested_by) is required for every write — the connector
-    authenticates as a shared bot account, so without this the ERPNext
-    audit trail would show only the bot, never who actually asked. On
-    success, a best-effort Comment naming the requester is posted to the
-    affected record (see record_comment()).
+    this change, sourced per-tag from QKEEE_ERP_<TAG>_REQUESTED_BY, with
+    a CLI --requested-by as a per-call override) is required for every
+    write — the connector authenticates as a shared bot account, so
+    without this the ERPNext audit trail would show only the bot, never
+    who actually asked. On success, a best-effort Comment naming the
+    requester is posted to the affected record (see record_comment()).
 
     `skip_comment=True` suppresses that default Comment — for a caller
     that's about to post its own, more specific attribution comment
@@ -616,7 +631,8 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
     if not requested_by:
         raise MissingRequesterError(
             f"Refusing {action} on '{doctype}': requested_by is missing. "
-            f"Set qkeee_erp.requested_by to the ERPNext user id/email of the person requesting this change."
+            f"Set {_tag_env_var(tag, 'REQUESTED_BY')} in this profile's .env (per-tag default), "
+            f"or pass --requested-by for this call only."
         )
 
     cfg = get_env_config(tag)
@@ -754,6 +770,55 @@ def _do_mutate(cfg: dict, doctype: str, action: str, payload: dict, name: str, r
         return result
 
     raise ConnectorError(f"Unknown action '{action}'. Expected create/update/submit/cancel/delete.")
+
+
+def mutate_resource_with_concurrency(tag: str, doctype: str, action: str, payload: dict = None,
+                                      name: str = None, mode: str = "read-only",
+                                      expected_modified: str = None, requested_by: str = None,
+                                      skip_comment: bool = False,
+                                      *, session_id: str = None, persona_code: str = None,
+                                      user_approved: bool = False, approval_note: str = None) -> dict:
+    """TOCTOU-checked wrapper around the shared `mutate_resource()` — this
+    skill's own extension for the submit-time concurrency check described
+    in SKILL.md (Asset capitalization / depreciation-run / disposal
+    review steps). Deliberately kept OUT of `SHARED_FUNCTIONS` in
+    `sync_to_personas.py` by using a name `mutate_resource()` doesn't
+    have: a prior version of this file defined `expected_modified` as a
+    parameter directly on `mutate_resource()` itself, which meant every
+    `qkeee-erp-core` sync silently overwrote it with core's canonical
+    signature (which has no such param) — the loss went unnoticed because
+    nothing tested the CLI's `mutate` dispatch end-to-end. Restored
+    2026-08-18 as a wrapper specifically so this can never happen again:
+    `mutate_resource_with_concurrency` doesn't collide with any core
+    function name, so `merge_py()`'s by-name matching leaves it alone.
+
+    `expected_modified` (submit only): if the caller knows the record's
+    `modified` timestamp from when it last read/staged the draft, pass it
+    here. Before delegating to `mutate_resource()`'s submit path, this
+    re-fetches the record and refuses (raising `ConnectorError`, not
+    silently proceeding) if `modified` has moved on since — someone else
+    edited the record between staging and submit. This narrows (does not
+    eliminate) the fetch-then-submit TOCTOU gap; the remaining
+    unmitigated window between this check and the submit POST itself is
+    what `frappe.client.submit`'s own TimestampMismatchError backstops.
+
+    Every other action, and `submit` with `expected_modified` omitted,
+    passes straight through to `mutate_resource()` unchanged — this
+    wrapper adds a pre-check, it never re-implements the write itself.
+    """
+    if action == "submit" and expected_modified is not None:
+        if not name:
+            raise ConnectorError("submit requires a record 'name'.")
+        current = get_resource(tag, doctype, name, strip_noise=False).get("data") or {}
+        if current.get("modified") != expected_modified:
+            raise ConnectorError(
+                f"'{doctype}' '{name}' was modified since it was last staged "
+                f"(expected modified={expected_modified!r}, now {current.get('modified')!r}). "
+                f"Someone else may have changed it — re-review before submitting."
+            )
+    return mutate_resource(tag, doctype, action, payload, name, mode, requested_by,
+                            skip_comment=skip_comment, session_id=session_id, persona_code=persona_code,
+                            user_approved=user_approved, approval_note=approval_note)
 
 
 WHITELISTED_METHODS = {
@@ -970,7 +1035,7 @@ def _cli():
     rp.add_argument("--non-negotiables", help="free text copied from the persona's SKILL.md, informational only")
 
     os_ = sub.add_parser("open-session", help="Create a Qkeee Bot Session row (debug-mode logging)")
-    os_.add_argument("--user", required=True, help="ERPNext user id/email this session acts on behalf of")
+    os_.add_argument("--user", help="ERPNext user id/email this session acts on behalf of")
     os_.add_argument("--persona-code", required=True, help="e.g. qkeee-erp-fixed-asset-manager")
     os_.add_argument("--mode", required=True, choices=["read-only", "read-write"],
                       help="from qkeee_erp.mode at session start")
@@ -995,8 +1060,6 @@ def _cli():
         p.error(f"--tag is required for '{args.command}'")
     if args.command == "mutate" and not args.mode:
         p.error("--mode is required for 'mutate'")
-    if args.command == "mutate" and not args.requested_by:
-        p.error("--requested-by is required for 'mutate'")
     if args.command in ("query", "get", "mutate") and not args.session_id:
         # No --session-id passed (no open_session() call preceded this CLI
         # invocation) — generate a fallback now rather than relying solely
@@ -1004,6 +1067,35 @@ def _cli():
         # --debug query and a mutate in the same shell session share the
         # visible-to-the-caller id shape consistently.
         args.session_id = _session_or_fallback(None)
+
+    # debug/requested-by default from the active TAG's own env vars
+    # (QKEEE_ERP_<TAG>_DEBUG / _REQUESTED_BY) — per-tag, not a single
+    # global qkeee_erp.debug/.requested_by. --debug/--requested-by on the
+    # CLI are a per-call override on top of that default, never a
+    # replacement for it. Swallow a resolution failure here — a genuinely
+    # missing/misconfigured tag surfaces its own specific error from the
+    # real call below.
+    tag_debug_default, tag_requested_by_default = False, ""
+    if args.command in ("query", "get", "report", "mutate", "open-session"):
+        try:
+            _tag_cfg = get_env_config(args.tag)
+            tag_debug_default = _tag_cfg["debug_default"]
+            tag_requested_by_default = _tag_cfg["requested_by_default"]
+        except ConnectorError:
+            pass
+    effective_debug = args.debug or tag_debug_default
+    effective_requested_by = args.requested_by or tag_requested_by_default
+
+    if args.command == "mutate" and not effective_requested_by:
+        p.error(
+            "--requested-by is required for 'mutate' (or set "
+            f"{_tag_env_var(args.tag, 'REQUESTED_BY')} in this profile's .env)"
+        )
+    if args.command == "open-session" and not effective_requested_by:
+        p.error(
+            "--user is required for 'open-session' (or set "
+            f"{_tag_env_var(args.tag, 'REQUESTED_BY')} in this profile's .env)"
+        )
 
     try:
         if args.command == "health":
@@ -1014,21 +1106,23 @@ def _cli():
             filters = json.loads(args.filters) if args.filters else None
             fields = json.loads(args.fields) if args.fields else None
             print(json.dumps(query_resource(args.tag, args.doctype, filters, fields, args.limit,
-                                             debug=args.debug, session_id=args.session_id,
+                                             debug=effective_debug, session_id=args.session_id,
                                              persona_code=args.persona_code,
-                                             requested_by=args.requested_by), indent=2))
+                                             requested_by=effective_requested_by), indent=2))
         elif args.command == "get":
             print(json.dumps(get_resource(args.tag, args.doctype, args.name, not args.no_strip,
-                                           debug=args.debug, session_id=args.session_id,
+                                           debug=effective_debug, session_id=args.session_id,
                                            persona_code=args.persona_code,
-                                           requested_by=args.requested_by), indent=2))
+                                           requested_by=effective_requested_by), indent=2))
         elif args.command == "mutate":
             payload = json.loads(args.payload) if args.payload else None
             print(json.dumps(
-                mutate_resource(args.tag, args.doctype, args.action, payload, args.name,
-                                 args.mode, args.expected_modified, args.requested_by,
-                                 session_id=args.session_id, persona_code=args.persona_code,
-                                 user_approved=args.user_approved, approval_note=args.approval_note),
+                mutate_resource_with_concurrency(
+                    args.tag, args.doctype, args.action, payload, args.name,
+                    mode=args.mode, expected_modified=args.expected_modified,
+                    requested_by=effective_requested_by,
+                    session_id=args.session_id, persona_code=args.persona_code,
+                    user_approved=args.user_approved, approval_note=args.approval_note),
                 indent=2,
             ))
         elif args.command == "register-persona":
@@ -1038,7 +1132,7 @@ def _cli():
                                                 non_negotiables=args.non_negotiables)
             print(json.dumps({"ok": True, "status": status}, indent=2))
         elif args.command == "open-session":
-            session_id = open_session(args.tag, user=args.user, persona_code=args.persona_code,
+            session_id = open_session(args.tag, user=effective_requested_by, persona_code=args.persona_code,
                                        mode=args.mode, debug_mode=not args.no_debug)
             print(json.dumps({"session_id": session_id}, indent=2))
         elif args.command == "log-message":
@@ -1135,6 +1229,10 @@ def get_user_roles(tag: str, user: str = "") -> dict:
         if not roles else ""
     )
     return {"user": target, "roles": roles, "warning": warning}
+
+
+def _parse_bool_env(raw: str) -> bool:
+    return (raw or "").strip().lower() in ("1", "true", "yes", "on")
 
 
 if __name__ == "__main__":

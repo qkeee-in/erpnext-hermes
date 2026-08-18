@@ -10,12 +10,6 @@ metadata:
       - key: qkeee_erp.mode
         prompt: "Should this skill be allowed to create/update/submit/cancel records in ERPNext, or strictly read-only?"
         default: "read-only"
-      - key: qkeee_erp.requested_by
-        prompt: "ERPNext user id/email of the person this session is acting on behalf of (used to attribute writes)"
-        default: ""
-      - key: qkeee_erp.debug
-        prompt: "Log full conversation detail (Session/Message rows) and read-access rows to the Qkeee Bot audit trail? Off by default — writes are always audited regardless of this setting."
-        default: "false"
     required_environment_variables:
       - name: "QKEEE_ERP_DEFAULT_BASE_URL"
         prompt: "ERPNext site URL for this environment (e.g. https://org.erpnext.com)"
@@ -42,9 +36,10 @@ in this prompt.
 
 **Never issue a write call without a requester identity.** All reads/writes
 authenticate as one shared ERPNext bot/service account (see below) — without
-`qkeee_erp.requested_by` set, ERPNext's own audit trail would show only the
-bot, never who actually asked. `mutate_resource()` refuses every write
-missing it, same as the read-only gate.
+a requester resolved from `QKEEE_ERP_<TAG>_REQUESTED_BY` (or a `--requested-by`
+override), ERPNext's own audit trail would show only the bot, never who
+actually asked. `mutate_resource()` refuses every write missing it, same as
+the read-only gate.
 
 ## Bot account — mandatory
 
@@ -72,11 +67,16 @@ carries the same instruction in its own "Bot account" section.
 
 ## Requester attribution — mandatory on every write
 
-Before the first write of a session, resolve `qkeee_erp.requested_by` to
-the ERPNext user id/email of the human this session is acting on behalf of
-— ask if not already set, and re-confirm it same as the active-environment
-reminder on long gaps or before a new batch of writes. Pass it through to
-every `mutate` call. On success, `erp_client.py` posts a best-effort Comment
+Requester identity is sourced per-tag from `QKEEE_ERP_<TAG>_REQUESTED_BY`
+in this profile's `.env` — not a global config value, so it switches
+automatically with `--tag`/`qkeee_erp.active_env`. Before the first write
+of a session, confirm this resolved value with the user (or ask, if the
+env var isn't set for this tag) — re-confirm it same as the
+active-environment reminder on long gaps or before a new batch of writes.
+A `--requested-by` CLI flag is available as a one-off override for a
+single call, never a substitute for setting the env var. Pass the
+resolved value through to every `mutate` call. On success, `erp_client.py`
+posts a best-effort Comment
 on the affected record: `[qkeee-erp-core] <action> — requested by
 <requested_by>, applied via qkeee-erp bot.` A comment failure never blocks
 or rolls back the underlying write. Mention in your report-back that the
@@ -104,20 +104,25 @@ skipped-confirmation bug becomes visible on an Audit Log scan instead of
 being silently prevented or silently defaulted to looking fine.
 
 **Read logging is opt-in via `debug=True`** on `query_resource()`/
-`get_resource()` (CLI: `--debug`), sourced from `qkeee_erp.debug`. Off by
-default — a read-heavy persona could otherwise make Read rows the single
-biggest volume source in the audit trail, defeating the point of gating
-anything for bloat at all. Writes are audited unconditionally regardless
-of this flag.
+`get_resource()` (CLI: `--debug`), sourced per-tag from
+`QKEEE_ERP_<TAG>_DEBUG` in this profile's `.env` — not a global config
+value, so debug can be on for one tag (e.g. a demo/qa environment) and
+off for another (e.g. prod) in the same profile. Off by default — a
+read-heavy persona could otherwise make Read rows the single biggest
+volume source in the audit trail, defeating the point of gating anything
+for bloat at all. A `--debug` CLI flag forces it on for a single call
+only; it never turns debug off (there's no equivalent override to force
+it off for one call when the tag has it on). Writes are audited
+unconditionally regardless of this flag.
 
 **Session/Message logging (`open_session()`/`log_message()`/
 `close_session()`) is fully opt-in per caller**, not wired into
 `mutate_resource()`/`query_resource()` automatically — call these
-explicitly, gated on `qkeee_erp.debug`, if this skill's SKILL.md adopts
-full conversation logging. Every write-capable persona skill now calls
-these when `qkeee_erp.debug` is `true`. Full schema, the two-phase
-mechanism, and the debug-mode volume-gating rationale:
-`qkeee-erp-bot-init/references/bot-doctypes-design.md`.
+explicitly, gated on the same per-tag `QKEEE_ERP_<TAG>_DEBUG`, if this
+skill's SKILL.md adopts full conversation logging. Every write-capable
+persona skill now calls these when the active tag's debug default is
+true. Full schema, the two-phase mechanism, and the debug-mode
+volume-gating rationale: `qkeee-erp-bot-init/references/bot-doctypes-design.md`.
 
 **A "success" from `register-persona`/`open-session` does not mean the
 row actually landed — check the returned status, don't assume.** Every
@@ -158,8 +163,12 @@ user's actual request.
    hold multiple tags' vars at once — adding an environment means appending
    three more lines to that same file, not creating a new file or profile.
    If any of the three vars for the active tag are missing, tell the user
-   exactly which variable is missing — never a generic "auth failed." Full
-   rationale: `references/connector-reference.md`'s "Environment / tag
+   exactly which variable is missing — never a generic "auth failed." Two
+   more vars are OPTIONAL per tag, same `.env` file: `QKEEE_ERP_<TAG>_DEBUG`
+   (defaults false) and `QKEEE_ERP_<TAG>_REQUESTED_BY` (no default — a
+   write on a tag without this set needs `--requested-by` passed explicitly
+   or the user asked). Full rationale: `references/connector-reference.md`'s
+   "Environment / tag
    model" section.
 3. **Health check on first real use.** Before the first query/mutate of a
    session, run a connectivity check (`python scripts/erp_client.py --tag
@@ -214,9 +223,9 @@ user's actual request.
 | --- | --- | --- |
 | Environment configuration — add/switch | Walk the user through naming a tag and setting its 3 env vars in their shell; update `qkeee_erp.active_env` | Runtime action, not a reinstall — multiple tags can coexist, only one active |
 | Environment configuration — list | `erp_client.py list-envs` | Lists tags with all 3 vars present in the current shell env; can't discover tags configured in a shell this process doesn't inherit from |
-| Generic resource query | `erp_client.py query <DocType> --filters ... --fields ... [--debug]` | Read-only, always allowed. Response includes `has_more` — if true, narrow filters or raise `--limit` rather than assuming the result set is complete. **Does not return child-table (Table-field) data** — Frappe's list endpoint silently drops it even when named in `--fields`, confirmed live against `<erp-instance>`. Prefer this over `get` whenever child-table data isn't needed — ~25x cheaper (336 bytes vs 8,378 bytes measured on a Sales Order status read). `--debug` additionally logs this read to Qkeee Bot Audit Log (source from `qkeee_erp.debug`) |
+| Generic resource query | `erp_client.py query <DocType> --filters ... --fields ... [--debug]` | Read-only, always allowed. Response includes `has_more` — if true, narrow filters or raise `--limit` rather than assuming the result set is complete. **Does not return child-table (Table-field) data** — Frappe's list endpoint silently drops it even when named in `--fields`, confirmed live against `<erp-instance>`. Prefer this over `get` whenever child-table data isn't needed — ~25x cheaper (336 bytes vs 8,378 bytes measured on a Sales Order status read). `--debug` forces this read to log to Qkeee Bot Audit Log for this call — normally sourced from `QKEEE_ERP_<TAG>_DEBUG` |
 | Single-resource full-doc fetch | `erp_client.py get <DocType> <name> [--debug]` | The only way to get child-table rows (needed for Link-field validity review before a submit). Frappe's single-resource GET ignores `--fields` and always returns everything, so this noise-strips audit metadata + presentation-only HTML fields by default (~38% smaller, confirmed live; `--no-strip` for the raw doc) — never strips Link fields or child tables. `--debug` same as query above |
-| Generic resource mutate | `erp_client.py mutate <DocType> <create\|update\|submit\|cancel\|delete> --requested-by <id> [--user-approved] [--approval-note ...]` | Gated by `qkeee_erp.mode` and `qkeee_erp.requested_by`; refuses in read-only or with no requester. Posts a best-effort audit Comment naming the requester on success, and always logs a two-phase Attempted→Success/Failure row to Qkeee Bot Audit Log (best-effort, never blocks the write — see Audit trail section above). `--user-approved` should only be passed when this write's confirm stage genuinely ran with the user; it's a scan-for-violations field, not a second gate. `create`/`update` and `submit` are separate calls — always review the re-fetched draft (`get`, not `query`, when Link-field validity inside a child table needs checking) between them, never chain create/update straight into submit |
+| Generic resource mutate | `erp_client.py mutate <DocType> <create\|update\|submit\|cancel\|delete> [--requested-by <id>] [--user-approved] [--approval-note ...]` | Gated by `qkeee_erp.mode` and a resolved requester (`QKEEE_ERP_<TAG>_REQUESTED_BY`, or `--requested-by` to override for this call); refuses in read-only or with no requester either way. Posts a best-effort audit Comment naming the requester on success, and always logs a two-phase Attempted→Success/Failure row to Qkeee Bot Audit Log (best-effort, never blocks the write — see Audit trail section above). `--user-approved` should only be passed when this write's confirm stage genuinely ran with the user; it's a scan-for-violations field, not a second gate. `create`/`update` and `submit` are separate calls — always review the re-fetched draft (`get`, not `query`, when Link-field validity inside a child table needs checking) between them, never chain create/update straight into submit |
 | Connectivity health check | `erp_client.py health` | Run before first read/write of a session |
 | Harness capability discovery | Ask the harness (if it exposes tool listing) whether a native HTTP/report tool already exists | Applies to this skill and is the general pattern other qkeee-erp-* skills should follow too |
 

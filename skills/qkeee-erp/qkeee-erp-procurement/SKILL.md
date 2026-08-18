@@ -10,12 +10,6 @@ metadata:
       - key: qkeee_erp.mode
         prompt: "Should this skill be allowed to create/update/submit/cancel records in ERPNext, or strictly read-only?"
         default: "read-only"
-      - key: qkeee_erp.requested_by
-        prompt: "ERPNext user id/email of the person this session is acting on behalf of (used to attribute writes)"
-        default: ""
-      - key: qkeee_erp.debug
-        prompt: "Log full conversation detail (Session/Message rows) and read-access rows to the Qkeee Bot audit trail? Off by default — writes are always audited regardless of this setting."
-        default: "false"
     required_environment_variables:
       - name: "QKEEE_ERP_DEFAULT_BASE_URL"
         prompt: "ERPNext site URL for this environment (e.g. https://org.erpnext.com)"
@@ -79,7 +73,7 @@ a blocker — don't refuse the user's actual request over it.
 
 ## Requester attribution — mandatory on every write
 
-Before the first write of a session, resolve `qkeee_erp.requested_by`
+Before the first write of a session, resolve `QKEEE_ERP_<TAG>_REQUESTED_BY`
 to the ERPNext user id/email of the human this session is acting on
 behalf of — ask if not already set, and re-confirm it same as the
 active-environment reminder on long gaps or before a new batch of
@@ -95,7 +89,7 @@ Mention in your report-back that the audit comment was posted.
 Every write also logs a two-phase (`Attempted` → `Success`/`Failure`) row
 to the `Qkeee Bot Audit Log` doctype, best-effort — never blocks a write
 if the target instance hasn't run `qkeee-erp-bot-init` yet. Reads log
-there too, but only when `qkeee_erp.debug` is `true` (default `false`) —
+there too, but only when the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true` (default `false`) —
 see `qkeee-erp-core/SKILL.md`'s "Audit trail" section and
 `qkeee-erp-bot-init/references/bot-doctypes-design.md` for the full
 mechanism. Pass `user_approved=True` to `mutate_resource()` only when
@@ -115,13 +109,13 @@ violations field, not a second gate.
    scripts/erp_client.py --tag <tag> register-persona --persona-code
    qkeee-erp-procurement --persona-label "Procurement" --default-mode
    read-only`. This upserts the `Qkeee Bot Persona` master row — it's not
-   a log and isn't gated on `qkeee_erp.debug`. Check the returned `status` — `"failed"` means the `Qkeee Bot Persona` row was NOT created (almost always because `qkeee-erp-bot-init` hasn't been run on this instance yet), even though the command still exits cleanly. Treat `"failed"` the same as a `logged_in_as` that looks like a personal account — mention it once, proactively, and suggest running `qkeee-erp-bot-init`; never silently ignore it, and never let it block the user's actual request.
-4. **Session/message logging — only when `qkeee_erp.debug` is `true`.**
+   a log and isn't gated on the active tag's `QKEEE_ERP_<TAG>_DEBUG`. Check the returned `status` — `"failed"` means the `Qkeee Bot Persona` row was NOT created (almost always because `qkeee-erp-bot-init` hasn't been run on this instance yet), even though the command still exits cleanly. Treat `"failed"` the same as a `logged_in_as` that looks like a personal account — mention it once, proactively, and suggest running `qkeee-erp-bot-init`; never silently ignore it, and never let it block the user's actual request.
+4. **Session/message logging — only when the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true`.**
    If debug is `false` (the default), skip this step entirely: no
    `open-session`, no `log-message`, no `--session-id` threading. When
-   `qkeee_erp.debug` is `true`: after persona registration, call
-   `open-session --user <qkeee_erp.requested_by> --persona-code
-   qkeee-erp-procurement --mode <qkeee_erp.mode>` once, and thread the
+   the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true`: after persona registration, call
+   `open-session --persona-code
+   qkeee-erp-procurement --mode <qkeee_erp.mode>` once (omit `--user` — it falls back to `QKEEE_ERP_<TAG>_REQUESTED_BY`; pass it explicitly only to override that for this one call), and thread the
    returned `session_id` into every subsequent `query`/`get`/`mutate`
    call's `--session-id`. If `session_id` starts with `local-`, the session row was never actually persisted to ERPNext (Session/Message logging failed, most likely because `qkeee-erp-bot-init` hasn't been run on this instance) — surface that once, same as a failed persona registration, and keep working from the local id rather than blocking. Call `log-message` at natural turns — `User` for
    the user's ask, `Bot Analysis` for your reasoning, `Bot Response` for
