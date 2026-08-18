@@ -2,10 +2,13 @@
 
 This is the canonical technical/connector layer for the `qkeee-erp` skill
 library. Every persona skill (`qkeee-erp-hr-associate`,
-`qkeee-erp-accounts-executive`, etc.) ships its own copy of
-`scripts/erp_client.py` and this reference, synced from here at build time.
-If you're building/updating a persona skill's connector copy, this is the
-source of truth — do not hand-diverge persona copies.
+`qkeee-erp-accounts-executive`, etc.) ships its own copy of this reference
+and this skill's `scripts/` files — `erp_client.py`, `confirm_token.py`,
+`discover.py` — synced from here via the sync script (`scripts/sync_to_
+personas.py`), not hand-maintained per skill. If you're building/updating
+a persona skill's connector copy, this is the source of truth — do not
+hand-diverge persona copies; land the fix here and re-run the sync script
+instead.
 
 ## What this layer does, and doesn't, know
 
@@ -154,6 +157,8 @@ queried the same way.
 | Submit (step 2) | POST | `/api/method/frappe.client.submit` |
 | Cancel | POST | `/api/method/frappe.client.cancel` |
 | Delete | DELETE | `/api/resource/<DocType>/<name>` |
+| Run a built-in report | GET | `/api/method/frappe.desk.query_report.run?report_name=...&filters=...` |
+| Fetch a user's roles | GET | `/api/resource/User/<name>` |
 
 **Submit is two calls, not one.** `frappe.client.submit` builds its doc via
 `frappe.get_doc(<payload>)`, not a DB load — a `{doctype, name}`-only
@@ -222,6 +227,101 @@ figures), use `query_resource()`/`--filters --fields`. If it does
 (reviewing line items, checking a child row's Link field before submit),
 use `get_resource()`/`get`, not `query --filters` — `query` won't return
 the data being checked, it'll silently omit it rather than error.
+
+## Built-in reports vs. hand-aggregated queries
+
+`run_query_report()` (CLI: `erp_client.py report "<report_name>" --filters
+'{...}'`) runs one of ERPNext's own server-side Query/Script Reports via
+`frappe.desk.query_report.run`, instead of a persona skill hand-aggregating
+raw transactional rows into the same shape. Prefer it whenever a built-in
+report covers the need — report logic already implements Finance Book
+gates, Accounting Dimension filters, and currency conversion; reimplementing
+one of those from a raw `query_resource()` call risks silently missing a
+detail and producing a plausible-looking but wrong figure. **Confirmed
+live** ("Sales Order Analysis" against a real ERPNext v15 instance, real
+per-line delay/pending-amount data returned) using GET with `filters` as a
+JSON-encoded query string param — not POST with a JSON body, which is
+untested against a live instance and should not be assumed to work
+identically. `filters` field names are report-specific and undocumented by
+this generic endpoint; confirm them by opening the report in the ERPNext UI
+once. Falls back to `query_resource()` + hand aggregation only for a
+genuinely custom cut no built-in report covers.
+
+## Authority checks without a configured Workflow
+
+`get_user_roles()` (CLI: `erp_client.py roles [--user <id>]`) fetches a
+user's assigned roles from `User.roles` — the standard heuristic for "does
+this user plausibly hold authority for this write" when the target
+doctype has no ERPNext Workflow doctype configured (common on a default-
+configured instance; confirmed live for Purchase Order on at least one
+reference instance — no Workflow existed, role membership was the only
+signal available via REST). An **empty roles list is ambiguous** — it
+could mean the user genuinely holds no relevant role, or that the lookup
+silently came back thin (wrong username resolved, or this API key lacks
+permission to read `User.roles`). `get_user_roles()` returns a non-empty
+`warning` string in that case rather than letting a caller conflate
+"checked, no authority" with "didn't resolve" — treat both as "authority
+not confirmed" and corroborate with the user, never assume the former. An
+org with a real approval Workflow configured should be asked about it
+directly instead of relying on this heuristic.
+
+## Confirmation tokens for double-confirm writes
+
+`confirm_token.py` (new in core, not present before this sync) provides
+two shared primitives — `compute_token(**fields)` (deterministic hash over
+arbitrary facts) and `is_fresh(issued_at, max_age_seconds, now)` (rejects
+stale or implausibly-future tokens, default 15-minute TTL) — used to tie a
+render/stage step to its later execute step for any write a persona skill
+gates behind a DOUBLE confirm (depreciation runs, disposals, destructive
+sysadmin actions, bot-user provisioning). Capability-specific token
+constructors stay in the owning persona skill's own `confirm_token.py`,
+built on these two primitives — see the module's docstring for the
+expected shape. **Every token constructor must include an `issued_at`
+field and its execute step must call `is_fresh()` before honoring the
+token** — a token with no freshness check never expires, which defeats the
+anti-replay property the whole mechanism exists for. (Found during this
+sync: one persona skill's confirmation tokens omitted this check entirely
+— fixed as part of the same retrofit that added this file to core.)
+
+## Runtime metadata discovery
+
+`discover.py` (new in core, promoted from a persona skill during this
+sync) resolves what's actually installed/configured on a target instance
+— `list_installed_apps()`, `list_modules()`, `doctype_meta()`,
+`resolve_doctype()` — instead of trusting `docs.frappe.io` or a GitHub
+README, which describe the general shape of an app but not a specific
+org's customizations (custom fields, altered mandatory flags, locally
+added doctypes). `list_installed_apps()`'s underlying RPC
+(`frappe.utils.change_log.get_versions`) is opportunistic, not guaranteed
+— confirmed live to 403 with `PermissionError: ... is not whitelisted` on
+at least one real instance; `list_modules()` (a plain REST read against
+`Module Def`) is the confirmed-working primary app-discovery path, not a
+fallback. `resolve_doctype()` distinguishes "no module recorded" (`app:
+null, app_lookup_error: null`) from "the module lookup itself failed"
+(`app: null, app_lookup_error: "<message>"`) — collapsing both to a bare
+`app: null` risks a false "this is custom, no owning app" claim when a
+lookup had actually just errored. Every persona skill should attempt this
+discovery before proposing a field/doctype it hasn't confirmed live on the
+target instance.
+
+## Pitfalls found live, worth knowing before you hit them
+
+(Connector-layer only — REST mechanics/quirks that apply regardless of
+doctype. Doctype-specific business-logic pitfalls, e.g. Stock
+Reconciliation's batch-tracking behavior, belong in the owning persona
+skill's own `domain-knowledge.md`/connector-reference, not here — see
+"What this layer does, and doesn't, know" above.)
+
+- **`RQ Job` doctype is not usable via REST** — confirmed live 500
+  `TypeError`, unrelated to permissions/auth. Use
+  `frappe.utils.scheduler.get_scheduler_status` + `Scheduled Job Type` +
+  `Error Log` for system-health signals instead; report the RQ Job gap
+  explicitly in a health report rather than silently omitting queue depth.
+- **A freshly created Custom Field does not appear in a subsequent `GET
+  /api/resource/DocType/<dt>` meta fetch** — the meta cache isn't
+  invalidated by a REST create, and `frappe.clear_cache` isn't whitelisted
+  (403 even as Administrator). Verify a new Custom Field via a direct
+  `Custom Field` resource query by name, never by re-fetching DocType meta.
 
 ## The read-only/read-write gate
 

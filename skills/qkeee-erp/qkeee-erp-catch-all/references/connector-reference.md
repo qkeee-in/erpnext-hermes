@@ -29,8 +29,15 @@ Authorization: token <api_key>:<api_secret>
 ```
 
 Keys are generated per ERPNext user via **User → API Access → Generate
-Keys** in the ERPNext UI (org's ERPNext admin provisions these) — this is a
-manual, org-side onboarding step, not something this skill automates.
+Keys** in the ERPNext UI (org's ERPNext admin provisions these). This can
+be done manually as an org-side onboarding step, or automated
+via `qkeee-erp-bot-init/scripts/ensure_bot_user.py`, which detects
+whether the dedicated bot user already exists and, if not, creates it
+(with the `Qkeee Bot` role attached) and generates its API key/secret —
+using an elevated admin credential distinct from this key, same
+dry-run/confirm discipline as that skill's doctype provisioning. Prefer
+suggesting that path over manual UI steps when the user doesn't already
+have a bot user configured.
 
 **Must be a dedicated bot/integration user, not a human's login.** All
 `qkeee-erp-*` skills share one ERPNext identity for reads/writes. Generate
@@ -148,6 +155,8 @@ queried the same way.
 | Submit (step 2) | POST | `/api/method/frappe.client.submit` |
 | Cancel | POST | `/api/method/frappe.client.cancel` |
 | Delete | DELETE | `/api/resource/<DocType>/<name>` |
+| Run a built-in report | GET | `/api/method/frappe.desk.query_report.run?report_name=...&filters=...` |
+| Fetch a user's roles | GET | `/api/resource/User/<name>` |
 
 **Submit is two calls, not one.** `frappe.client.submit` builds its doc via
 `frappe.get_doc(<payload>)`, not a DB load — a `{doctype, name}`-only
@@ -268,13 +277,13 @@ posted separately.
 
 ## Save-draft-then-review-then-submit discipline
 
-`mutate_resource()`'s `create`/`update`/`submit` actions were already
-independent, separately-callable actions before this note — `create`/
+`mutate_resource()`'s `create`/`update`/`submit` actions are
+independent, separately-callable actions — `create`/
 `update` never implicitly submits a record (ERPNext itself leaves a newly
 created or updated record at `docstatus 0` unless `submit` is called
 separately). This is a **skill-instruction discipline**, not a connector
-change: every persona skill's Execute-stage instructions for a
-create/update capability must now sequence as:
+concern: every persona skill's Execute-stage instructions for a
+create/update capability must sequence as:
 
 1. **Save as draft** — `mutate_resource(..., "create"/"update", ...)`.
 2. **Review the saved draft** — `get_resource()`/`erp_client.py get` by
@@ -335,7 +344,7 @@ python erp_client.py --tag qa --mode read-write --requested-by priya@org.com mut
 
 ## Audit-trail retrofit
 
-`mutate_resource()` wraps every write with a two-phase log to the
+`mutate_resource()` now wraps every write with a two-phase log to the
 `Qkeee Bot Audit Log` doctype (schema owned by the sibling skill
 `qkeee-erp-bot-init`, see its `references/bot-doctypes-design.md` for the
 full field list, permission matrix, and decision log — this section only
@@ -389,14 +398,106 @@ along even when Session logging isn't actually landing anywhere —
 carry either a real Session row's `name` or this fallback string
 interchangeably (see bot-doctypes-design.md decision 10).
 
-The retrofit above was synced
-into all 7 write-capable persona skills' own `erp_client.py` copies plus
-`qkeee-erp-mis-analyst`
-(`qkeee-erp-catch-all`'s own copy — see `scripts/erp_client.py` in this
-skill — already carries it). Two narrow gaps remain, both because the
-bypassed function never calls `mutate_resource()`: fixed-asset-manager's
-`call_whitelisted_method()` (depreciation/scrap/restore/disposal) and
-system-admin's `call_permission_manager()` (permission add/update/remove/
-reset) still enforce the double-confirm token gate and `requested_by` in
-full, but don't produce a `Qkeee Bot Audit Log` row. See the module plan's
-"Bot Audit-Trail Doctype Design" section for the full sync/gap log.
+**Not yet done — a known gap, not an oversight:** none of the 7
+write-capable persona skills' own `erp_client.py` copies have been synced
+with this retrofit yet. Each one still runs the connector version
+predating the audit-trail retrofit (read-only-gate + requester-attribution
++ save-draft-review-submit, but no audit logging). Syncing this file into
+each persona skill's `scripts/`
+directory is the next mechanical step before any persona skill's writes
+actually reach `Qkeee Bot Audit Log`.
+
+## Built-in reports vs. hand-aggregated queries
+
+`run_query_report()` (CLI: `erp_client.py report "<report_name>" --filters
+'{...}'`) runs one of ERPNext's own server-side Query/Script Reports via
+`frappe.desk.query_report.run`, instead of a persona skill hand-aggregating
+raw transactional rows into the same shape. Prefer it whenever a built-in
+report covers the need — report logic already implements Finance Book
+gates, Accounting Dimension filters, and currency conversion; reimplementing
+one of those from a raw `query_resource()` call risks silently missing a
+detail and producing a plausible-looking but wrong figure. **Confirmed
+live** ("Sales Order Analysis" against a real ERPNext v15 instance, real
+per-line delay/pending-amount data returned) using GET with `filters` as a
+JSON-encoded query string param — not POST with a JSON body, which is
+untested against a live instance and should not be assumed to work
+identically. `filters` field names are report-specific and undocumented by
+this generic endpoint; confirm them by opening the report in the ERPNext UI
+once. Falls back to `query_resource()` + hand aggregation only for a
+genuinely custom cut no built-in report covers.
+
+## Authority checks without a configured Workflow
+
+`get_user_roles()` (CLI: `erp_client.py roles [--user <id>]`) fetches a
+user's assigned roles from `User.roles` — the standard heuristic for "does
+this user plausibly hold authority for this write" when the target
+doctype has no ERPNext Workflow doctype configured (common on a default-
+configured instance; confirmed live for Purchase Order on at least one
+reference instance — no Workflow existed, role membership was the only
+signal available via REST). An **empty roles list is ambiguous** — it
+could mean the user genuinely holds no relevant role, or that the lookup
+silently came back thin (wrong username resolved, or this API key lacks
+permission to read `User.roles`). `get_user_roles()` returns a non-empty
+`warning` string in that case rather than letting a caller conflate
+"checked, no authority" with "didn't resolve" — treat both as "authority
+not confirmed" and corroborate with the user, never assume the former. An
+org with a real approval Workflow configured should be asked about it
+directly instead of relying on this heuristic.
+
+## Confirmation tokens for double-confirm writes
+
+`confirm_token.py` (new in core, not present before this sync) provides
+two shared primitives — `compute_token(**fields)` (deterministic hash over
+arbitrary facts) and `is_fresh(issued_at, max_age_seconds, now)` (rejects
+stale or implausibly-future tokens, default 15-minute TTL) — used to tie a
+render/stage step to its later execute step for any write a persona skill
+gates behind a DOUBLE confirm (depreciation runs, disposals, destructive
+sysadmin actions, bot-user provisioning). Capability-specific token
+constructors stay in the owning persona skill's own `confirm_token.py`,
+built on these two primitives — see the module's docstring for the
+expected shape. **Every token constructor must include an `issued_at`
+field and its execute step must call `is_fresh()` before honoring the
+token** — a token with no freshness check never expires, which defeats the
+anti-replay property the whole mechanism exists for. (Found during this
+sync: one persona skill's confirmation tokens omitted this check entirely
+— fixed as part of the same retrofit that added this file to core.)
+
+## Runtime metadata discovery
+
+`discover.py` (new in core, promoted from a persona skill during this
+sync) resolves what's actually installed/configured on a target instance
+— `list_installed_apps()`, `list_modules()`, `doctype_meta()`,
+`resolve_doctype()` — instead of trusting `docs.frappe.io` or a GitHub
+README, which describe the general shape of an app but not a specific
+org's customizations (custom fields, altered mandatory flags, locally
+added doctypes). `list_installed_apps()`'s underlying RPC
+(`frappe.utils.change_log.get_versions`) is opportunistic, not guaranteed
+— confirmed live to 403 with `PermissionError: ... is not whitelisted` on
+at least one real instance; `list_modules()` (a plain REST read against
+`Module Def`) is the confirmed-working primary app-discovery path, not a
+fallback. `resolve_doctype()` distinguishes "no module recorded" (`app:
+null, app_lookup_error: null`) from "the module lookup itself failed"
+(`app: null, app_lookup_error: "<message>"`) — collapsing both to a bare
+`app: null` risks a false "this is custom, no owning app" claim when a
+lookup had actually just errored. Every persona skill should attempt this
+discovery before proposing a field/doctype it hasn't confirmed live on the
+target instance.
+
+## Pitfalls found live, worth knowing before you hit them
+
+(Connector-layer only — REST mechanics/quirks that apply regardless of
+doctype. Doctype-specific business-logic pitfalls, e.g. Stock
+Reconciliation's batch-tracking behavior, belong in the owning persona
+skill's own `domain-knowledge.md`/connector-reference, not here — see
+"What this layer does, and doesn't, know" above.)
+
+- **`RQ Job` doctype is not usable via REST** — confirmed live 500
+  `TypeError`, unrelated to permissions/auth. Use
+  `frappe.utils.scheduler.get_scheduler_status` + `Scheduled Job Type` +
+  `Error Log` for system-health signals instead; report the RQ Job gap
+  explicitly in a health report rather than silently omitting queue depth.
+- **A freshly created Custom Field does not appear in a subsequent `GET
+  /api/resource/DocType/<dt>` meta fetch** — the meta cache isn't
+  invalidated by a REST create, and `frappe.clear_cache` isn't whitelisted
+  (403 even as Administrator). Verify a new Custom Field via a direct
+  `Custom Field` resource query by name, never by re-fetching DocType meta.

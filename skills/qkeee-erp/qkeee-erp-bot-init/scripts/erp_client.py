@@ -96,6 +96,12 @@ def get_env_config(tag: str = "default") -> dict:
 
     Fails with a specific "missing QKEEE_ERP_<TAG>_API_KEY" style error,
     never a generic auth failure.
+
+    Refuses a non-https base_url by default — _request() sends the bot
+    account's api_key/api_secret in a plain Authorization header on every
+    call, so a plaintext http:// target means those credentials cross the
+    wire in the clear. Set QKEEE_ERP_<TAG>_ALLOW_INSECURE=1 to override
+    for a genuine local/dev http instance.
     """
     base_url = os.environ.get(_tag_env_var(tag, "BASE_URL"))
     api_key = os.environ.get(_tag_env_var(tag, "API_KEY"))
@@ -116,9 +122,18 @@ def get_env_config(tag: str = "default") -> dict:
             f"Set them in your shell profile / OS credential manager, then retry."
         )
 
+    base_url = base_url.rstrip("/")
+    if not base_url.startswith("https://") and not os.environ.get(_tag_env_var(tag, "ALLOW_INSECURE")):
+        raise ConnectorError(
+            f"'{_tag_env_var(tag, 'BASE_URL')}' ({base_url}) is not https — refusing to send "
+            f"credentials over plaintext transport by default. Set "
+            f"{_tag_env_var(tag, 'ALLOW_INSECURE')}=1 to override for a genuine local/dev "
+            f"http instance."
+        )
+
     return {
         "tag": tag,
-        "base_url": base_url.rstrip("/"),
+        "base_url": base_url,
         "api_key": api_key,
         "api_secret": api_secret,
     }
@@ -135,9 +150,10 @@ def _request(cfg: dict, method: str, path: str, params: dict = None, payload: di
     req.add_header("Content-Type", "application/json")
     # Python's default urllib UA ("Python-urllib/x.y") is blocked by common
     # WAF/bot-protection (e.g. Cloudflare) fronting production ERPNext
-    # instances, returning a 403 that looks like an auth failure but isn't.
-    # Always send an explicit UA.
-    req.add_header("User-Agent", "qkeee-erp-bot-init/1.0")
+    # instances, returning a 403 that looks like an auth failure but isn't
+    # — confirmed against <erp-instance>, where curl succeeded and unmodified
+    # urllib got blocked on UA alone. Always send an explicit UA.
+    req.add_header("User-Agent", "qkeee-erp-core/1.0")
 
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
@@ -157,7 +173,14 @@ def _request(cfg: dict, method: str, path: str, params: dict = None, payload: di
 
 
 def health_check(tag: str = "default") -> dict:
-    """Verify active environment is reachable and authenticated."""
+    """Verify active environment is reachable and authenticated.
+
+    Confirms connectivity + valid credentials only — not query/write-time
+    permission on any specific DocType (e.g. a role-restricted bot account
+    may health-check fine yet still 403 on a later read/write against a
+    doctype it lacks access to). Report a later permission error as its
+    own distinct failure mode, not folded into "connectivity is broken".
+    """
     cfg = get_env_config(tag)
     result = _request(cfg, "GET", "/api/method/frappe.auth.get_logged_user")
     return {"tag": tag, "base_url": cfg["base_url"], "status": "ok", "logged_in_as": result.get("message")}
@@ -172,8 +195,12 @@ def query_resource(tag: str, doctype: str, filters: list = None, fields: list = 
     back to `limit` — callers get an explicit `has_more` flag instead of a
     result set that's silently incomplete.
 
-    `debug=True` additionally logs this read to Qkeee Bot Audit Log
-    (best-effort).
+    `debug=True` additionally logs this read to Qkeee Bot Audit Log (best-
+    effort). Read logging is debug-gated, not unconditional like writes —
+    a read-heavy persona (e.g. MIS Analyst) can generate far more Read
+    calls than any other action type, so logging every read unconditionally
+    would have made Audit Log itself the volume/bloat problem the debug
+    gate exists to avoid. See bot-doctypes-design.md decision 10.
     """
     cfg = get_env_config(tag)
     params = {"limit_page_length": limit + 1}
@@ -218,15 +245,23 @@ def _strip_noise(obj):
 def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
                   *, debug: bool = False, session_id: str = None, persona_code: str = None,
                   requested_by: str = None) -> dict:
-    """Single-resource full-doc GET.
+    """Single-resource full-doc GET — the only way to get child-table rows.
+
+    Confirmed live against <erp-instance>: Frappe's list endpoint
+    (query_resource()) silently drops Table-type (child-table) fields even
+    when named in `fields`, while the single-resource GET ignores `fields`
+    entirely and always returns the full doc (~94 top-level keys on a
+    Sales Order). Use get_resource() only when child-table Link validity
+    actually needs checking (e.g. a review-before-submit step) — for
+    reads that don't need child-table data (status checks, report reads),
+    query_resource() with filters+fields is ~25x cheaper.
 
     strip_noise=True (default) drops audit/system metadata and
     presentation-only HTML fields before returning — see _NOISE_FIELDS.
-    This skill's own existence checks call with strip_noise=False so every
-    field of a just-created DocType/Role record is visible.
 
     `debug=True` logs this read to Qkeee Bot Audit Log, same as
-    query_resource().
+    query_resource() — see that function's docstring for why this is
+    debug-gated rather than unconditional.
     """
     cfg = get_env_config(tag)
     path = f"/api/resource/{urllib.parse.quote(doctype)}/{urllib.parse.quote(name)}"
@@ -242,8 +277,8 @@ def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
 
 
 def resource_exists(tag: str, doctype: str, name: str) -> bool:
-    """404-tolerant existence check — the core existence-check primitive
-    this skill's init flow is built on. Never logged, never gated."""
+    """404-tolerant existence check (e.g. "has bot-init provisioned the
+    audit doctypes on this instance yet"). Never logged, never gated."""
     try:
         get_resource(tag, doctype, name, strip_noise=False)
         return True
@@ -297,7 +332,9 @@ def _session_or_fallback(session_id: str) -> str:
 
 def _diff_fields(before: dict, after: dict) -> list:
     """Field-by-field diff for the Update action's field_diff JSON. Compares
-    top-level keys only, skips noise/metadata fields."""
+    top-level keys only (child-table diffing isn't attempted — a child
+    table's own rows would need their own before/after comparison, out of
+    scope for this connector-level helper); skips noise/metadata fields."""
     if not before or not after:
         return []
     keys = (set(before.keys()) | set(after.keys())) - _NOISE_FIELDS
@@ -341,7 +378,11 @@ def _audit_update(cfg: dict, log_name: str, fields: dict) -> bool:
 
 
 def _audit_submit(cfg: dict, log_name: str) -> bool:
-    """Best-effort submit (docstatus lock) of a finished Audit Log row."""
+    """Best-effort submit (docstatus lock) of a finished Audit Log row.
+    Failure here (e.g. the row's own mandatory fields didn't validate)
+    leaves the row as a readable draft rather than blocking anything —
+    the row's content is what matters for the audit trail; submission is
+    a tamper-evidence nicety on top."""
     try:
         path = f"/api/resource/{urllib.parse.quote(AUDIT_LOG_DOCTYPE)}/{urllib.parse.quote(log_name)}"
         existing = _request(cfg, "GET", path)
@@ -356,7 +397,8 @@ def _audit_submit(cfg: dict, log_name: str) -> bool:
 
 
 def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id: str, persona_code: str) -> None:
-    """Single-shot best-effort Audit Log row for a debug-mode read."""
+    """Single-shot (no two-phase — nothing to crash into inconsistently
+    for a read) best-effort Audit Log row for a debug-mode read."""
     if doctype in AUDIT_EXEMPT_DOCTYPES:
         return
     _audit_insert(cfg, {
@@ -378,10 +420,14 @@ def record_audit_log_start(cfg: dict, *, action: str, doctype: str, name: str, r
                             payload_before: dict = None, user_approved: bool = False,
                             approval_note: str = None) -> str:
     """Phase 1 of two-phase audit logging: insert an `Attempted` row
-    BEFORE the real ERPNext write happens. Returns the row's name, or None
-    if the insert itself failed (doctype not provisioned, etc.) — callers
+    BEFORE the real ERPNext write happens. If the process crashes between
+    this call and record_audit_log_finish(), the orphaned `Attempted` row
+    is the detectable trace of an unfinished/unknown-outcome write — see
+    bot-doctypes-design.md decision 7. Returns the row's name, or None if
+    the insert itself failed (doctype not provisioned, etc.) — callers
     must treat None as "logging unavailable, proceed anyway", never as a
-    reason to abort the real write."""
+    reason to abort the real write.
+    """
     if doctype in AUDIT_EXEMPT_DOCTYPES:
         return None
     return _audit_insert(cfg, {
@@ -404,7 +450,9 @@ def record_audit_log_finish(cfg: dict, log_name: str, *, status: str, reference_
                              payload_before: dict = None, payload_after: dict = None,
                              error_detail: str = None, audit_comment_posted: bool = None) -> None:
     """Phase 2: flip an `Attempted` row to `Success`/`Failure` after the
-    real write completes (or fails). Best-effort; failures here are
+    real write completes (or fails). Computes field_diff from
+    payload_before/payload_after when both are present (Update only —
+    Create has nothing to diff against). Best-effort; failures here are
     swallowed, same rationale as everywhere else in this section."""
     if not log_name:
         return
@@ -522,17 +570,37 @@ def ensure_persona_registered(tag: str, *, persona_code: str, persona_label: str
 
 def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
                      name: str = None, mode: str = "read-only", requested_by: str = None,
+                     skip_comment: bool = False,
                      *, session_id: str = None, persona_code: str = None,
                      user_approved: bool = False, approval_note: str = None) -> dict:
-    """Generic resource mutate — create/update a DocType or Role record.
+    """Generic resource mutate — create/update/submit/cancel a DocType record.
 
-    `mode` must be passed explicitly by the caller and this function
-    refuses to write unless mode == "read-write" (init_bot.py always
-    passes "read-write" — this skill is not gated by qkeee_erp.mode, see
-    SKILL.md's non-negotiable section for why).
+    `mode` must be passed explicitly by the caller (sourced from
+    metadata.hermes.config qkeee_erp.mode) — this function refuses to
+    guess a safe default and refuses to write unless mode == "read-write".
 
-    `requested_by` is required for every write — on success, a best-effort
-    Comment naming the requester is posted to the affected record.
+    `requested_by` (the ERPNext user id/email of the human who asked for
+    this change, sourced from metadata.hermes.config
+    qkeee_erp.requested_by) is required for every write — the connector
+    authenticates as a shared bot account, so without this the ERPNext
+    audit trail would show only the bot, never who actually asked. On
+    success, a best-effort Comment naming the requester is posted to the
+    affected record (see record_comment()).
+
+    `skip_comment=True` suppresses that default Comment — for a caller
+    that's about to post its own, more specific attribution comment
+    right after this call returns (e.g. a capability-specific wrapper
+    that names the actual action taken, not just "created"/"updated").
+    Qkeee Bot Audit Log logging is unaffected either way; only the
+    ERPNext-side Comment is skipped.
+
+    `user_approved` should be True only when the caller actually ran this
+    write's confirm stage with the user first — it's logged to Qkeee Bot
+    Audit Log's `user_approved` field for later scanning, not enforced as
+    a gate here (see record_audit_log_start()'s docstring and
+    bot-doctypes-design.md decision 14). Defaults to False deliberately:
+    a caller that forgets to pass it shows up as "Not Confirmed" on scan,
+    which is the intended detection behavior, not a silent default.
     """
     if mode != "read-write":
         raise ReadOnlyModeError(
@@ -544,15 +612,14 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
             f"Refusing {action} on '{doctype}': requested_by is missing. "
             f"Set qkeee_erp.requested_by to the ERPNext user id/email of the person requesting this change."
         )
-    if action not in ("create", "update"):
-        raise ConnectorError(
-            f"Unknown or unsupported action '{action}' for qkeee-erp-bot-init. "
-            f"This skill only creates/updates DocType and Role records — it does not "
-            f"submit/cancel/delete."
-        )
 
     cfg = get_env_config(tag)
 
+    # Pre-image for Update's field_diff — an extra GET, only when this
+    # doctype is actually audited (skip for Session/Message/etc, which
+    # never reach mutate_resource() as a target doctype in practice, and
+    # skip when the doctype isn't in AUDIT_EXEMPT_DOCTYPES but the target
+    # simply doesn't need diffing, e.g. Create has no "before").
     payload_before = None
     if action == "update" and doctype not in AUDIT_EXEMPT_DOCTYPES and name:
         try:
@@ -567,12 +634,16 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
     )
 
     try:
-        result = _do_mutate(cfg, doctype, action, payload, name, requested_by)
+        result = _do_mutate(cfg, doctype, action, payload, name, requested_by, skip_comment=skip_comment)
     except ConnectorError as e:
         record_audit_log_finish(cfg, audit_log_name, status="Failure", error_detail=str(e))
         raise
 
+    # Success path: extract whatever's usable as payload_after / the
+    # audit-comment outcome to close out the Attempted row.
     data = result.get("data") if isinstance(result, dict) else None
+    if data is None and isinstance(result, dict):
+        data = result.get("message")  # submit/cancel return {"message": {...}} instead of {"data": {...}}
     reference_name = (data or {}).get("name") if isinstance(data, dict) else name
     audit_comment_posted = result.pop("_audit_comment_posted", None) if isinstance(result, dict) else None
     record_audit_log_finish(
@@ -583,34 +654,106 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
     return result
 
 
-def _do_mutate(cfg: dict, doctype: str, action: str, payload: dict, name: str, requested_by: str) -> dict:
-    """The actual per-action HTTP dispatch — only create/update, since
-    mutate_resource() above already rejects anything else for this skill."""
+def _do_mutate(cfg: dict, doctype: str, action: str, payload: dict, name: str, requested_by: str,
+                skip_comment: bool = False) -> dict:
+    """The actual per-action HTTP dispatch, unchanged from before the
+    audit-logging retrofit — factored out so mutate_resource() can wrap it
+    uniformly with the two-phase Attempted/Success/Failure logging above
+    without duplicating this logic per action.
+
+    `skip_comment` suppresses the default `record_comment()` call per
+    action below — see mutate_resource()'s docstring."""
     if action == "create":
         path = f"/api/resource/{urllib.parse.quote(doctype)}"
         result = _request(cfg, "POST", path, payload=payload)
         created_name = (result.get("data") or {}).get("name")
-        if created_name:
-            result["_audit_comment_posted"] = record_comment(
+        comment_posted = None
+        if created_name and not skip_comment:
+            comment_posted = record_comment(
                 cfg, doctype, created_name,
                 f"[{SKILL_LABEL}] created — requested by {requested_by}, applied via qkeee-erp bot.",
             )
+        result["_audit_comment_posted"] = comment_posted
         return result
     if action == "update":
         if not name:
             raise ConnectorError("update requires a record 'name'.")
         path = f"/api/resource/{urllib.parse.quote(doctype)}/{urllib.parse.quote(name)}"
         result = _request(cfg, "PUT", path, payload=payload)
-        result["_audit_comment_posted"] = record_comment(
-            cfg, doctype, name,
-            f"[{SKILL_LABEL}] updated — requested by {requested_by}, applied via qkeee-erp bot.",
-        )
+        comment_posted = None
+        if not skip_comment:
+            comment_posted = record_comment(
+                cfg, doctype, name,
+                f"[{SKILL_LABEL}] updated — requested by {requested_by}, applied via qkeee-erp bot.",
+            )
+        result["_audit_comment_posted"] = comment_posted
+        return result
+    if action == "submit":
+        if not name:
+            raise ConnectorError("submit requires a record 'name'.")
+        # frappe.client.submit builds its doc via frappe.get_doc(dict) — a
+        # sparse {doctype, name} payload has no DB-loaded field values, so
+        # validate() fails mandatory-field checks. Fetch the full record
+        # first, then submit that. This necessarily reposts every stored
+        # field verbatim (submit is not a diff) — including any PII fields
+        # already present on the record, regardless of what the calling
+        # skill's current task scope is. That's expected: submit locks in
+        # the record as-is, it doesn't grant new write access to fields the
+        # caller didn't set. A skill's own PII-scope discipline governs
+        # what it *writes new values to* via create/update, not what a
+        # submit call necessarily echoes back to lock the doc.
+        get_path = f"/api/resource/{urllib.parse.quote(doctype)}/{urllib.parse.quote(name)}"
+        existing = _request(cfg, "GET", get_path)
+        full_doc = existing.get("data")
+        if not full_doc:
+            raise ConnectorError(f"Could not load '{doctype}' '{name}' before submit — nothing to submit.")
+        result = _request(cfg, "POST", "/api/method/frappe.client.submit", payload={"doc": full_doc})
+        comment_posted = None
+        if not skip_comment:
+            comment_posted = record_comment(
+                cfg, doctype, name,
+                f"[{SKILL_LABEL}] submitted — requested by {requested_by}, applied via qkeee-erp bot.",
+            )
+        result["_audit_comment_posted"] = comment_posted
+        return result
+    if action == "cancel":
+        if not name:
+            raise ConnectorError("cancel requires a record 'name'.")
+        body = {"doctype": doctype, "name": name}
+        result = _request(cfg, "POST", "/api/method/frappe.client.cancel", payload=body)
+        comment_posted = None
+        if not skip_comment:
+            comment_posted = record_comment(
+                cfg, doctype, name,
+                f"[{SKILL_LABEL}] cancelled — requested by {requested_by}, applied via qkeee-erp bot.",
+            )
+        result["_audit_comment_posted"] = comment_posted
+        return result
+    if action == "delete":
+        if not name:
+            raise ConnectorError("delete requires a record 'name'.")
+        # Post the audit comment before deleting — once the record is gone
+        # there's nothing left in ERPNext to attach a Comment to.
+        comment_posted = None
+        if not skip_comment:
+            comment_posted = record_comment(
+                cfg, doctype, name,
+                f"[{SKILL_LABEL}] deleted — requested by {requested_by}, applied via qkeee-erp bot.",
+            )
+        path = f"/api/resource/{urllib.parse.quote(doctype)}/{urllib.parse.quote(name)}"
+        result = _request(cfg, "DELETE", path)
+        if not isinstance(result, dict):
+            result = {}
+        result["_audit_comment_posted"] = comment_posted
         return result
 
-    raise ConnectorError(f"Unknown action '{action}'. Expected create/update.")
+    raise ConnectorError(f"Unknown action '{action}'. Expected create/update/submit/cancel/delete.")
 
 
 def list_configured_tags() -> list:
+    """List environment tags with a full var set (BASE_URL+API_KEY+API_SECRET)
+    already present in os.environ. Enables the 'list environment tags'
+    part of the environment-configuration capability."""
     tags = {}
     for var_name in os.environ:
         if not var_name.startswith("QKEEE_ERP_"):
@@ -754,6 +897,89 @@ def _cli():
     except ConnectorError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+
+
+def run_query_report(tag: str, report_name: str, filters: dict = None,
+                      *, debug: bool = False, session_id: str = None, persona_code: str = None,
+                      requested_by: str = None) -> dict:
+    """Run one of ERPNext's own built-in reports server-side (Query Report
+    or Script Report) via frappe.desk.query_report.run, instead of hand-
+    aggregating raw transactional rows into the same shape. Prefer this
+    whenever a built-in report covers the need — report logic already
+    implements dimension filters, Finance Book gates, and currency
+    conversion correctly; a hand-rolled aggregation risks silently
+    missing one of those. Read-only in effect (runs a report, creates
+    nothing).
+
+    GET + query-string filters, not POST — confirmed live ("Sales Order
+    Analysis" against a real ERPNext v15 instance, real per-line data
+    returned). `filters` is a plain dict of report-specific filter values;
+    field names vary per report — confirm the exact filter keys a given
+    report expects by opening it in the ERPNext UI once, since this
+    generic endpoint doesn't self-document per-report filter schemas.
+
+    `debug=True` logs this read to Qkeee Bot Audit Log, against
+    reference_doctype "Report" with reference_name=report_name, since a
+    query report isn't itself a DocType record being read.
+    """
+    cfg = get_env_config(tag)
+    params = {"report_name": report_name}
+    if filters:
+        params["filters"] = json.dumps(filters)
+    result = _request(cfg, "GET", "/api/method/frappe.desk.query_report.run", params=params)
+    message = result.get("message", {})
+
+    if debug:
+        _log_read(cfg, "Report", report_name, requested_by, session_id, persona_code)
+
+    return {
+        "report_name": report_name,
+        "columns": message.get("columns", []),
+        "result": message.get("result", []),
+    }
+
+
+def get_user_roles(tag: str, user: str = "") -> dict:
+    """Fetch a user's assigned roles — the standard (heuristic, not
+    guaranteed) signal for whether the acting user plausibly holds
+    authority for a given write, when no ERPNext Workflow doctype is
+    configured for the record type in question (common on a default-
+    configured instance — role membership is then the only signal
+    available via the REST API). An org with a real approval Workflow
+    should be asked about it directly rather than relying on this alone.
+
+    `user` defaults to the empty string, in which case this resolves the
+    currently-authenticated user's own roles via the health-check
+    endpoint first — get_env_config() has no notion of "which user this
+    API key belongs to" (Frappe token auth doesn't expose that directly).
+    """
+    cfg = get_env_config(tag)
+    target = user
+    if not target:
+        who = _request(cfg, "GET", "/api/method/frappe.auth.get_logged_user")
+        target = who.get("message", "")
+    path = f"/api/resource/User/{urllib.parse.quote(target)}"
+    result = _request(cfg, "GET", path)
+    doc = result.get("data", {})
+    roles = [r.get("role") for r in doc.get("roles", []) if r.get("role")]
+    # An empty roles list is ambiguous: it could mean "confirmed, this user
+    # genuinely holds no relevant role" or a lookup that silently came back
+    # thin (wrong username resolved, a permission restriction on the User
+    # doctype for this API key, etc). Surface that ambiguity explicitly
+    # rather than letting the caller treat empty the same as "checked, no
+    # authority" — either way the safe default is to treat authority as
+    # unconfirmed, but the caller deserves to know which case it's in.
+    warning = (
+        "No roles returned for this user — could mean the user genuinely "
+        "holds no relevant role, or that the lookup didn't resolve "
+        "correctly (wrong username, or this API key lacks permission to "
+        "read User.roles). Treat as 'authority not confirmed' either way, "
+        "but corroborate with the user rather than assuming the former."
+        if not roles else ""
+    )
+    return {"user": target, "roles": roles, "warning": warning}
 
 
 if __name__ == "__main__":

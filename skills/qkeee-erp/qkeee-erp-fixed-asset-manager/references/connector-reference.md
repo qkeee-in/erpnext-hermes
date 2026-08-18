@@ -18,81 +18,101 @@ Authorization: token <api_key>:<api_secret>
 ```
 
 Keys are generated per ERPNext user via **User → API Access → Generate
-Keys** — an org-side onboarding step, not automated here.
+Keys** in the ERPNext UI (org's ERPNext admin provisions these). This can
+be done manually as an org-side onboarding step, or automated
+via `qkeee-erp-bot-init/scripts/ensure_bot_user.py`, which detects
+whether the dedicated bot user already exists and, if not, creates it
+(with the `Qkeee Bot` role attached) and generates its API key/secret —
+using an elevated admin credential distinct from this key, same
+dry-run/confirm discipline as that skill's doctype provisioning. Prefer
+suggesting that path over manual UI steps when the user doesn't already
+have a bot user configured.
 
 **Must be a dedicated bot/integration user, not a human's login.** All
-`qkeee-erp-*` skills share one ERPNext identity for reads/writes.
-Generate this key against a dedicated integration/bot user (e.g.
+`qkeee-erp-*` skills share one ERPNext identity for reads/writes. Generate
+this key against a dedicated integration/bot user (e.g.
 `qkeee-erp-bot@<org>`) — never against an individual staff member's
-personal account, or every write in ERPNext attributes to that person
-regardless of who actually asked in chat. See `qkeee-erp-core`'s
-reference for the full rationale.
+personal account. If provisioned under a real person, every write in
+ERPNext attributes to that person regardless of who actually requested it
+in chat, silently defeating the requester-attribution mechanism below.
 
 ## Environment / tag model
 
-Same tagged model as every `qkeee-erp-*` skill — see `qkeee-erp-core`'s
-reference for the full table. At install, only
-`QKEEE_ERP_DEFAULT_BASE_URL`/`_API_KEY`/`_API_SECRET` are prompted for
-(tag `DEFAULT`); adding a second/third environment is a runtime action.
+Config is tagged, not a fixed dev/test/qa/prod enum. At install time the
+frontmatter declares exactly one literal tag, `DEFAULT`
+(`QKEEE_ERP_DEFAULT_BASE_URL`/`_API_KEY`/`_API_SECRET`) — `required_environment_variables`
+can only declare static names, so it can't pre-declare a tag the user
+hasn't chosen yet. A user who wants a different first tag name, or a
+second/third environment later, sets that tag's three vars in their shell
+themselves at runtime (the skill walks them through naming and var-setting,
+it doesn't declare the vars for them):
+
+| Variable | Purpose |
+| --- | --- |
+| `QKEEE_ERP_<TAG>_BASE_URL` | e.g. `https://org.erpnext.com` |
+| `QKEEE_ERP_<TAG>_API_KEY` | API key for that site/user |
+| `QKEEE_ERP_<TAG>_API_SECRET` | API secret for that site/user |
+
+`<TAG>` is uppercased/sanitized from whatever the user names it (`qa`,
+`client-a-prod`, etc). Adding a second/third environment is a runtime
+action — walk the user through naming a new tag and setting its three vars,
+then offer to switch `qkeee_erp.active_env`. Never store these values in
+`metadata.hermes.config` or in agent-curated memory (`MEMORY.md`) — only
+the **tag name** (not URL/credentials) may go there, per the
+active-environment-reminder convention.
+
+Missing-var failures must name the exact variable
+(`QKEEE_ERP_QA_API_KEY`), never a generic "auth failed."
 
 ## Endpoints used
 
 | Purpose | Method | Path |
 | --- | --- | --- |
 | Health check | GET | `/api/method/frappe.auth.get_logged_user` |
-| Query a DocType | GET | `/api/resource/<DocType>?filters=...&fields=...&limit_page_length=...` |
+| Query a DocType (list, no child tables) | GET | `/api/resource/<DocType>?filters=...&fields=...&limit_page_length=...` |
+| Single-resource full-doc fetch (incl. child tables) | GET | `/api/resource/<DocType>/<name>` |
+| Introspect a DocType's field schema (build-time) | GET | `/api/resource/DocType/<DocType Name>` |
 | Create | POST | `/api/resource/<DocType>` |
 | Update | PUT | `/api/resource/<DocType>/<name>` |
 | Submit (step 1) | GET | `/api/resource/<DocType>/<name>` |
 | Submit (step 2) | POST | `/api/method/frappe.client.submit` |
 | Cancel | POST | `/api/method/frappe.client.cancel` |
 | Delete | DELETE | `/api/resource/<DocType>/<name>` |
-| Best-effort audit comment | POST | `/api/method/frappe.desk.form.utils.add_comment` — body `{"reference_doctype": "...", "reference_name": "...", "content": "..."}` |
-| Post due depreciation for one schedule | POST | `/api/method/erpnext.assets.doctype.asset.depreciation.make_depreciation_entry` — body `{"asset_depr_schedule_name": "..."}` |
-| Scrap an asset | POST | `/api/method/erpnext.assets.doctype.asset.depreciation.scrap_asset` — body `{"asset_name": "..."}` |
-| Restore a scrapped asset | POST | `/api/method/erpnext.assets.doctype.asset.depreciation.restore_asset` — body `{"asset_name": "..."}` |
-| Draft a Sales Invoice for disposal-by-sale | POST | `/api/method/erpnext.assets.doctype.asset.asset.make_sales_invoice` — body `{"asset": "...", "item_code": "...", "company": "..."}` |
+| Run a built-in report | GET | `/api/method/frappe.desk.query_report.run?report_name=...&filters=...` |
+| Fetch a user's roles | GET | `/api/resource/User/<name>` |
 
-The four whitelisted-method rows are NOT part of `mutate_resource()`'s
-generic `create`/`update`/`submit`/`cancel`/`delete` action set. They go
-through `erp_client.call_whitelisted_method(tag, method, body, mode,
-confirmation_token=None, token_facts=None, requested_by=None)` — the
-single call path for all four, which enforces `mode == "read-write"` AND
-`requested_by` in code (identical gates to `mutate_resource()`, no
-longer a call-site-only convention; missing `requested_by` raises
-`MissingRequesterError`). For the three double-confirm methods
-(`make_depreciation_entry`, `scrap_asset`, `make_sales_invoice`), it
-additionally requires `confirmation_token` to match the token computed
-from `token_facts` (see `scripts/confirm_token.py`) — the same token the
-corresponding render script (`render_depreciation_run.py`/
-`render_disposal.py`) printed. `body` is sent to ERPNext verbatim as
-that method's real arguments; `token_facts` is verification-only and
-never enters the API payload. `restore_asset` is mode-gated but not
-token-gated (recovery, not a write-off). On success, posts the same
-best-effort audit Comment shape as `mutate_resource()` onto
-`body["asset_name"]` (the field every one of these four RPCs takes) —
-`[qkeee-erp-fixed-asset-manager] <method> — requested by <requested_by>,
-applied via qkeee-erp bot.`
+**Submit is two calls, not one.** `frappe.client.submit` builds its doc via
+`frappe.get_doc(<payload>)`, not a DB load — a `{doctype, name}`-only
+payload has no other field values, so ERPNext's mandatory-field validation
+on `doc.submit()` fails. `mutate_resource(..., "submit", ...)` therefore
+GETs the full record first, then POSTs that full doc to
+`frappe.client.submit`. `cancel` doesn't have this problem —
+`frappe.client.cancel(doctype, name)` looks the record up server-side.
+**This means submit necessarily reposts every stored field verbatim,
+including any PII already on the record** (flagged during
+`qkeee-erp-hr-associate`'s adversarial review) — expected,
+since submit locks in the record as-is rather than granting new write
+access; a calling skill's PII-scope discipline governs what it writes
+new values to via create/update, not what submit echoes back.
 
-**Health check confirms connectivity + auth only**, not query/write-time
-permission on a specific DocType — report a later 403/PermissionError as
-its own distinct failure mode.
+**Response shape is inconsistent across actions — confirmed live
+during `qkeee-erp-accounts-executive`'s Journal Entry
+create → submit → cancel round trip.** `create`/`update`/the GET before
+submit all return `{"data": {...doc...}}`. `frappe.client.submit` and
+`frappe.client.cancel` (both whitelisted RPC-style methods, not REST
+resource calls) return `{"message": {...doc...}}` instead — a caller
+that reads `result["data"]` unconditionally after any mutate action will
+`KeyError` specifically on submit/cancel responses. `mutate_resource()`
+itself doesn't normalize this (it returns whatever `_request()` got back
+verbatim); any code built on top of it must branch on the action to know
+which key holds the doc, or check for either key defensively.
 
-**Submit is two calls, not one** — see `mutate_resource()`'s docstring
-and `qkeee-erp-core`'s canonical reference for why. This also means
-submit reposts every stored field verbatim, including any sensitive
-fields already on the record — expected, not a scope leak; see
-`qkeee-erp-core`'s reference for the full note (flagged during
-`qkeee-erp-hr-associate`'s adversarial review).
-
-**Response shape differs by action.** `create`/`update`/the GET before
-submit return `{"data": {...doc...}}`. `submit`/`cancel` and the four
-whitelisted methods above (all RPC-style, not REST resource calls)
-return `{"message": {...}}` — confirmed live for submit/cancel/scrap
-(scrap's response was actually just a `_server_messages` confirmation
-string, no structured `message` payload; re-query the Asset afterward
-to get its updated `status`/`journal_entry_for_scrap` rather than
-parsing the scrap response itself).
+`filters` is a JSON-encoded list of `[fieldname, operator, value]` triples;
+`fields` is a JSON-encoded list of fieldnames. See
+`docs.frappe.io/framework` for full REST query syntax and
+`docs.frappe.io/erpnext` per-module pages for DocType field names — this
+reference does not duplicate ERPNext's own field-level docs; consult them
+at persona-skill build time for exact doctype/field lists.
 
 ## Live validation record
 
@@ -105,63 +125,66 @@ Key numbers: Asset `ACC-ASS-2026-00001` (scrap path),
 
 ## Discovering a DocType's real field list (build-time technique)
 
-`GET /api/resource/DocType/<DocType Name>` returns that DocType's live
-field definitions (fieldname, fieldtype, `reqd`, `options`) — used
-throughout this build for Asset, Asset Category, Asset Category
-Account, Asset Finance Book, Asset Depreciation Schedule, Depreciation
-Schedule, Asset Movement, Asset Movement Item, Asset Repair, Asset
-Maintenance, Asset Maintenance Task, Asset Maintenance Log. Prefer this
-over `docs.frappe.io` for confirming an org's actual field list/
-mandatory flags — this build found the same lesson every prior
-`qkeee-erp-*` build has found: the declared `reqd` flag isn't always
-the whole story (here: `asset_category` isn't schema-mandatory but is
-practically required for depreciation to have anywhere to post).
-
-**Discovering a whitelisted RPC method's exact signature (build-time
-technique):** calling a whitelisted method with an
-empty `{}` payload returns a Python `TypeError` naming the missing
-required positional argument(s) — used to confirm
-`scrap_asset(asset_name)`, `restore_asset(asset_name)`,
-`make_depreciation_entry(asset_depr_schedule_name, date=None)`, and
-`make_sales_invoice(asset, item_code, company)`'s exact argument names
-without needing source access. A `ValidationError: Failed to get method
-for command ...` response (rather than a `TypeError`) means the method
-path itself is wrong for this version — don't confuse the two failure
-modes when probing for a method's real location.
+`GET /api/resource/DocType/<DocType Name>` (e.g.
+`/api/resource/DocType/Supplier`) returns that DocType's own definition,
+including its `fields` array — fieldname, fieldtype, `reqd` (mandatory
+flag), and `options` (link target / select choices) for every field on
+the live instance. This is the authoritative way to confirm field
+lists/mandatory flags for any persona skill's `domain-knowledge.md` or
+this skill's own field-mapping references, instead of relying on
+`docs.frappe.io` (which documents the general shape but not a specific
+org's customizations) — requires System Manager–level read access to the
+DocType doctype. Child-table doctypes (e.g. `Purchase Invoice Item`) are
+queried the same way.
 
 ## The read-only/read-write gate
 
-`mutate_resource()` takes `mode` as an explicit parameter (sourced from
-`metadata.hermes.config` → `qkeee_erp.mode`) and refuses any
-create/update/submit/cancel/delete unless `mode == "read-write"`. This
-is the library-wide gate — identical to every other `qkeee-erp-*`
-skill's copy. The four whitelisted-method calls above are NOT routed
-through `mutate_resource()` (they don't fit its action set) — they go
-through `call_whitelisted_method()` instead, which enforces the
-identical `mode == "read-write"` check in code. Never call `_request()`
-directly for these four methods; `_request()` itself has no mode
-awareness and bypassing `call_whitelisted_method()` would silently
-reintroduce the gap this function exists to close.
+`mutate_resource()` in `erp_client.py` takes `mode` as an explicit
+parameter (sourced from `metadata.hermes.config` → `qkeee_erp.mode`) and
+refuses any create/update/submit/cancel/delete unless `mode ==
+"read-write"`. This check happens in code, immediately before the HTTP
+call — never rely on the calling skill's prompt alone to withhold the
+write.
 
-This skill's capability-specific, code-enforced gates are the
-double-confirm renderers (`render_depreciation_run.py`,
-`render_disposal.py`) and the completeness/integrity renderers
-(`render_asset_draft.py`, `render_movement_draft.py`) — none of these
-are the same thing as the mode gate above; all four sit closer to where
-each draft/confirmation is built.
+Persona skills that hardcode a stricter posture (e.g.
+`qkeee-erp-mis-analyst`, always read-only regardless of the config value)
+should simply never call `mutate_resource()` — their copy of this script
+can omit the write path entirely if desired.
 
 ## Requester attribution and the audit-comment trail
 
+Because every write authenticates as the shared bot identity above,
 `mutate_resource()` also requires `requested_by` — the ERPNext user
 id/email of the human who asked for the change, sourced from
-`qkeee_erp.requested_by` — and refuses any write missing it
-(`MissingRequesterError`), same enforcement style as the mode gate.
-On a successful create/update/submit/cancel/delete it posts a
-best-effort Comment onto the affected record via
-`frappe.desk.form.utils.add_comment`: `[<SKILL_LABEL>] <action> —
-requested by <requested_by>, applied via qkeee-erp bot.` A comment
-failure never blocks or rolls back the write it documents. See
-`qkeee-erp-core`'s reference for the full mechanism (`record_comment()`).
+`metadata.hermes.config` → `qkeee_erp.requested_by`. Missing it raises
+`MissingRequesterError`, same enforcement style as the read-only gate
+(checked in code, immediately before the HTTP call).
+
+On a successful create/update/submit/cancel/delete, `mutate_resource()`
+calls `record_comment(cfg, doctype, name, content)`, which POSTs to
+`frappe.desk.form.utils.add_comment`:
+
+```
+{"reference_doctype": "<DocType>", "reference_name": "<name>", "content": "..."}
+```
+
+Comment content follows the fixed shape `[<SKILL_LABEL>] <action> —
+requested by <requested_by>, applied via qkeee-erp bot.` `SKILL_LABEL` is a
+module-level constant in `erp_client.py` — set to `"qkeee-erp-core"` here,
+and to the persona skill's own name in every synced copy, so the comment
+identifies which skill acted. `record_comment()` is best-effort: a comment
+failure (e.g. a role lacking comment permission) is swallowed and never
+blocks or rolls back the write it documents — returns `True`/`False`
+rather than raising. `delete` posts the comment *before* issuing the
+`DELETE` call, since there's no record left to attach a Comment to
+afterward.
+
+This generalizes the narrower pattern `qkeee-erp-system-admin` originally
+used only for destructive-action reasons (`_record_reason_comment`,
+scoped to delete/disable with a free-text reason) — that mechanism now
+folds into this generic one; system-admin's reason text, where supplied,
+gets appended to the standard requester-attribution comment rather than
+posted separately.
 
 ## Known gaps
 
@@ -186,18 +209,23 @@ failure never blocks or rolls back the write it documents. See
 
 ## Query pagination
 
-`query_resource()` requests `limit + 1` rows and trims to `limit`,
-returning `{"data": [...], "has_more": bool, "limit": N}`. Always check
-`has_more` — an asset audit/verification pull across a large category
-or location scope silently dropping rows past the default limit is a
-bug in the calling report logic, not something the connector prevents
-by itself.
+`query_resource()` requests `limit + 1` rows and trims back to `limit`,
+returning `{"data": [...], "has_more": bool, "limit": N}`. A caller that
+ignores `has_more` and treats a truncated result as complete (e.g. an
+aging report that silently drops rows past 20) is a bug in the calling
+skill, not something the connector can prevent by itself — surface
+`has_more` to the user or re-query with a higher `--limit`/tighter filters.
 
 ## Harness capability discovery
 
 Before assuming this bundled `urllib`-based script is the only option,
-check whether the host harness already exposes an HTTP-capable tool and
-prefer that. Degrade gracefully to this script if discovery isn't
+persona skills should check whether the host harness already exposes an
+HTTP-capable tool and prefer that. `discover_harness_http_tool()` is a
+stub for this — it always reports nothing pre-discovered from inside a
+plain Python script, since a script can't introspect the harness's own
+tool registry. The actual discovery attempt (if the harness exposes a
+skills/tools listing) happens at the SKILL.md/agent-instruction level, not
+inside this file. Degrade gracefully to this script if discovery isn't
 supported — never hard-fail because discovery itself isn't possible.
 
 ## CLI usage
@@ -252,3 +280,308 @@ Full mechanism, decision log, and doctype schema:
 `qkeee-erp-core/references/connector-reference.md`'s own "Audit-trail
 retrofit" section and `qkeee-erp-bot-init/references/bot-doctypes-
 design.md`.
+
+## What this layer does, and doesn't, know
+
+- **Does know:** auth, environment/tag resolution, generic REST primitives,
+  the read-only/read-write gate.
+- **Doesn't know:** any domain judgment (what counts as a valid GST return,
+  what a 3-way match should check, whether an offer letter needs a second
+  approval). That belongs in each persona skill's `domain-knowledge.md`.
+
+If `qkeee-erp` ever needs to target a different ERP backend, this file and
+`erp_client.py` are what change — domain-knowledge.md and persona
+instructions do not.
+
+## Verified against a live instance
+
+Checked against `<erp-instance>`: **ERPNext v15.112.0 / Frappe
+v15.112.0**, apps installed: `frappe`, `erpnext`, `hrms` (Frappe HR
+15.61.0), `crm` (1.57.9). **No India Compliance app installed** — build
+time for `qkeee-erp-accounts-executive` should confirm whether the target
+org's instance has it before assuming GSTIN/e-invoicing/e-way-bill
+capabilities have dedicated fields to work against; on an instance without
+it, `tax_id` is a generic Data field, not a GST-specific one.
+
+**Full end-to-end round-trip validated** using a temporary
+API key/secret (generated for the test, revoked immediately after):
+`erp_client.py list-envs` / `health` / `query` (incl. `filters` and
+`has_more` pagination) / `mutate create` / `mutate submit` / `mutate
+cancel` all confirmed working against live data — including the
+fetch-then-submit two-step fix (created a balanced Journal Entry,
+submitted it via the two-call path, confirmed `docstatus: 1`, then
+cancelled it, confirmed `docstatus: 2`). The read-only gate was also
+confirmed to refuse a `create` call with a specific error when `--mode
+read-only`.
+
+**Found and fixed during this validation: Python's default urllib User-
+Agent (`Python-urllib/3.11`) got blocked with a 403 by this instance's
+WAF/bot-protection (Cloudflare) — a `curl` request with the same token
+auth succeeded immediately.** The 403 body looked identical in shape to
+an ERPNext auth failure, which would have been actively misleading.
+`_request()` now sends an explicit `User-Agent: qkeee-erp-core/1.0` on
+every call. Any org fronting their ERPNext instance with a WAF/CDN is a
+plausible deployment, not a demo-only quirk — keep this header set in
+every persona skill's connector copy.
+
+**`delete` after `cancel` isn't reliably usable for ledger-touching
+doctypes** (Journal Entry, Payment Entry, and similar): even after
+`cancel` succeeds (`docstatus: 2`), ERPNext often still has a linked GL
+Entry (or similar) referencing the document, and `DELETE
+/api/resource/<DocType>/<name>` fails with `LinkExistsError`. Confirmed
+live: a cancelled test Journal Entry could not be deleted through the
+REST API for this reason and was left in place, cancelled, clearly
+labeled via `user_remark`. This isn't a bug in this connector — it's
+ERPNext protecting referential integrity — but every persona skill whose
+domain-knowledge describes an "undo" flow for a ledger-touching doctype
+should describe **cancel**, not delete, as the practical undo, and should
+expect `delete` to fail on anything that's ever been submitted.
+
+Session-based login (`POST /api/method/login` with `usr`/`pwd`) and `GET
+/api/method/frappe.auth.get_logged_user` (the health-check endpoint) were
+also exercised directly with `curl` during this validation, ahead of the
+scripted round-trip above. Session login and token auth hit
+the same underlying auth middleware, so this doesn't change the endpoint
+table, but worth a real token-based round-trip test before treating this
+skill as fully field-validated end-to-end.
+
+## List endpoint vs. single-resource GET — child tables and token cost
+
+Confirmed live against `<erp-instance>` while investigating input-token cost
+across the `qkeee-erp-*` skills:
+
+- **The list endpoint (`query_resource()`) silently drops child-table
+  (Table-field) data even when named in `fields`** — requesting
+  `["name","items"]` on Sales Order returns `name` only, no error, no
+  `items` key at all. Child-table rows are only ever returned by the
+  single-resource GET.
+- **The single-resource GET ignores `fields` entirely** — it always
+  returns the full doc regardless of query params. A Sales Order full doc
+  measured 8,378 bytes (compact JSON) — 94 top-level keys, 265 leaf
+  fields, including presentation-only HTML fields
+  (`other_charges_calculation`, `terms`) nobody's review logic reads.
+- The list endpoint **with** `fields` is roughly **25x cheaper** than a
+  full single-GET for data that doesn't need child tables (336 bytes vs
+  8,378 bytes measured on an identical Sales Order status read).
+
+`get_resource()` was added to `erp_client.py` (CLI: `erp_client.py get
+<DocType> <name>`) for the cases that genuinely need child-table data
+(Link-field validity review before a submit). It noise-strips
+audit/system metadata and presentation-only HTML fields by default
+(`_NOISE_FIELDS` in `erp_client.py`) — measured **~38% byte reduction**
+on the same Sales Order doc, with zero Link fields or child-table rows
+dropped. `--no-strip` returns the doc verbatim if a caller ever needs
+every raw field.
+
+**Rule of thumb for every persona skill's instructions:** if a read
+doesn't need child-table rows (status checks, report reads, dashboard
+figures), use `query_resource()`/`--filters --fields`. If it does
+(reviewing line items, checking a child row's Link field before submit),
+use `get_resource()`/`get`, not `query --filters` — `query` won't return
+the data being checked, it'll silently omit it rather than error.
+
+## Built-in reports vs. hand-aggregated queries
+
+`run_query_report()` (CLI: `erp_client.py report "<report_name>" --filters
+'{...}'`) runs one of ERPNext's own server-side Query/Script Reports via
+`frappe.desk.query_report.run`, instead of a persona skill hand-aggregating
+raw transactional rows into the same shape. Prefer it whenever a built-in
+report covers the need — report logic already implements Finance Book
+gates, Accounting Dimension filters, and currency conversion; reimplementing
+one of those from a raw `query_resource()` call risks silently missing a
+detail and producing a plausible-looking but wrong figure. **Confirmed
+live** ("Sales Order Analysis" against a real ERPNext v15 instance, real
+per-line delay/pending-amount data returned) using GET with `filters` as a
+JSON-encoded query string param — not POST with a JSON body, which is
+untested against a live instance and should not be assumed to work
+identically. `filters` field names are report-specific and undocumented by
+this generic endpoint; confirm them by opening the report in the ERPNext UI
+once. Falls back to `query_resource()` + hand aggregation only for a
+genuinely custom cut no built-in report covers.
+
+## Authority checks without a configured Workflow
+
+`get_user_roles()` (CLI: `erp_client.py roles [--user <id>]`) fetches a
+user's assigned roles from `User.roles` — the standard heuristic for "does
+this user plausibly hold authority for this write" when the target
+doctype has no ERPNext Workflow doctype configured (common on a default-
+configured instance; confirmed live for Purchase Order on at least one
+reference instance — no Workflow existed, role membership was the only
+signal available via REST). An **empty roles list is ambiguous** — it
+could mean the user genuinely holds no relevant role, or that the lookup
+silently came back thin (wrong username resolved, or this API key lacks
+permission to read `User.roles`). `get_user_roles()` returns a non-empty
+`warning` string in that case rather than letting a caller conflate
+"checked, no authority" with "didn't resolve" — treat both as "authority
+not confirmed" and corroborate with the user, never assume the former. An
+org with a real approval Workflow configured should be asked about it
+directly instead of relying on this heuristic.
+
+## Confirmation tokens for double-confirm writes
+
+`confirm_token.py` (new in core, not present before this sync) provides
+two shared primitives — `compute_token(**fields)` (deterministic hash over
+arbitrary facts) and `is_fresh(issued_at, max_age_seconds, now)` (rejects
+stale or implausibly-future tokens, default 15-minute TTL) — used to tie a
+render/stage step to its later execute step for any write a persona skill
+gates behind a DOUBLE confirm (depreciation runs, disposals, destructive
+sysadmin actions, bot-user provisioning). Capability-specific token
+constructors stay in the owning persona skill's own `confirm_token.py`,
+built on these two primitives — see the module's docstring for the
+expected shape. **Every token constructor must include an `issued_at`
+field and its execute step must call `is_fresh()` before honoring the
+token** — a token with no freshness check never expires, which defeats the
+anti-replay property the whole mechanism exists for. (Found during this
+sync: one persona skill's confirmation tokens omitted this check entirely
+— fixed as part of the same retrofit that added this file to core.)
+
+## Runtime metadata discovery
+
+`discover.py` (new in core, promoted from a persona skill during this
+sync) resolves what's actually installed/configured on a target instance
+— `list_installed_apps()`, `list_modules()`, `doctype_meta()`,
+`resolve_doctype()` — instead of trusting `docs.frappe.io` or a GitHub
+README, which describe the general shape of an app but not a specific
+org's customizations (custom fields, altered mandatory flags, locally
+added doctypes). `list_installed_apps()`'s underlying RPC
+(`frappe.utils.change_log.get_versions`) is opportunistic, not guaranteed
+— confirmed live to 403 with `PermissionError: ... is not whitelisted` on
+at least one real instance; `list_modules()` (a plain REST read against
+`Module Def`) is the confirmed-working primary app-discovery path, not a
+fallback. `resolve_doctype()` distinguishes "no module recorded" (`app:
+null, app_lookup_error: null`) from "the module lookup itself failed"
+(`app: null, app_lookup_error: "<message>"`) — collapsing both to a bare
+`app: null` risks a false "this is custom, no owning app" claim when a
+lookup had actually just errored. Every persona skill should attempt this
+discovery before proposing a field/doctype it hasn't confirmed live on the
+target instance.
+
+## Pitfalls found live, worth knowing before you hit them
+
+(Connector-layer only — REST mechanics/quirks that apply regardless of
+doctype. Doctype-specific business-logic pitfalls, e.g. Stock
+Reconciliation's batch-tracking behavior, belong in the owning persona
+skill's own `domain-knowledge.md`/connector-reference, not here — see
+"What this layer does, and doesn't, know" above.)
+
+- **`RQ Job` doctype is not usable via REST** — confirmed live 500
+  `TypeError`, unrelated to permissions/auth. Use
+  `frappe.utils.scheduler.get_scheduler_status` + `Scheduled Job Type` +
+  `Error Log` for system-health signals instead; report the RQ Job gap
+  explicitly in a health report rather than silently omitting queue depth.
+- **A freshly created Custom Field does not appear in a subsequent `GET
+  /api/resource/DocType/<dt>` meta fetch** — the meta cache isn't
+  invalidated by a REST create, and `frappe.clear_cache` isn't whitelisted
+  (403 even as Administrator). Verify a new Custom Field via a direct
+  `Custom Field` resource query by name, never by re-fetching DocType meta.
+
+## Save-draft-then-review-then-submit discipline
+
+`mutate_resource()`'s `create`/`update`/`submit` actions are
+independent, separately-callable actions — `create`/
+`update` never implicitly submits a record (ERPNext itself leaves a newly
+created or updated record at `docstatus 0` unless `submit` is called
+separately). This is a **skill-instruction discipline**, not a connector
+concern: every persona skill's Execute-stage instructions for a
+create/update capability must sequence as:
+
+1. **Save as draft** — `mutate_resource(..., "create"/"update", ...)`.
+2. **Review the saved draft** — `get_resource()`/`erp_client.py get` by
+   the returned `name` (re-fetch, don't reuse the outgoing payload) and
+   check every field as actually persisted, specifically that every
+   Link-type field (Supplier, Item, Employee, Account, Cost Center, etc.),
+   including ones nested in a child table, resolves to a real, existing
+   record. Use `get`, not `query --filters` — the list endpoint silently
+   drops child-table data (see above), so it can't be used to validate
+   Link fields inside line items. Fix via a further `update` and
+   re-review if anything is wrong — never submit an unreviewed or
+   known-bad draft.
+3. **Submit** — `mutate_resource(..., "submit", ...)` as its own distinct
+   call, only once review confirms the draft is correct.
+
+Nothing in `erp_client.py` needed to change for this — the file already
+supports steps 1 and 3 as separate calls. Step 2 is not a connector
+function at all; it's the calling skill using the existing `query_resource`
+(or a plain `GET`) against the record `create`/`update` just returned.
+
+## CLI usage (for manual/ad hoc use, or reference by persona skills)
+
+`--tag` is required for `health`/`query`/`get`/`mutate`; `--mode` and
+`--requested-by` are required for `mutate` only. None fall back to an
+ambient shell variable — all must be passed explicitly by the caller
+(sourced from `qkeee_erp.active_env` / `qkeee_erp.mode` /
+`qkeee_erp.requested_by`), so a stray env var left in someone's shell
+profile can never silently pick the mode or spoof a requester.
+
+```
+python erp_client.py list-envs
+python erp_client.py --tag qa health
+python erp_client.py --tag qa query "Purchase Order" --filters '[["status","=","To Bill"]]' --fields '["name","status","supplier"]'
+python erp_client.py --tag qa --mode read-write --requested-by priya@org.com mutate "Journal Entry" submit --name "JE-0001"
+python erp_client.py --tag qa --mode read-write --requested-by priya@org.com mutate "Journal Entry" create --payload '{"...": "..."}'
+```
+
+## Audit-trail retrofit
+
+`mutate_resource()` now wraps every write with a two-phase log to the
+`Qkeee Bot Audit Log` doctype (schema owned by the sibling skill
+`qkeee-erp-bot-init`, see its `references/bot-doctypes-design.md` for the
+full field list, permission matrix, and decision log — this section only
+covers what changed in this connector):
+
+1. **Before** the real HTTP call: `record_audit_log_start()` inserts a row
+   with `status: "Attempted"`, `payload_before` (for `update`, fetched via
+   an extra `GET` — `create` has nothing to diff against, so no pre-image
+   fetch happens for it), and `user_approved` set from the caller's
+   `user_approved` kwarg (`"Approved"` or `"Not Confirmed"` — never
+   inferred, always explicit).
+2. **After**: `record_audit_log_finish()` updates the same row to
+   `"Success"` (with `payload_after` and a computed `field_diff` for
+   `update`) or `"Failure"` (with `error_detail`), then best-effort
+   `submit`s it to lock the row.
+
+Both steps are **best-effort** — implemented as raw `_audit_insert()`/
+`_audit_update()`/`_audit_submit()` helpers that swallow `ConnectorError`
+and return `None`/`False` rather than raising. If `qkeee-erp-bot-init`
+hasn't been run against the target instance yet, every mutate call still
+works exactly as before this retrofit; it's simply unaudited until init
+runs. This mirrors `record_comment()`'s existing best-effort posture,
+applied to a bigger piece of infrastructure for the same reason: a user's
+actual requested write should never fail because internal bookkeeping
+infra isn't provisioned yet.
+
+**`AUDIT_EXEMPT_DOCTYPES`** (`Qkeee Bot Session`/`Message`/`Audit Log`/
+`Persona`, plus `Comment`) is checked before any audit-wrap step —
+without it, logging a write to Audit Log would recursively log itself
+forever, and every audited write would silently double-log itself via the
+`Comment` write `record_comment()` already makes.
+
+**Read logging is opt-in, not automatic.** `query_resource()`/
+`get_resource()` take a `debug` kwarg (CLI `--debug`); only when true is a
+single-shot (no two-phase — nothing to recover from mid-read) `"Success"`
+row logged with `action: "Read"`. Left off by default because a
+read-heavy caller (query-report-driven skills especially) could otherwise
+generate far more Read rows than any write path, making Audit Log itself
+the volume/bloat problem the debug gate exists to prevent.
+
+**Session/Message are fully opt-in, per caller, via `open_session()`/
+`log_message()`/`close_session()`.** None of these are called from inside
+`mutate_resource()`/`query_resource()` automatically — a persona skill
+adopting full conversation logging must call them explicitly (typically
+gated on `qkeee_erp.debug` at the SKILL.md level) and thread the returned
+`session_id` through subsequent `mutate`/`query`/`get` calls. `open_session()`
+returns a locally-generated fallback id (`local-<timestamp>`) if the insert
+itself failed, so callers always have a usable `session_id` string to pass
+along even when Session logging isn't actually landing anywhere —
+`Qkeee Bot Audit Log.session` is a plain Data field precisely so it can
+carry either a real Session row's `name` or this fallback string
+interchangeably (see bot-doctypes-design.md decision 10).
+
+**Not yet done — a known gap, not an oversight:** none of the 7
+write-capable persona skills' own `erp_client.py` copies have been synced
+with this retrofit yet. Each one still runs the connector version
+predating the audit-trail retrofit (read-only-gate + requester-attribution
++ save-draft-review-submit, but no audit logging). Syncing this file into
+each persona skill's `scripts/`
+directory is the next mechanical step before any persona skill's writes
+actually reach `Qkeee Bot Audit Log`.

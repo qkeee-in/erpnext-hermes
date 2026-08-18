@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-qkeee-erp-catch-all discovery helper — resolves what's actually installed on a
+qkeee-erp-system-admin discovery helper — resolves what's actually installed on a
 target ERPNext instance (apps + versions, DocType-to-module-to-app
 mapping, live field schema) so a persona skill can reason from real
 metadata instead of guessing or trusting static docs.
@@ -176,7 +176,7 @@ def _cli():
                    help="from qkeee_erp.debug — logs this metadata read to Qkeee Bot Audit Log")
     p.add_argument("--requested-by", help="threaded into the debug-mode audit row, if --debug is set")
     p.add_argument("--session-id", help="from the caller's open_session() — threaded into audit rows")
-    p.add_argument("--persona-code", default="qkeee-erp-catch-all",
+    p.add_argument("--persona-code", default="qkeee-erp-system-admin",
                    help="threaded into audit rows (persona-skill copies should default this to their own name)")
     sub = p.add_subparsers(dest="command", required=True)
 

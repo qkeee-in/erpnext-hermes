@@ -30,6 +30,7 @@ This script NEVER calls ERPNext. It only formats the confirmation.
 
 import json
 import sys
+import time
 
 from confirm_token import disposal_token
 
@@ -88,7 +89,8 @@ def render_disposal(asset: str, asset_name: str, method: str, disposal_date: str
             raise RenderError("sale_proceeds is required and must be numeric when method == 'sale'.")
 
     token_amount = sale_proceeds if method == "sale" else current_book_value
-    token = disposal_token(asset, method, disposal_date, token_amount)
+    issued_at = int(time.time())
+    token = disposal_token(asset, method, disposal_date, token_amount, issued_at)
 
     lines = [
         f"# Asset disposal confirmation — `{asset}` ({asset_name})",
@@ -132,10 +134,11 @@ def render_disposal(asset: str, asset_name: str, method: str, disposal_date: str
         "exists (same `LinkExistsError` mechanism as any other submitted, ledger-touching "
         "ERPNext document).",
         "",
-        f"**Confirmation token:** `{token}` — pass this exact token to "
-        "`erp_client.call_whitelisted_method()` when calling `scrap_asset` / "
-        "`make_sales_invoice`. The call is refused without it, and it only matches if "
-        "it was computed from these same facts.",
+        f"**Confirmation token:** `{token}` (issued_at: `{issued_at}`) — pass BOTH exact "
+        "values to `erp_client.call_whitelisted_method()` (the token as `confirmation_token`, "
+        "issued_at inside `token_facts`) when calling `scrap_asset` / `make_sales_invoice`. "
+        "The call is refused without a matching token, and refused again if more than 15 "
+        "minutes have passed since issued_at — re-render if that happens.",
     ]
 
     if notes:

@@ -35,6 +35,7 @@ asking again after showing it (double confirm), not treating one
 
 import json
 import sys
+import time
 
 from confirm_token import depreciation_run_token
 
@@ -104,7 +105,8 @@ def render_depreciation_run(asset: str, asset_depr_schedule: str, as_of_date: st
     total_depreciation = sum(r["depreciation_amount"] for r in pending_rows)
     resulting_book_value = round(opening_book_value - total_depreciation, 2)
     resulting_accumulated = pending_rows[-1]["accumulated_depreciation_amount"]
-    token = depreciation_run_token(asset, asset_depr_schedule, as_of_date, total_depreciation)
+    issued_at = int(time.time())
+    token = depreciation_run_token(asset, asset_depr_schedule, as_of_date, total_depreciation, issued_at)
 
     lines = [
         f"# Depreciation run confirmation — Asset `{asset}`",
@@ -143,10 +145,11 @@ def render_depreciation_run(asset: str, asset_depr_schedule: str, as_of_date: st
         "`finance_books[].value_after_depreciation` instead when reporting the result "
         "back to the user.",
         "",
-        f"**Confirmation token:** `{token}` — pass this exact token to "
-        "`erp_client.call_whitelisted_method()` when calling `make_depreciation_entry`. "
-        "The call is refused without it, and it only matches if it was computed from "
-        "these same facts.",
+        f"**Confirmation token:** `{token}` (issued_at: `{issued_at}`) — pass BOTH exact "
+        "values to `erp_client.call_whitelisted_method()` (the token as `confirmation_token`, "
+        "issued_at inside `token_facts`) when calling `make_depreciation_entry`. The call is "
+        "refused without a matching token, and refused again if more than 15 minutes have "
+        "passed since issued_at — re-render if that happens.",
     ]
 
     if notes:

@@ -62,13 +62,12 @@ def is_fresh(issued_at: int, max_age_seconds: int = DEFAULT_TOKEN_TTL_SECONDS,
              now: int = None) -> bool:
     """True if issued_at is within [now - max_age_seconds, now + skew-tolerance].
 
-    Rejects both stale tokens (replay of an old draft) and implausibly-
-    future ones (clock manipulation / fabricated issued_at).
+    Rejects both stale tokens (replay of an old render/confirm) and
+    implausibly-future ones (clock manipulation / fabricated issued_at).
     """
     now = int(now) if now is not None else int(time.time())
     age = now - int(issued_at)
     return -CLOCK_SKEW_TOLERANCE_SECONDS <= age <= max_age_seconds
-
 
 def advisory_write_token(action: str, doctype: str, name: str, payload: dict,
                           requested_by: str, issued_at: int = None) -> str:
