@@ -181,5 +181,73 @@ class GetUserRolesTests(unittest.TestCase):
         self.assertTrue(result["warning"])
         self.assertIn("not confirmed", result["warning"])
 
+class QkeeeEnvFileTests(unittest.TestCase):
+    """qkeee-erp.env is the isolated, execute_code-sandbox-safe credential
+    source (see get_env_config()'s _qkeee_env() call) — these exercise the
+    file parser and its precedence over os.environ directly, without
+    touching the real filesystem location HERMES_HOME would resolve to.
+    Fully-qualified `erp_client.*`/`unittest.mock.*` and a locally-imported
+    `os` throughout, deliberately not relying on any particular alias this
+    file's own top-of-file imports happen to use, so this class stays
+    portable when appended into a persona skill's own test_erp_client.py."""
+
+    def setUp(self):
+        import os
+        erp_client._QKEEE_ENV_FILE_CACHE = None
+        self.addCleanup(setattr, erp_client, "_QKEEE_ENV_FILE_CACHE", None)
+
+    def _with_file(self, contents):
+        import os
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix=".env")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(contents)
+        self.addCleanup(os.remove, path)
+        return path
+
+    def test_file_values_take_precedence_over_os_environ(self):
+        import os
+        path = self._with_file(
+            "QKEEE_ERP_QA_BASE_URL=https://from-file.example.com\n"
+        )
+        env = {
+            "QKEEE_ERP_QA_BASE_URL": "https://from-environ.example.com",
+            "QKEEE_ERP_QA_API_KEY": "key",
+            "QKEEE_ERP_QA_API_SECRET": "secret",
+        }
+        with unittest.mock.patch.object(erp_client, "_qkeee_env_file_path", return_value=path), \
+                unittest.mock.patch.dict(os.environ, env, clear=True):
+            cfg = erp_client.get_env_config("qa")
+        self.assertEqual(cfg["base_url"], "https://from-file.example.com")
+
+    def test_missing_file_falls_back_to_os_environ(self):
+        import os
+        env = {
+            "QKEEE_ERP_QA_BASE_URL": "https://example.com",
+            "QKEEE_ERP_QA_API_KEY": "key",
+            "QKEEE_ERP_QA_API_SECRET": "secret",
+        }
+        with unittest.mock.patch.object(erp_client, "_qkeee_env_file_path", return_value="/nonexistent/qkeee-erp.env"), \
+                unittest.mock.patch.dict(os.environ, env, clear=True):
+            cfg = erp_client.get_env_config("qa")
+        self.assertEqual(cfg["base_url"], "https://example.com")
+
+    def test_comments_blank_lines_and_quoted_values(self):
+        import os
+        path = self._with_file(
+            "# a comment\n"
+            "\n"
+            "QKEEE_ERP_QA_BASE_URL=\"https://quoted.example.com\"\n"
+            "QKEEE_ERP_QA_API_KEY=key\n"
+            "QKEEE_ERP_QA_API_SECRET='secret'\n"
+        )
+        with unittest.mock.patch.object(erp_client, "_qkeee_env_file_path", return_value=path), \
+                unittest.mock.patch.dict(os.environ, {}, clear=True):
+            cfg = erp_client.get_env_config("qa")
+        self.assertEqual(cfg["base_url"], "https://quoted.example.com")
+        self.assertEqual(cfg["api_key"], "key")
+        self.assertEqual(cfg["api_secret"], "secret")
+
+
 if __name__ == "__main__":
     unittest.main()

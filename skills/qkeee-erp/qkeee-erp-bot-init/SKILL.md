@@ -71,14 +71,19 @@ capability and offer to run it, rather than waiting to be asked by name.
    token back verbatim.
 5. **If new keys are generated, they print to stdout exactly once.** Tell
    the user to copy `QKEEE_ERP_<TAG>_API_KEY` / `_API_SECRET` into
-   **this agent profile's own `.env` file**
-   (`.hermes/profile/<profile-name>/.env` — substitute the real profile
-   name, never a repo-root or cross-profile `.hermes/.env`) or OS
-   credential manager immediately — this skill never stores them anywhere
-   (not in the Qkeee Bot audit trail, not in a file, not in agent memory).
-   If lost, re-run with `--regenerate-keys` (through the same
-   dry-run/confirm flow) to issue a new pair — this invalidates the old
-   one.
+   **`$HERMES_HOME/qkeee-erp.env`** (the dedicated, isolated file
+   `erp_client.py`'s `_qkeee_env_file_path()` reads — deliberately separate
+   from the profile's main `.env`/`env_passthrough` mechanism; see
+   `qkeee-erp-frappe-core/SKILL.md`'s "Resolve config" section for why) or
+   OS credential manager immediately — this skill never stores them
+   anywhere (not in the Qkeee Bot audit trail, not in a file, not in agent
+   memory). **This copy step happens out-of-band, on the user's own
+   machine — never by you reading the keys back out of stdout and
+   re-emitting them into a command, and never by catting/reading
+   `qkeee-erp.env` afterward to confirm it landed correctly**; if the user
+   wants confirmation, have them check the file themselves. If lost,
+   re-run with `--regenerate-keys` (through the same dry-run/confirm flow)
+   to issue a new pair — this invalidates the old one.
 6. **If the user says they'd rather create/share the bot user themselves**
    (e.g. their org's ERPNext admin access is restricted to specific
    people), don't push — tell them what's needed: a dedicated User with

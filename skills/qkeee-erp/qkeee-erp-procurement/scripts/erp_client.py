@@ -72,6 +72,72 @@ def _tag_env_var(tag: str, suffix: str) -> str:
     return f"QKEEE_ERP_{sanitized}_{suffix}"
 
 
+def _qkeee_env_file_path() -> str:
+    """Path to the isolated ERPNext-credentials file, deliberately separate
+    from Hermes' own profile .env. execute_code/terminal strip ALL env vars
+    from the sandbox by default; a var only survives if a loaded skill's
+    frontmatter `required_environment_variables` names it exactly (Hermes'
+    env_passthrough allowlist) — but a user-chosen --tag can never be
+    declared ahead of time in static frontmatter, so QKEEE_ERP_<TAG>_* for
+    any tag other than the one named at install time gets silently stripped
+    from the sandbox even when it's sitting correctly in the profile's real
+    .env. Reading a dedicated file directly (bypassing os.environ/the
+    passthrough registry entirely) sidesteps that mismatch, and keeps these
+    credentials physically separate from any LLM-provider secret that might
+    live in the main .env. HERMES_HOME is unconditionally forwarded into
+    every sandbox child regardless of skill declarations (Hermes'
+    _HERMES_CHILD_ALLOWED), so it's a reliable anchor even when the
+    tag-specific vars themselves aren't. Falls back to CWD for a bare
+    non-Hermes shell running this script directly."""
+    base = os.environ.get("HERMES_HOME") or os.getcwd()
+    return os.path.join(base, "qkeee-erp.env")
+
+
+def _load_qkeee_env_file() -> dict:
+    """Hand-rolled KEY=VALUE parser for qkeee-erp.env (no python-dotenv —
+    this module is stdlib-only by design, see module docstring). Comments
+    (#) and blank lines skipped; a single layer of surrounding quotes is
+    stripped, matching common .env convention. A missing file is not an
+    error — callers fall back to os.environ for back-compat with a
+    manually-exported shell."""
+    path = _qkeee_env_file_path()
+    result = {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                key = key.strip()
+                value = value.strip()
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                    value = value[1:-1]
+                if key:
+                    result[key] = value
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        print(f"WARN: failed to read {path} (non-fatal, falling back to os.environ): {e}", file=sys.stderr)
+    return result
+
+
+_QKEEE_ENV_FILE_CACHE = None
+
+
+def _qkeee_env() -> dict:
+    """Merged config view: qkeee-erp.env file values take precedence over
+    os.environ (the file is the source of truth once it exists), os.environ
+    remains the fallback for manual/CI runs that still export vars
+    directly. Cached per-process — the file doesn't change mid-invocation."""
+    global _QKEEE_ENV_FILE_CACHE
+    if _QKEEE_ENV_FILE_CACHE is None:
+        _QKEEE_ENV_FILE_CACHE = _load_qkeee_env_file()
+    merged = dict(os.environ)
+    merged.update(_QKEEE_ENV_FILE_CACHE)
+    return merged
+
+
 def get_env_config(tag: str = "default") -> dict:
     """Resolve base_url/api_key/api_secret for a given environment tag.
 
@@ -97,9 +163,10 @@ def get_env_config(tag: str = "default") -> dict:
     callers pass `--debug`/`--requested-by` as a per-invocation override
     on top of this default; they never replace it as the source of truth.
     """
-    base_url = os.environ.get(_tag_env_var(tag, "BASE_URL"))
-    api_key = os.environ.get(_tag_env_var(tag, "API_KEY"))
-    api_secret = os.environ.get(_tag_env_var(tag, "API_SECRET"))
+    env = _qkeee_env()
+    base_url = env.get(_tag_env_var(tag, "BASE_URL"))
+    api_key = env.get(_tag_env_var(tag, "API_KEY"))
+    api_secret = env.get(_tag_env_var(tag, "API_SECRET"))
 
     missing = [
         name
@@ -113,11 +180,12 @@ def get_env_config(tag: str = "default") -> dict:
     if missing:
         raise ConnectorError(
             f"Missing environment variable(s) for tag '{tag}': {', '.join(missing)}. "
-            f"Set them in this agent profile's own .env file, then retry."
+            f"Set them in {_qkeee_env_file_path()} (create it if missing — KEY=VALUE per line), "
+            f"or export them directly, then retry."
         )
 
     base_url = base_url.rstrip("/")
-    if not base_url.startswith("https://") and not os.environ.get(_tag_env_var(tag, "ALLOW_INSECURE")):
+    if not base_url.startswith("https://") and not env.get(_tag_env_var(tag, "ALLOW_INSECURE")):
         raise ConnectorError(
             f"'{_tag_env_var(tag, 'BASE_URL')}' ({base_url}) is not https — refusing to send "
             f"credentials over plaintext transport by default. Set "
@@ -130,8 +198,8 @@ def get_env_config(tag: str = "default") -> dict:
         "base_url": base_url,
         "api_key": api_key,
         "api_secret": api_secret,
-        "debug_default": _parse_bool_env(os.environ.get(_tag_env_var(tag, "DEBUG"))),
-        "requested_by_default": os.environ.get(_tag_env_var(tag, "REQUESTED_BY"), ""),
+        "debug_default": _parse_bool_env(env.get(_tag_env_var(tag, "DEBUG"))),
+        "requested_by_default": env.get(_tag_env_var(tag, "REQUESTED_BY"), ""),
     }
 
 
@@ -799,10 +867,10 @@ def _do_mutate(cfg: dict, doctype: str, action: str, payload: dict, name: str, r
 
 def list_configured_tags() -> list:
     """List environment tags with a full var set (BASE_URL+API_KEY+API_SECRET)
-    already present in os.environ. Enables the 'list environment tags'
-    part of the environment-configuration capability."""
+    already present in qkeee-erp.env or os.environ. Enables the 'list
+    environment tags' part of the environment-configuration capability."""
     tags = {}
-    for var_name in os.environ:
+    for var_name in _qkeee_env():
         if not var_name.startswith("QKEEE_ERP_"):
             continue
         for suffix in ("_BASE_URL", "_API_KEY", "_API_SECRET"):

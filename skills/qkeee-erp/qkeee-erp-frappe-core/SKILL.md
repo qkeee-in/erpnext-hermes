@@ -319,26 +319,49 @@ user's actual request.
     remembered across sessions**, so a reminder like "last used: `qa`" can
     be given at the start of a new session. Credentials and URLs never go
     into agent-curated memory — they live only in environment variables.
-14. **Resolve config from environment variables, not memory.** At install
-    time only `QKEEE_ERP_DEFAULT_BASE_URL` / `_API_KEY` / `_API_SECRET` are
-    prompted for (tag `DEFAULT`). Adding a second/third environment is a
-    runtime action, not a reinstall: walk the user through naming a new tag
-    and setting `QKEEE_ERP_<NEWTAG>_BASE_URL` / `_API_KEY` / `_API_SECRET`
-    in **this agent profile's own `.env` file**
-    (`.hermes/profile/<profile-name>/.env` — substitute the real profile
-    name, never a repo-root or cross-profile `.hermes/.env`), then offer to
-    switch `qkeee_erp.active_env` to it. This skill cannot declare those var
-    names ahead of time since the tag is user-chosen. `<TAG>` is always the
-    sanitized, uppercased form of the active tag. One profile's `.env` can
-    hold multiple tags' vars at once — adding an environment means appending
-    three more lines to that same file, not creating a new file or profile.
-    If any of the three vars for the active tag are missing, tell the user
-    exactly which variable is missing — never a generic "auth failed." Two
-    more vars are OPTIONAL per tag, same `.env` file: `QKEEE_ERP_<TAG>_DEBUG`
-    (defaults false) and `QKEEE_ERP_<TAG>_REQUESTED_BY` (no default — a
-    write on a tag without this set needs `--requested-by` passed explicitly
-    or the user asked). Full rationale: `references/connector-reference.md`'s
-    "Environment / tag model" section.
+14. **Resolve config from `qkeee-erp.env`, never from memory and never by
+    reading the file's contents into your own context.** `erp_client.py`
+    reads `QKEEE_ERP_<TAG>_BASE_URL`/`_API_KEY`/`_API_SECRET` from a
+    dedicated `qkeee-erp.env` file (`$HERMES_HOME/qkeee-erp.env` —
+    `_qkeee_env_file_path()` resolves this itself; you never need to compute
+    the path), falling back to `os.environ` only if that file is absent.
+    This file is deliberately **not** the profile's main `.env` and is
+    **not** wired through `required_environment_variables`/Hermes'
+    `env_passthrough` allowlist: `execute_code`/`terminal` strip *all* env
+    vars from the sandbox by default, and only names a skill statically
+    declares in frontmatter survive — since the tag is user-chosen at
+    runtime, that list can only ever cover the `DEFAULT` tag declared at
+    install time. Any other tag's vars would silently never reach the
+    sandbox even if correctly set in the main `.env` — this is exactly what
+    happened in a live incident (session `20260819_055121_c0056217`): a
+    `DEMO_ERP`-tagged run hit `Missing environment variable(s)`, and the
+    only way it recovered was by reading the `.env` file's raw contents
+    into the model's own context to reconstruct the values — leaking the
+    API key/secret through the LLM prompt. `qkeee-erp.env` fixes this
+    structurally: the script reads it directly, bypassing the sandbox
+    stripping and the passthrough allowlist entirely, so you never need
+    the values yourself.
+    **Adding a second/third environment is a runtime action, not a
+    reinstall — and must never be done by composing a command that embeds
+    the raw secret text, or by reading/catting the file to confirm its
+    contents.** Tell the user to append three lines
+    (`QKEEE_ERP_<NEWTAG>_BASE_URL`/`_API_KEY`/`_API_SECRET`) to
+    `$HERMES_HOME/qkeee-erp.env` themselves — out-of-band, via a file
+    editor/SSH session outside this conversation, the same way
+    `qkeee-erp-bot-init` already tells them to handle newly-generated keys
+    (see that skill's SKILL.md) — then offer to switch
+    `qkeee_erp.active_env` to it. `<TAG>` is always the sanitized,
+    uppercased form of the active tag. One `qkeee-erp.env` holds every
+    tag's vars at once. If any of the three required vars for the active
+    tag are missing, `erp_client.py`'s own error names exactly which one —
+    relay that, never a generic "auth failed." Two more vars are OPTIONAL
+    per tag, same file: `QKEEE_ERP_<TAG>_DEBUG` (defaults false) and
+    `QKEEE_ERP_<TAG>_REQUESTED_BY` (no default — a write on a tag without
+    this set needs `--requested-by` passed explicitly or the user asked).
+    Full rationale: `references/connector-reference.md`'s "Environment /
+    tag model" section. Template: `../qkeee-erp.env.example` (sibling to
+    the persona skill directories) — point the user at it for the exact
+    var names/format, never write the values yourself.
 15. **Any interim/scratch file goes under `terminal.cwd`, never `/tmp`.**
     A JSON payload assembled for `render_report.py`/`render_*_draft.py`, a
     staged attachment, or any other file that isn't the final deliverable
