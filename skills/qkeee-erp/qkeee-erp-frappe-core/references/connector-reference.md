@@ -426,6 +426,23 @@ skill's own `domain-knowledge.md`/connector-reference, not here — see
   invalidated by a REST create, and `frappe.clear_cache` isn't whitelisted
   (403 even as Administrator). Verify a new Custom Field via a direct
   `Custom Field` resource query by name, never by re-fetching DocType meta.
+- **`query --fields` naming a permlevel-restricted field 417s the whole
+  call** — confirmed live (Purchase Invoice, another persona skill):
+  `frappe.exceptions.DataError: Field not permitted in query`. The list
+  REST endpoint rejects the entire request if any one named field is
+  permlevel>0 for the calling role, not just that field — there's no
+  partial result. Start with a minimal `--fields` list and add fields
+  incrementally; if a 417 hits, drop the last field added rather than
+  guessing which one is restricted. `get` (single-resource GET) ignores
+  `--fields` entirely and always returns the full doc, so it's unaffected
+  and is the fallback when a needed field keeps 417ing via `query`.
+- **`--filters`/`--fields` on `query` must be a JSON list, and `--filters`
+  on `report` must be a JSON dict — the wrong shape reaches ERPNext, not
+  just malformed JSON.** A dict passed as `query --filters` was confirmed
+  live to surface as an opaque server-side 500 (`TypeError: unhashable
+  type: 'dict'`) rather than a client-side error. `erp_client.py` now
+  validates the JSON type locally and fails fast with a clear message
+  instead of forwarding the wrong shape to ERPNext.
 
 ## The read-only/read-write gate
 

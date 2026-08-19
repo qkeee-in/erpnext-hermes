@@ -896,6 +896,27 @@ def discover_harness_http_tool() -> dict:
     return {"harness_http_tool_detected": False, "fallback": "urllib (this script)"}
 
 
+def _parse_json_arg(flag: str, raw: str, expected_type: type):
+    """Parse a CLI flag's JSON value, raising a clean ConnectorError (not a
+    raw traceback) on malformed JSON, and a clean error on the right-shaped-
+    but-wrong-type JSON (e.g. a dict where a filters list was expected --
+    confirmed live to otherwise reach ERPNext as an opaque 500 like
+    `TypeError: unhashable type: 'dict'` instead of failing locally with a
+    readable message). `expected_type` is `list` or `dict`."""
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as e:
+        example = '["name","email"]' if expected_type is list else '{"company": "Acme"}'
+        raise ConnectorError(
+            f"{flag} must be valid JSON, e.g. {flag} '{example}' - got: {raw!r} ({e})"
+        )
+    if not isinstance(value, expected_type):
+        raise ConnectorError(f"{flag} must be a JSON {expected_type.__name__} - got: {raw!r}")
+    return value
+
+
 def _cli():
     p = argparse.ArgumentParser(description="qkeee-erp-accounts-executive connector CLI")
     p.add_argument("--tag", help="environment tag, from qkeee_erp.active_env (required for health/query/report/mutate)")
@@ -995,6 +1016,18 @@ def _cli():
     effective_debug = args.debug or tag_debug_default
     effective_requested_by = args.requested_by or tag_requested_by_default
 
+    if effective_debug and args.command in ("query", "get", "mutate", "report") and (
+        not args.session_id or args.session_id.startswith("local-")
+    ):
+        print(
+            "WARNING: --debug is on but no real session_id is attached to this call "
+            "(open-session was never called, or its session_id wasn't threaded through "
+            "via --session-id) - this read/write will NOT appear under a Qkeee Bot "
+            "Session/Message row, only in Qkeee Bot Audit Log. Call 'open-session' first "
+            "and pass its session_id via --session-id.",
+            file=sys.stderr,
+        )
+
     if args.command == "mutate" and not effective_requested_by:
         p.error(
             "--requested-by is required for 'mutate' (or set "
@@ -1012,8 +1045,8 @@ def _cli():
         elif args.command == "list-envs":
             print(json.dumps({"configured_tags": list_configured_tags()}, indent=2))
         elif args.command == "query":
-            filters = json.loads(args.filters) if args.filters else None
-            fields = json.loads(args.fields) if args.fields else None
+            filters = _parse_json_arg("--filters", args.filters, list)
+            fields = _parse_json_arg("--fields", args.fields, list)
             print(json.dumps(query_resource(args.tag, args.doctype, filters, fields, args.limit,
                                              debug=effective_debug, session_id=args.session_id,
                                              persona_code=args.persona_code,
@@ -1024,13 +1057,13 @@ def _cli():
                                            persona_code=args.persona_code,
                                            requested_by=effective_requested_by), indent=2))
         elif args.command == "report":
-            filters = json.loads(args.filters) if args.filters else None
+            filters = _parse_json_arg("--filters", args.filters, dict)
             print(json.dumps(run_query_report(args.tag, args.report_name, filters,
                                                debug=effective_debug, session_id=args.session_id,
                                                persona_code=args.persona_code,
                                                requested_by=effective_requested_by), indent=2))
         elif args.command == "mutate":
-            payload = json.loads(args.payload) if args.payload else None
+            payload = _parse_json_arg("--payload", args.payload, dict)
             print(json.dumps(
                 mutate_resource(args.tag, args.doctype, args.action, payload, args.name,
                                  args.mode, effective_requested_by,

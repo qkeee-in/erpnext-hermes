@@ -1383,6 +1383,19 @@ def _cli():
     effective_debug = args.debug or tag_debug_default
     effective_requested_by = args.requested_by or tag_requested_by_default
 
+    if effective_debug and args.command in (
+        "query", "report", "get", "mutate", "destructive-mutate", "get-permissions",
+        "permission", "create-user", "config-mutate",
+    ) and (not args.session_id or args.session_id.startswith("local-")):
+        print(
+            "WARNING: --debug is on but no real session_id is attached to this call "
+            "(open-session was never called, or its session_id wasn't threaded through "
+            "via --session-id) - this read/write will NOT appear under a Qkeee Bot "
+            "Session/Message row, only in Qkeee Bot Audit Log. Call 'open-session' first "
+            "and pass its session_id via --session-id.",
+            file=sys.stderr,
+        )
+
     if args.command in ("mutate", "destructive-mutate", "permission", "create-user", "config-mutate") and not effective_requested_by:
         p.error(
             f"--requested-by is required for '{args.command}' (or set "
@@ -1453,7 +1466,7 @@ def _cli():
                 indent=2,
             ))
         elif args.command == "create-user":
-            roles = json.loads(args.roles)
+            roles = _parse_json_arg("--roles", args.roles, list)
             print(json.dumps(
                 create_user(args.tag, args.email, args.first_name, roles, args.mode,
                             args.send_welcome_email, args.elevated_confirmation_token, args.issued_at,
