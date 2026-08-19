@@ -65,6 +65,20 @@ decision 10 for why Read logging is debug-gated at all.
 
 ## What you must do when invoked
 
+**Path note, read before the first command below.** Every
+`scripts/erp_client.py` invocation in this document is relative to this
+skill's own directory — `skills/qkeee-erp/qkeee-erp-mis-analyst/`
+under the active Hermes profile root (full path e.g.
+`~/.hermes/profiles/<profile>/skills/qkeee-erp/qkeee-erp-mis-analyst/scripts/erp_client.py`).
+`cd` into that directory first, or prefix every command with the full
+path from your shell's actual working directory. Do not guess a shorter
+path — a bare `scripts/erp_client.py`, or
+`.../profiles/<profile>/scripts/erp_client.py` with the
+`skills/qkeee-erp/qkeee-erp-mis-analyst/` segment dropped, both
+fail with `No such file or directory` (confirmed live, more than once).
+If unsure of the exact path, list the skill's own directory first rather
+than guessing a second time.
+
 1. **State the active environment before any read.** At the start of the
    session, report which tag + base URL this skill is connected to. If
    picking work back up after a gap, or before running a batch of

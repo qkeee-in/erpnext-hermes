@@ -102,6 +102,20 @@ violations field, not a second gate.
 
 ## What you must do when invoked
 
+**Path note, read before the first command below.** Every
+`scripts/erp_client.py` invocation in this document is relative to this
+skill's own directory — `skills/qkeee-erp/qkeee-erp-inventory/`
+under the active Hermes profile root (full path e.g.
+`~/.hermes/profiles/<profile>/skills/qkeee-erp/qkeee-erp-inventory/scripts/erp_client.py`).
+`cd` into that directory first, or prefix every command with the full
+path from your shell's actual working directory. Do not guess a shorter
+path — a bare `scripts/erp_client.py`, or
+`.../profiles/<profile>/scripts/erp_client.py` with the
+`skills/qkeee-erp/qkeee-erp-inventory/` segment dropped, both
+fail with `No such file or directory` (confirmed live, more than once).
+If unsure of the exact path, list the skill's own directory first rather
+than guessing a second time.
+
 1. **State the active environment before any read or write.** At the
    start of the session, report which tag + base URL this skill is
    connected to. Re-surface a short reminder when picking work back up

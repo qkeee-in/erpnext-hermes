@@ -113,6 +113,20 @@ requirement above and the confirm-token flow below.
 
 ## What you must do when invoked
 
+**Path note, read before the first command below.** Every
+`scripts/erp_client.py` invocation in this document is relative to this
+skill's own directory — `skills/qkeee-erp/qkeee-erp-bot-init/`
+under the active Hermes profile root (full path e.g.
+`~/.hermes/profiles/<profile>/skills/qkeee-erp/qkeee-erp-bot-init/scripts/erp_client.py`).
+`cd` into that directory first, or prefix every command with the full
+path from your shell's actual working directory. Do not guess a shorter
+path — a bare `scripts/erp_client.py`, or
+`.../profiles/<profile>/scripts/erp_client.py` with the
+`skills/qkeee-erp/qkeee-erp-bot-init/` segment dropped, both
+fail with `No such file or directory` (confirmed live, more than once).
+If unsure of the exact path, list the skill's own directory first rather
+than guessing a second time.
+
 1. **Confirm which environment tag this init targets, out loud, before
    doing anything.** Getting this wrong means creating doctypes in the
    wrong instance (e.g. prod instead of qa).
