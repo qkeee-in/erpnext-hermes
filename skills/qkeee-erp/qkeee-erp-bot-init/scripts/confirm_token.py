@@ -63,6 +63,7 @@ def is_fresh(issued_at: int, max_age_seconds: int = DEFAULT_TOKEN_TTL_SECONDS,
     age = now - int(issued_at)
     return -CLOCK_SKEW_TOLERANCE_SECONDS <= age <= max_age_seconds
 
+
 def init_plan_token(tag: str, requested_by: str, role_needed: bool,
                      doctypes_needed: list, issued_at: int = None) -> str:
     """Token over the init plan: which tag, who's running it, whether the

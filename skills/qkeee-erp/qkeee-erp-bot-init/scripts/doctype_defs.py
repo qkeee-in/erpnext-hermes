@@ -67,6 +67,11 @@ SESSION = {
          "options": "Qkeee Bot Persona", "reqd": 1, "in_list_view": 1},
         {"fieldname": "environment_tag", "label": "Environment Tag", "fieldtype": "Data",
          "reqd": 1},
+        {"fieldname": "channel", "label": "Channel", "fieldtype": "Select",
+         "options": "\nWeb\nDiscord\nTelegram\nWhatsApp\nEmail\nSlack\nCLI\nAPI\nOther"},
+        {"fieldname": "channel_metadata", "label": "Channel Metadata (JSON)", "fieldtype": "Long Text",
+         "description": "Free-form per-channel tracing detail, e.g. chat_id, message_id, "
+                         "thread id, email Message-Id header — see bot-doctypes-design.md."},
         {"fieldname": "mode", "label": "Mode", "fieldtype": "Select",
          "options": "Read Only\nRead Write"},
         {"fieldname": "debug_mode", "label": "Debug Mode", "fieldtype": "Check"},
@@ -149,6 +154,14 @@ AUDIT_LOG = {
                          "exist outside debug mode. See design doc decision 10."},
         {"fieldname": "persona_code", "label": "Persona Code", "fieldtype": "Data"},
         {"fieldname": "environment_tag", "label": "Environment Tag", "fieldtype": "Data"},
+        {"fieldname": "channel", "label": "Channel", "fieldtype": "Select",
+         "options": "\nWeb\nDiscord\nTelegram\nWhatsApp\nEmail\nSlack\nCLI\nAPI\nOther",
+         "in_list_view": 1,
+         "description": "Denormalized from Session where one exists; settable directly "
+                         "otherwise — see design doc."},
+        {"fieldname": "channel_metadata", "label": "Channel Metadata (JSON)", "fieldtype": "Long Text",
+         "description": "Free-form per-channel tracing detail, e.g. chat_id, message_id, "
+                         "thread id, email Message-Id header — see bot-doctypes-design.md."},
         {"fieldname": "triggering_message", "label": "Triggering Message", "fieldtype": "Link",
          "options": "Qkeee Bot Message"},
         {"fieldname": "action", "label": "Action", "fieldtype": "Select",

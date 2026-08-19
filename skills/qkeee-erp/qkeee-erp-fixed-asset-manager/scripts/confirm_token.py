@@ -86,3 +86,4 @@ def is_fresh(issued_at: int, max_age_seconds: int = DEFAULT_TOKEN_TTL_SECONDS,
     now = int(now) if now is not None else int(time.time())
     age = now - int(issued_at)
     return -CLOCK_SKEW_TOLERANCE_SECONDS <= age <= max_age_seconds
+

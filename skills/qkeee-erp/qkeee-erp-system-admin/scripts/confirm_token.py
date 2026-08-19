@@ -68,6 +68,7 @@ def is_fresh(issued_at: int, max_age_seconds: int = DEFAULT_TOKEN_TTL_SECONDS,
     age = now - int(issued_at)
     return -CLOCK_SKEW_TOLERANCE_SECONDS <= age <= max_age_seconds
 
+
 def permission_change_token(action: str, doctype: str, role: str, permlevel: int,
                              ptype: str = "", value=None, issued_at: int = None) -> str:
     """action: 'add' | 'update' | 'remove' | 'reset'.

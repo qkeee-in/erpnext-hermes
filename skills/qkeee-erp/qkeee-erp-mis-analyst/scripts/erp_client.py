@@ -266,7 +266,7 @@ def health_check(tag: str = "default") -> dict:
 
 def query_resource(tag: str, doctype: str, filters: list = None, fields: list = None, limit: int = 20,
                     *, debug: bool = False, session_id: str = None, persona_code: str = None,
-                    requested_by: str = None) -> dict:
+                    requested_by: str = None, channel: str = None, channel_metadata: dict = None) -> dict:
     """Generic resource query — read any DocType with filters/fields.
 
     Fetches one extra row beyond `limit` to detect truncation, then trims
@@ -292,7 +292,7 @@ def query_resource(tag: str, doctype: str, filters: list = None, fields: list = 
     has_more = len(rows) > limit
 
     if debug:
-        _log_read(cfg, doctype, None, requested_by, session_id, persona_code)
+        _log_read(cfg, doctype, None, requested_by, session_id, persona_code, channel, channel_metadata)
 
     return {"data": rows[:limit], "has_more": has_more, "limit": limit}
 
@@ -321,7 +321,7 @@ def _strip_noise(obj):
 
 def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
                   *, debug: bool = False, session_id: str = None, persona_code: str = None,
-                  requested_by: str = None) -> dict:
+                  requested_by: str = None, channel: str = None, channel_metadata: dict = None) -> dict:
     """Single-resource full-doc GET — the only way to get child-table rows.
 
     Confirmed live against <erp-instance>: Frappe's list endpoint
@@ -348,7 +348,7 @@ def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
         data = _strip_noise(data)
 
     if debug:
-        _log_read(cfg, doctype, name, requested_by, session_id, persona_code)
+        _log_read(cfg, doctype, name, requested_by, session_id, persona_code, channel, channel_metadata)
 
     return {"data": data}
 
@@ -367,7 +367,7 @@ def resource_exists(tag: str, doctype: str, name: str) -> bool:
 
 def run_query_report(tag: str, report_name: str, filters: dict = None,
                       *, debug: bool = False, session_id: str = None, persona_code: str = None,
-                      requested_by: str = None) -> dict:
+                      requested_by: str = None, channel: str = None, channel_metadata: dict = None) -> dict:
     """Run one of ERPNext's own built-in reports server-side (Query Report
     or Script Report) via frappe.desk.query_report.run, instead of hand-
     aggregating raw transactional rows into the same shape. Prefer this
@@ -396,7 +396,7 @@ def run_query_report(tag: str, report_name: str, filters: dict = None,
     message = result.get("message", {})
 
     if debug:
-        _log_read(cfg, "Report", report_name, requested_by, session_id, persona_code)
+        _log_read(cfg, "Report", report_name, requested_by, session_id, persona_code, channel, channel_metadata)
 
     return {
         "report_name": report_name,
@@ -450,7 +450,8 @@ def _audit_insert(cfg: dict, fields: dict) -> str:
         return None
 
 
-def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id: str, persona_code: str) -> None:
+def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id: str, persona_code: str,
+              channel: str = None, channel_metadata: dict = None) -> None:
     """Best-effort insert+submit Audit Log row for a debug-mode read.
     Insert/update are collapsed into one status ("Success") since a read
     has no in-flight state to crash into, but submit still runs so the
@@ -462,6 +463,8 @@ def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id:
         "session": _session_or_fallback(session_id),
         "persona_code": persona_code or "",
         "environment_tag": cfg.get("tag", ""),
+        "channel": channel or "",
+        "channel_metadata": json.dumps(channel_metadata) if channel_metadata else None,
         "action": "Read",
         "reference_doctype": doctype,
         "reference_name": name or "",
@@ -484,7 +487,8 @@ def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id:
 # only call these when qkeee_erp.debug is true.
 # --------------------------------------------------------------------------
 
-def open_session(tag: str, *, user: str, persona_code: str, mode: str, debug_mode: bool = True) -> str:
+def open_session(tag: str, *, user: str, persona_code: str, mode: str, debug_mode: bool = True,
+                  channel: str = None, channel_metadata: dict = None) -> str:
     """Create a Qkeee Bot Session row. Returns the session id (the row's
     `name`) on success, or a locally-generated fallback id if the insert
     failed — callers always get a usable session_id string to thread
@@ -496,6 +500,8 @@ def open_session(tag: str, *, user: str, persona_code: str, mode: str, debug_mod
         "user": user,
         "persona": persona_code,
         "environment_tag": tag,
+        "channel": channel,
+        "channel_metadata": json.dumps(channel_metadata) if channel_metadata else None,
         "mode": "Read Write" if mode == "read-write" else "Read Only",
         "debug_mode": 1 if debug_mode else 0,
         "started_on": _now_iso(),

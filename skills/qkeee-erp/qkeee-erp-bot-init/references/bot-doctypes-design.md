@@ -66,6 +66,8 @@ by the raw session-id string threaded through Audit Log rows (see
 | `user` | Link → User, reqd | the human this session serves (`requested_by`), never the bot service account |
 | `persona` | Link → Qkeee Bot Persona, reqd | |
 | `environment_tag` | Data, reqd | connector's active-env tag at session start |
+| `channel` | Select (`Web`/`Discord`/`Telegram`/`WhatsApp`/`Email`/`Slack`/`CLI`/`API`/`Other`) | the conversation surface this session came in on; `Other` is the escape hatch for a channel not yet enumerated here rather than blocking on a schema change |
+| `channel_metadata` | Long Text (JSON) | free-form per-channel tracing detail — e.g. `{"chat_id": "..."}` (Discord/Telegram/WhatsApp), `{"message_id": "...", "thread_index": "..."}` (email headers), `{"channel_id": "...", "ts": "..."}` (Slack). Deliberately unstructured JSON rather than named columns per channel, so a new channel or a new attribute on an existing one never needs a schema change — see `channel`/`channel_metadata` in the Extension points section |
 | `mode` | Select (`Read Only`/`Read Write`) | mode at session start; mode changes mid-session are logged as Messages, not backfilled here |
 | `debug_mode` | Check | debug state at session start |
 | `started_on` | Datetime | |
@@ -111,6 +113,8 @@ see the debug split below.
 | `session` | **Data**, not Link, reqd | raw session-id string. Deliberately not a Link to `Qkeee Bot Session` — that doctype may not exist outside debug mode (decision 10); a Data field stays populated as a correlator regardless, and still lets you group rows by conversation if a Session record does exist |
 | `persona_code` | Data | denormalized from Persona, not resolved via a Session join, for the same reason |
 | `environment_tag` | Data | denormalized, same reason |
+| `channel` | Select, same options as `Qkeee Bot Session.channel` | denormalized from Session for the same reason a Session record may not exist outside debug mode; populated directly by the caller (the persona skill/connector knows the inbound channel regardless of whether Session logging is on) |
+| `channel_metadata` | Long Text (JSON) | denormalized from Session, same reason; also settable directly per-row so a channel-specific tracing id (a chat id, an email `Message-Id` header, a WhatsApp `wamid`) is captured even when no Session exists to denormalize from |
 | `triggering_message` | Link → Qkeee Bot Message | optional; only non-null when Message rows exist (debug on) |
 | `action` | Select (`Read`/`Create`/`Update`/`Submit`/`Cancel`/`Delete`), reqd | |
 | `reference_doctype` | Link → DocType, reqd | |
@@ -219,6 +223,13 @@ attribution and debug are per-tag, not global" for the full rationale.
 
 - Adding a 5th "always-logged, low-volume" action type: add to the
   `action` Select on Audit Log; no schema restructure needed.
+- Adding a channel not yet in `channel`'s Select options: add the option
+  (or use `Other` + put the real name in `channel_metadata`, e.g.
+  `{"channel_name": "signal"}`, until a schema change lands). Any
+  channel-specific tracing attribute (chat id, message id, thread id,
+  email headers, future fields no one's thought of yet) goes in
+  `channel_metadata` as JSON, never as a new named column — that's the
+  whole point of modeling it as JSON instead of per-channel fields.
 - Targeting a different ERP backend: same extension point as the rest of
   the library — only the connector layer (`erp_client.py` here) and this
   file's endpoint assumptions change; the doctype *shape* is Frappe-

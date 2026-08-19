@@ -316,7 +316,7 @@ def health_check(tag: str = "default") -> dict:
 
 def query_resource(tag: str, doctype: str, filters: list = None, fields: list = None, limit: int = 20,
                     *, debug: bool = False, session_id: str = None, persona_code: str = None,
-                    requested_by: str = None) -> dict:
+                    requested_by: str = None, channel: str = None, channel_metadata: dict = None) -> dict:
     """Generic resource query — read any DocType with filters/fields.
 
     Fetches one extra row beyond `limit` to detect truncation, then trims
@@ -342,7 +342,7 @@ def query_resource(tag: str, doctype: str, filters: list = None, fields: list = 
     has_more = len(rows) > limit
 
     if debug:
-        _log_read(cfg, doctype, None, requested_by, session_id, persona_code)
+        _log_read(cfg, doctype, None, requested_by, session_id, persona_code, channel, channel_metadata)
 
     return {"data": rows[:limit], "has_more": has_more, "limit": limit}
 
@@ -371,7 +371,7 @@ def _strip_noise(obj):
 
 def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
                   *, debug: bool = False, session_id: str = None, persona_code: str = None,
-                  requested_by: str = None) -> dict:
+                  requested_by: str = None, channel: str = None, channel_metadata: dict = None) -> dict:
     """Single-resource full-doc GET — the only way to get child-table rows.
 
     Confirmed live against <erp-instance>: Frappe's list endpoint
@@ -398,7 +398,7 @@ def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
         data = _strip_noise(data)
 
     if debug:
-        _log_read(cfg, doctype, name, requested_by, session_id, persona_code)
+        _log_read(cfg, doctype, name, requested_by, session_id, persona_code, channel, channel_metadata)
 
     return {"data": data}
 
@@ -417,7 +417,7 @@ def resource_exists(tag: str, doctype: str, name: str) -> bool:
 
 def run_query_report(tag: str, report_name: str, filters: dict = None,
                       *, debug: bool = False, session_id: str = None, persona_code: str = None,
-                      requested_by: str = None) -> dict:
+                      requested_by: str = None, channel: str = None, channel_metadata: dict = None) -> dict:
     """Run one of ERPNext's own built-in reports server-side (Query Report
     or Script Report) via frappe.desk.query_report.run, instead of hand-
     aggregating raw transactional rows into the same shape. Prefer this
@@ -446,7 +446,7 @@ def run_query_report(tag: str, report_name: str, filters: dict = None,
     message = result.get("message", {})
 
     if debug:
-        _log_read(cfg, "Report", report_name, requested_by, session_id, persona_code)
+        _log_read(cfg, "Report", report_name, requested_by, session_id, persona_code, channel, channel_metadata)
 
     return {
         "report_name": report_name,
@@ -608,7 +608,8 @@ def _audit_submit(cfg: dict, log_name: str) -> bool:
         return False
 
 
-def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id: str, persona_code: str) -> None:
+def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id: str, persona_code: str,
+              channel: str = None, channel_metadata: dict = None) -> None:
     """Best-effort insert+submit Audit Log row for a debug-mode read.
     Insert/update are collapsed into one status ("Success") since a read
     has no in-flight state to crash into, but submit still runs so the
@@ -620,6 +621,8 @@ def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id:
         "session": _session_or_fallback(session_id),
         "persona_code": persona_code or "",
         "environment_tag": cfg.get("tag", ""),
+        "channel": channel or "",
+        "channel_metadata": json.dumps(channel_metadata) if channel_metadata else None,
         "action": "Read",
         "reference_doctype": doctype,
         "reference_name": name or "",
@@ -633,6 +636,7 @@ def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id:
 
 def record_audit_log_start(cfg: dict, *, action: str, doctype: str, name: str, requested_by: str,
                             session_id: str = None, persona_code: str = None,
+                            channel: str = None, channel_metadata: dict = None,
                             payload_before: dict = None, user_approved: bool = False,
                             approval_note: str = None) -> str:
     """Phase 1 of two-phase audit logging: insert an `Attempted` row
@@ -650,6 +654,8 @@ def record_audit_log_start(cfg: dict, *, action: str, doctype: str, name: str, r
         "session": _session_or_fallback(session_id),
         "persona_code": persona_code or "",
         "environment_tag": cfg.get("tag", ""),
+        "channel": channel or "",
+        "channel_metadata": json.dumps(channel_metadata) if channel_metadata else None,
         "action": action,
         "reference_doctype": doctype,
         "reference_name": name or "",
@@ -699,7 +705,8 @@ def record_audit_log_finish(cfg: dict, log_name: str, *, status: str, reference_
 # only call these when qkeee_erp.debug is true.
 # --------------------------------------------------------------------------
 
-def open_session(tag: str, *, user: str, persona_code: str, mode: str, debug_mode: bool = True) -> str:
+def open_session(tag: str, *, user: str, persona_code: str, mode: str, debug_mode: bool = True,
+                  channel: str = None, channel_metadata: dict = None) -> str:
     """Create a Qkeee Bot Session row. Returns the session id (the row's
     `name`) on success, or a locally-generated fallback id if the insert
     failed — callers always get a usable session_id string to thread
@@ -711,6 +718,8 @@ def open_session(tag: str, *, user: str, persona_code: str, mode: str, debug_mod
         "user": user,
         "persona": persona_code,
         "environment_tag": tag,
+        "channel": channel,
+        "channel_metadata": json.dumps(channel_metadata) if channel_metadata else None,
         "mode": "Read Write" if mode == "read-write" else "Read Only",
         "debug_mode": 1 if debug_mode else 0,
         "started_on": _now_iso(),
@@ -807,6 +816,7 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
                      name: str = None, mode: str = "read-only", requested_by: str = None,
                      skip_comment: bool = False,
                      *, session_id: str = None, persona_code: str = None,
+                     channel: str = None, channel_metadata: dict = None,
                      user_approved: bool = False, approval_note: str = None) -> dict:
     """Generic resource mutate — create/update/submit/cancel a DocType record.
 
@@ -837,6 +847,24 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
     a caller that forgets to pass it shows up as "Not Confirmed" on scan,
     which is the intended detection behavior, not a silent default.
     """
+    _VALID_ACTIONS = {"create", "update", "submit", "cancel", "delete"}
+    if action not in _VALID_ACTIONS:
+        # Live-observed failure mode: a caller swaps the (doctype, action)
+        # positional args — e.g. mutate_resource(tag, "create", "Department", ...)
+        # instead of (tag, "Department", "create", ...) — which used to surface
+        # only as _do_mutate()'s generic "Unknown action 'Department'" once
+        # deep inside the call, after the audit-log Attempted row was already
+        # written with garbage doctype/action. Catching it here, before any
+        # side effect, gives the actual likely cause instead of a symptom.
+        hint = (
+            f" This looks like doctype/action were swapped — mutate_resource(tag, doctype, "
+            f"action, ...) takes doctype BEFORE action; got doctype='{doctype}', action='{action}'."
+            if doctype in _VALID_ACTIONS else ""
+        )
+        raise ConnectorError(
+            f"Invalid action '{action}' for doctype '{doctype}'. Expected one of "
+            f"{sorted(_VALID_ACTIONS)}.{hint}"
+        )
     if mode != "read-write":
         raise ReadOnlyModeError(
             f"Refusing {action} on '{doctype}': qkeee_erp.mode is '{mode}', not 'read-write'. "
@@ -865,7 +893,8 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
 
     audit_log_name = record_audit_log_start(
         cfg, action=action.capitalize(), doctype=doctype, name=name, requested_by=requested_by,
-        session_id=session_id, persona_code=persona_code, payload_before=payload_before,
+        session_id=session_id, persona_code=persona_code, channel=channel, channel_metadata=channel_metadata,
+        payload_before=payload_before,
         user_approved=user_approved, approval_note=approval_note,
     )
 
@@ -894,6 +923,7 @@ def gated_mutate_resource(tag: str, doctype: str, action: str, payload: dict = N
                            name: str = None, mode: str = "read-only", requested_by: str = None,
                            *, confirmation_token: str = None, issued_at: int = None,
                            session_id: str = None, persona_code: str = None,
+                           channel: str = None, channel_metadata: dict = None,
                            approval_note: str = None) -> dict:
     """This skill's write entry point — wraps mutate_resource() with the
     token-gated advisory-first check every write this skill performs goes
@@ -933,7 +963,7 @@ def gated_mutate_resource(tag: str, doctype: str, action: str, payload: dict = N
 
     return mutate_resource(
         tag, doctype, action, payload=payload, name=name, mode=mode, requested_by=requested_by,
-        session_id=session_id, persona_code=persona_code,
+        session_id=session_id, persona_code=persona_code, channel=channel, channel_metadata=channel_metadata,
         user_approved=True, approval_note=approval_note or "gated_mutate_resource: advisory draft confirmed",
     )
 
@@ -1097,6 +1127,9 @@ def _cli():
                         "normal per-tag source; this flag only ever turns it on, never off")
     p.add_argument("--session-id", help="from the caller's open_session() — threaded into audit rows")
     p.add_argument("--persona-code", help="e.g. qkeee-erp-accounts-executive — threaded into audit rows")
+    p.add_argument("--channel", help="conversation surface, e.g. Discord/Telegram/WhatsApp/Email/Web/Slack/CLI/API/Other — threaded into audit rows")
+    p.add_argument("--channel-metadata", help="JSON object of channel-specific tracing detail, e.g. "
+                        "'{\"chat_id\": \"123\"}' — threaded into audit rows verbatim")
     # No --user-approved flag: this skill's 'mutate' is gated_mutate_resource(),
     # which requires --confirmation-token/--issued-at from render_draft.py and
     # always logs user_approved="Approved" once that check passes — there's no
@@ -1225,6 +1258,7 @@ def _cli():
         )
 
     try:
+        channel_metadata = _parse_json_arg("--channel-metadata", args.channel_metadata, dict)
         if args.command == "health":
             print(json.dumps(health_check(args.tag), indent=2))
         elif args.command == "list-envs":
@@ -1235,18 +1269,21 @@ def _cli():
             print(json.dumps(query_resource(args.tag, args.doctype, filters, fields, args.limit,
                                              debug=effective_debug, session_id=args.session_id,
                                              persona_code=args.persona_code,
-                                             requested_by=effective_requested_by), indent=2))
+                                             requested_by=effective_requested_by,
+                                             channel=args.channel, channel_metadata=channel_metadata), indent=2))
         elif args.command == "get":
             print(json.dumps(get_resource(args.tag, args.doctype, args.name, not args.no_strip,
                                            debug=effective_debug, session_id=args.session_id,
                                            persona_code=args.persona_code,
-                                           requested_by=effective_requested_by), indent=2))
+                                           requested_by=effective_requested_by,
+                                           channel=args.channel, channel_metadata=channel_metadata), indent=2))
         elif args.command == "report":
             filters = _parse_json_arg("--filters", args.filters, dict)
             print(json.dumps(run_query_report(args.tag, args.report_name, filters,
                                                debug=effective_debug, session_id=args.session_id,
                                                persona_code=args.persona_code,
-                                               requested_by=effective_requested_by), indent=2))
+                                               requested_by=effective_requested_by,
+                                               channel=args.channel, channel_metadata=channel_metadata), indent=2))
         elif args.command == "roles":
             print(json.dumps(get_user_roles(args.tag, args.user), indent=2))
         elif args.command == "mutate":
@@ -1257,6 +1294,7 @@ def _cli():
                                        confirmation_token=args.confirmation_token,
                                        issued_at=args.issued_at,
                                        session_id=args.session_id, persona_code=args.persona_code,
+                                       channel=args.channel, channel_metadata=channel_metadata,
                                        approval_note=args.approval_note),
                 indent=2,
             ))
@@ -1274,7 +1312,8 @@ def _cli():
             print(json.dumps({"ok": True, "status": status}, indent=2))
         elif args.command == "open-session":
             session_id = open_session(args.tag, user=effective_requested_by, persona_code=args.persona_code,
-                                       mode=args.mode, debug_mode=not args.no_debug)
+                                       mode=args.mode, debug_mode=not args.no_debug,
+                                       channel=args.channel, channel_metadata=channel_metadata)
             print(json.dumps({"session_id": session_id}, indent=2))
         elif args.command == "log-message":
             message_id = log_message(args.tag, session_id=args.session_id, speaker=args.speaker,
