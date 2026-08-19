@@ -1223,6 +1223,25 @@ def discover_harness_http_tool() -> dict:
     return {"harness_http_tool_detected": False, "fallback": "urllib (this script)"}
 
 
+def _parse_json_arg(flag: str, raw: str, expected_type: type):
+    """Parse a CLI flag's JSON value, raising a clean ConnectorError (not a
+    raw traceback) on malformed JSON. `expected_type` is `list` or `dict` —
+    e.g. --fields wants '["name","email"]', --filters for `report` wants
+    '{"company": "Acme"}'."""
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as e:
+        example = '["name","email"]' if expected_type is list else '{"company": "Acme"}'
+        raise ConnectorError(
+            f"{flag} must be valid JSON, e.g. {flag} '{example}' - got: {raw!r} ({e})"
+        )
+    if not isinstance(value, expected_type):
+        raise ConnectorError(f"{flag} must be a JSON {expected_type.__name__} - got: {raw!r}")
+    return value
+
+
 def _cli():
     p = argparse.ArgumentParser(description="qkeee-erp-system-admin connector CLI")
     p.add_argument("--tag", help="environment tag, from qkeee_erp.active_env")
@@ -1245,6 +1264,10 @@ def _cli():
     q.add_argument("--filters")
     q.add_argument("--fields")
     q.add_argument("--limit", type=int, default=20)
+
+    rq = sub.add_parser("report", help="Run a built-in ERPNext Query/Script Report server-side")
+    rq.add_argument("report_name")
+    rq.add_argument("--filters", help="JSON object of report-specific filter values, e.g. '{\"company\": \"Acme\"}'")
 
     g = sub.add_parser("get", help="Single-resource full-doc GET (includes child tables) — noise-stripped by default")
     g.add_argument("doctype")
@@ -1332,7 +1355,7 @@ def _cli():
     args = p.parse_args()
 
     needs_tag = args.command in (
-        "health", "query", "get", "mutate", "destructive-mutate",
+        "health", "query", "report", "get", "mutate", "destructive-mutate",
         "get-permissions", "permission", "scheduler-status", "roles-and-doctypes",
         "create-user", "config-mutate",
         "register-persona", "open-session", "log-message", "close-session",
@@ -1383,12 +1406,18 @@ def _cli():
         elif args.command == "get-permissions":
             print(json.dumps(get_permissions(args.tag, args.doctype), indent=2))
         elif args.command == "query":
-            filters = json.loads(args.filters) if args.filters else None
-            fields = json.loads(args.fields) if args.fields else None
+            filters = _parse_json_arg("--filters", args.filters, list)
+            fields = _parse_json_arg("--fields", args.fields, list)
             print(json.dumps(query_resource(args.tag, args.doctype, filters, fields, args.limit,
                                              debug=effective_debug, session_id=args.session_id,
                                              persona_code=args.persona_code,
                                              requested_by=effective_requested_by), indent=2))
+        elif args.command == "report":
+            filters = _parse_json_arg("--filters", args.filters, dict)
+            print(json.dumps(run_query_report(args.tag, args.report_name, filters,
+                                               debug=effective_debug, session_id=args.session_id,
+                                               persona_code=args.persona_code,
+                                               requested_by=effective_requested_by), indent=2))
         elif args.command == "get":
             print(json.dumps(get_resource(args.tag, args.doctype, args.name, not args.no_strip,
                                            debug=effective_debug, session_id=args.session_id,

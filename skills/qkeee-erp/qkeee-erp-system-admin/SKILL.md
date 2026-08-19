@@ -154,6 +154,17 @@ they're relying on the audit trail to cover permission-change activity.
    `query_resource()` against the `DocPerm` doctype fails live with a
    `PermissionError` (confirmed against <erp-instance>), so permission
    rows must go through these dedicated methods, never generic query.
+   **`--fields`/`--filters` on `query` must be JSON, not a bare comma
+   list** — e.g. to list users:
+   `python scripts/erp_client.py --tag <tag> query User --fields '["name","email","enabled","user_type"]' --limit 100`.
+   A malformed value now fails with a clean `ERROR:` message instead of
+   a raw Python traceback, but get the JSON shape right the first time
+   rather than relying on that. For a built-in ERPNext report (Query
+   Report / Script Report) instead of hand-aggregating raw rows, use
+   `query_resource()`'s sibling, `run_query_report()`, via the `report`
+   subcommand: `python scripts/erp_client.py --tag <tag> report "<Report
+   Name>" --filters '{"company": "Acme"}'` — filter keys are report-
+   specific, confirm them by opening the report in the ERPNext UI once.
 6. **Ground every capability in `references/domain-knowledge.md`**, and
    consult `references/erpnext-system-admin-docs.md` (fetching the
    linked docs page directly, if a harness web-fetch tool is available)
