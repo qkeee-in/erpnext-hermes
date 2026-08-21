@@ -590,6 +590,20 @@ applied to a bigger piece of infrastructure for the same reason: a user's
 actual requested write should never fail because internal bookkeeping
 infra isn't provisioned yet.
 
+**A blank `reference_name` on an Audit Log row is not necessarily a bug.**
+`_audit_submit()` locks a finished row regardless of outcome, so both
+`Success` and `Failure` rows show the same "Submitted" docstatus badge in
+the ERPNext list view — that badge does not mean the underlying write
+succeeded. A `Failure` row legitimately has a blank `reference_name`
+(nothing was ever created/matched to reference); check `status` and
+`error_detail` on the row before assuming a data-capture bug. A blank
+`reference_name` on a `status = Success` row IS unexpected — for `create`
+this is always sourced from ERPNext's own response (never guessed), for
+`update`/`submit`/`cancel`/`delete` it falls back to the caller-supplied
+`name` if response parsing comes up empty — and `mutate_resource()` prints
+a `WARN` to stderr in that case precisely because it shouldn't happen; if
+you see one, check that stderr line for the raw response shape.
+
 **`AUDIT_EXEMPT_DOCTYPES`** (`Qkeee Bot Session`/`Message`/`Audit Log`/
 `Persona`, plus `Comment`) is checked before any audit-wrap step —
 without it, logging a write to Audit Log would recursively log itself

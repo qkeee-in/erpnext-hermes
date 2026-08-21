@@ -118,7 +118,7 @@ see the debug split below.
 | `triggering_message` | Link → Qkeee Bot Message | optional; only non-null when Message rows exist (debug on) |
 | `action` | Select (`Read`/`Create`/`Update`/`Submit`/`Cancel`/`Delete`), reqd | |
 | `reference_doctype` | Link → DocType, reqd | |
-| `reference_name` | Dynamic Link (`reference_doctype`) | |
+| `reference_name` | Dynamic Link (`reference_doctype`) | populated from the live write response — for `Create`, the doctype's assigned `name` as returned by ERPNext (never guessed/pre-computed); for `Update`/`Submit`/`Cancel`/`Delete`, the caller-supplied `name` as a guaranteed fallback if response parsing comes up empty. **Blank `reference_name` is expected on a `Failure` row** (the write never completed, nothing to reference) — `_audit_submit()` locks both `Success` and `Failure` rows the same way, so the list view's "Submitted" badge alone does not distinguish them; check `status`/`error_detail` on that row before treating a blank name as a bug. Blank `reference_name` on a `status = Success` row is NOT expected — `erp_client.py`'s `mutate_resource()` prints a `WARN` to stderr when this happens, since it means ERPNext's response shape didn't match what the connector assumes |
 | `requested_by` | Link → User, reqd | denormalized from session for fast audit query without a join |
 | `timestamp` | Datetime, reqd | indexed |
 | `status` | Select (`Attempted`/`Success`/`Failure`), reqd | see two-phase logging below |

@@ -837,6 +837,23 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
     if data is None and isinstance(result, dict):
         data = result.get("message")  # submit/cancel return {"message": {...}} instead of {"data": {...}}
     reference_name = (data or {}).get("name") if isinstance(data, dict) else name
+    if not reference_name:
+        # Live-observed: a "Submitted" (docstatus-locked) Audit Log row with
+        # a blank Reference Name looks alarming, but `_audit_submit()` locks
+        # every finished row regardless of outcome — Success AND Failure both
+        # end up "Submitted". A blank name here, with no exception raised
+        # (we're past the `except ConnectorError` above), means ERPNext's
+        # response genuinely had no usable name for this write — expected
+        # for `read` calls not going through this path, but for
+        # create/update/submit/cancel it means the response shape didn't
+        # match what was expected. Warn loudly rather than silently writing
+        # a blank `reference_name` with no trace of why.
+        print(
+            f"WARN: {action} on '{doctype}' returned no usable reference name "
+            f"(result keys: {sorted(result.keys()) if isinstance(result, dict) else type(result)}) "
+            f"— Audit Log row {audit_log_name!r} will have a blank Reference Name despite status=Success.",
+            file=sys.stderr,
+        )
     audit_comment_posted = result.pop("_audit_comment_posted", None) if isinstance(result, dict) else None
     record_audit_log_finish(
         cfg, audit_log_name, status="Success", reference_name=reference_name,
