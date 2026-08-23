@@ -1,6 +1,6 @@
 ---
 name: qkeee-erp-bot-init
-description: "Provisions the Qkeee Bot audit-trail doctypes (Qkeee Bot Persona, Qkeee Bot Audit Log) plus the Qkeee Bot role into a target ERPNext instance, if they don't already exist — idempotent, no custom app required. Also detects/provisions the dedicated qkeee-erp-bot service-account User the persona skills' shared API key should belong to, assigning it the Qkeee Bot role and generating fresh API keys if needed. Use when setting up a fresh ERPNext instance for the qkeee-erp-* skill library, when a persona skill reports the audit doctypes are missing or that its credentials don't look like a dedicated bot account, or when explicitly asked to 'initialize the bot' / 'set up the audit trail' / 'create a bot user' / 'run bot init' against an environment."
+description: "Provisions Qkeee Bot audit-trail doctypes and bot user."
 metadata:
   hermes:
     tags: [ERPNext, Infrastructure, Provisioning, Audit-Trail, Bot-Setup]
@@ -37,6 +37,15 @@ from the doctype/role provisioning above: the doctypes/role are the audit
 *schema*; the bot user is the *account* persona skills actually log in as
 day to day. Both are this skill's job because both are one-time/occasional
 per-environment setup an elevated admin credential is needed for.
+
+## When to Use
+
+Use when setting up a fresh ERPNext instance for the `qkeee-erp-*`
+skill library, when a persona skill reports the audit doctypes are
+missing or that its credentials don't look like a dedicated bot
+account, or when explicitly asked to "initialize the bot" / "set up
+the audit trail" / "create a bot user" / "run bot init" against an
+environment.
 
 ## Bot user provisioning
 
@@ -93,7 +102,7 @@ capability and offer to run it, rather than waiting to be asked by name.
    *User → API Access → Generate Keys* in the ERPNext UI, then have them
    set the three `QKEEE_ERP_<TAG>_*` env vars themselves.
 
-## The non-negotiable
+## Pitfalls
 
 **Never run this against a target using the shared `qkeee-erp-bot@<org>`
 steady-state service account.** Creating `DocType`/`Role` records requires
@@ -113,7 +122,7 @@ in write mode (`init_bot.py` passes `mode="read-write"` unconditionally)
 built to gate. The actual controls here are the elevated-credential
 requirement above and the confirm-token flow below.
 
-## What you must do when invoked
+## Procedure
 
 **Path note, read before the first command below.** Every
 `scripts/erp_client.py` invocation in this document is relative to this
@@ -159,14 +168,18 @@ than guessing a second time.
    overwritten; if nothing needs creating, no token is required. Report
    the summary (`doctypes_created` vs `doctypes_already_present`) back to
    the user.
-5. **This skill provisions schema only — it does not wire up runtime
-   audit logging.** Actually calling into these doctypes on every
-   read/write (the two-phase `Attempted`→`Success`/`Failure` Audit Log
-   write, the `AUDIT_EXEMPT_DOCTYPES` recursion guard) is
-   `qkeee-erp-frappe-core` connector work — a follow-up retrofit across
-   `erp_client.py` and the persona skills that copy it, not something
-   this skill does at init time. Say so if a user expects audit rows to
-   start appearing immediately after running this.
+5. **This skill provisions schema only — it does not itself write audit
+   rows.** Actually calling into these doctypes on every read/write (the
+   two-phase `Attempted`→`Success`/`Failure` Audit Log write, the
+   `AUDIT_EXEMPT_DOCTYPES` recursion guard) lives in `qkeee-erp-frappe-
+   core`'s connector and every persona skill's synced copy of it — that
+   retrofit has already landed and is synced across all 7 write-capable
+   persona skills (verified: `record_audit_log_start` present in every
+   copy). Once this skill's schema exists on a target, persona writes
+   against that target start logging immediately — no separate step
+   needed. If a user runs this skill against a target for the first
+   time, audit rows should appear as soon as the first persona write
+   happens afterward.
 6. **Ground every doctype/field/permission decision in
    `references/bot-doctypes-design.md`** — that file, not this one, is
    the source of truth for the schema. If a user asks to add a field or
@@ -177,7 +190,7 @@ than guessing a second time.
 7. **Prefer a harness-native HTTP-capable tool if discoverable**, same
    discovery-first pattern as every other `qkeee-erp-*` skill.
 
-## Capabilities
+## Quick Reference
 
 | Capability | How | Notes |
 | --- | --- | --- |
@@ -188,6 +201,15 @@ than guessing a second time.
 | Connectivity health check | `erp_client.py health` | Run before init; also confirms which ERPNext user the configured key belongs to |
 | Bot user existence/role/enabled/key check | `ensure_bot_user.py --dry-run` | Read-only-equivalent — reports what's missing without writing anything; requires the `Qkeee Bot` role to already exist |
 | Bot user provisioning | `ensure_bot_user.py` creates the User (if missing), assigns the `Qkeee Bot` role, re-enables if disabled, and generates a fresh API key/secret if none is configured | Same dry-run → confirm-token → real-run discipline as doctype provisioning; keys print once, never stored by this skill |
+
+## Verification
+
+Never run for real without a prior dry-run's `--confirm-token`/
+`--issued-at` — both flows recompute the token from the target's
+current live state and refuse to proceed on a mismatch or after 15
+minutes. After a real run, confirm the reported `doctypes_created` vs
+`doctypes_already_present` (or the bot-user equivalent) matches what
+the dry-run's plan said would happen.
 
 ## Files
 
@@ -232,7 +254,8 @@ by design, not ERP-agnostic.
 
 ## Relationships
 
-Provisions the schema `qkeee-erp-frappe-core`'s connector (and every persona
-skill's copy of it) will eventually write to, once the audit-logging
-retrofit described in step 5 above is built. Run this once per target
-environment tag, before that retrofit lands or as soon as it does.
+Provisions the schema `qkeee-erp-frappe-core`'s connector (and every
+persona skill's synced copy of it) writes audit rows to — see Procedure
+step 5. Run this once per target environment tag before any persona
+skill's writes against that tag, so the first write doesn't hit missing
+doctypes.

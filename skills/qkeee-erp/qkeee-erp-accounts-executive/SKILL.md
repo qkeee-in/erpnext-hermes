@@ -1,6 +1,6 @@
 ---
 name: qkeee-erp-accounts-executive
-description: "Detail-oriented accounts executive over ERPNext AP/AR — payment status, Journal Entry drafting (advisory-first, never auto-submitted), AP/AR aging, 3-way match (PO/GRN/Invoice), bank reconciliation assist, expense claim review, and tax-compliance assist (TDS via core ERPNext Tax Withholding, GST/e-invoicing/e-way-bill where the org has the India Compliance app). Use when the user wants to check an invoice/PO payment status, draft a journal entry, needs an aging report, wants to 3-way-match a purchase, needs bank reconciliation help, wants an expense claim reviewed, or asks about TDS/GST/e-invoicing/e-way-bill on an ERPNext instance."
+description: "Manages ERPNext AP/AR: payments, JEs, aging, and tax."
 metadata:
   hermes:
     tags: [ERPNext, Accounts, AP/AR, Tax-Compliance, GL]
@@ -29,7 +29,15 @@ especially around tax mechanics. Handles day-to-day AP/AR and
 tax-compliance tasks accurately, and never lets a financial write happen
 silently.
 
-## The non-negotiables
+## When to Use
+
+Use when the user wants to check an invoice/PO payment status, draft a
+journal entry, needs an AP/AR aging report, wants to 3-way-match a
+purchase (PO/GRN/Invoice), needs bank reconciliation help, wants an
+expense claim reviewed, or asks about TDS/GST/e-invoicing/e-way-bill on
+an ERPNext instance.
+
+## Pitfalls
 
 **Never submit or cancel a financial document (Journal Entry, Payment
 Entry, or any ERPNext write this skill drafts) without explicit user
@@ -55,7 +63,9 @@ a point-in-time confirmation (see
 `references/erpnext-accounting-docs.md`), not a live feed. Government
 portals are the ground-truth authority, never this skill's own memory.
 
-## Bot account — mandatory
+## Prerequisites
+
+### Bot account — mandatory
 
 The API key/secret configured above must be generated against a
 dedicated ERPNext integration/bot user (e.g. `qkeee-erp-bot@<org>`),
@@ -77,7 +87,7 @@ dedicated bot user (via an elevated admin login) and provisions the
 audit-trail doctypes in the same pass. This is a recommendation, not
 a blocker — don't refuse the user's actual request over it.
 
-## Requester attribution — mandatory on every write
+### Requester attribution — mandatory on every write
 
 Before the first write of a session, resolve `QKEEE_ERP_<TAG>_REQUESTED_BY`
 to the ERPNext user id/email of the human this session is acting on
@@ -90,7 +100,7 @@ posts a best-effort Comment on the affected record: `[SKILL_LABEL]
 comment failure never blocks or rolls back the underlying write.
 Mention in your report-back that the audit comment was posted.
 
-## Audit trail
+### Audit trail
 
 Every write also logs a two-phase (`Attempted` → `Success`/`Failure`) row
 to the `Qkeee Bot Audit Log` doctype, best-effort — never blocks a write
@@ -102,7 +112,7 @@ mechanism. Pass `user_approved=True` to `mutate_resource()` only when
 this write's confirm stage actually ran with the user — it's a scan-for-
 violations field, not a second gate.
 
-## What you must do when invoked
+## Procedure
 
 **Path note, read before the first command below.** Every
 `scripts/erp_client.py` invocation in this document is relative to this
@@ -211,7 +221,7 @@ than guessing a second time.
     remembered across sessions.** Credentials and URLs never go into
     agent-curated memory.
 
-## Capabilities
+## Quick Reference
 
 | Capability | Outcome | Inputs | Outputs |
 | --- | --- | --- | --- |
@@ -228,6 +238,16 @@ than guessing a second time.
 
 † Unverified end-to-end in this skill's own build — no India-Compliance-enabled
 instance was available to exercise these rows live (see note 10 above).
+
+## Verification
+
+Before submitting a Journal Entry: re-fetch it by `name` via `erp_client.py
+get`, confirm it balances, amounts/narration match what was confirmed, and
+every Link field resolves to a real record (Procedure step 7). Before
+cancelling: render through `render_cancel_confirmation.py` and confirm the
+stated impact with the user. Every operational report (aging, 3-way match,
+bank reconciliation) must carry a real reconciliation check, not
+`not_applicable`, unless nothing exists to tie out (Procedure step 8).
 
 ## Files
 

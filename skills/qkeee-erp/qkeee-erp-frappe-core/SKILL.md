@@ -1,6 +1,6 @@
 ---
 name: qkeee-erp-frappe-core
-description: "Canonical ERPNext (Frappe REST API) connector — environment/tag management, auth, generic read/write primitives, and the read-only/read-write safety gate. Infrastructure skill: every qkeee-erp-* persona skill ships its own copy of this connector. Also this library's fallback-investigation skill (merged from the former qkeee-erp-catch-all) for whatever doesn't fit one of the eight named persona skills — companion Frappe apps (CRM, Helpdesk, LMS, Insights, ...) and org-specific custom doctypes — investigating the target instance's actual installed apps and live DocType metadata before proposing anything, and building a per-instance knowledge base over sessions. Use when the user wants to configure an ERPNext environment, run a raw ERPNext query, check ERPNext connectivity outside of a specific persona (HR/Accounts/Procurement/etc), or asks about a doctype/feature that doesn't belong to any named persona skill."
+description: "Canonical ERPNext connector; fallback investigator too."
 metadata:
   hermes:
     tags: [ERPNext, Connector, Infrastructure, Fallback-Investigation, REST-API]
@@ -45,7 +45,15 @@ Two identities in one skill:
    `references/domain-knowledge.md` for the routing table and
    investigation method.
 
-## The non-negotiables
+## When to Use
+
+Use when the user wants to configure an ERPNext environment, run a raw
+ERPNext query, check ERPNext connectivity outside of a specific persona
+(HR/Accounts/Procurement/etc), or asks about a doctype/feature that
+doesn't belong to any named persona skill (companion Frappe apps —
+CRM, Helpdesk, LMS, Insights, ... — or an org-specific custom doctype).
+
+## Pitfalls
 
 **Never issue a write call (create/update/submit/cancel/delete) while
 `qkeee_erp.mode` is `read-only`.** This is enforced in `scripts/erp_client.py`
@@ -80,7 +88,9 @@ at design time, so they can call `mutate_resource()` directly in
 read-write mode), nothing this skill investigates has had that review — see
 "Advisory-first, always" under What you must do below.
 
-## Bot account — mandatory
+## Prerequisites
+
+### Bot account — mandatory
 
 The API key/secret configured above must be generated against a dedicated
 ERPNext integration/bot user (e.g. `qkeee-erp-bot@<org>`), **never** against
@@ -104,7 +114,7 @@ doctypes in the same pass. This is a recommendation, not a blocker —
 don't refuse the user's actual request over it. Every persona skill
 carries the same instruction in its own "Bot account" section.
 
-## Requester attribution — mandatory on every write
+### Requester attribution — mandatory on every write
 
 Requester identity is sourced per-tag from `QKEEE_ERP_<TAG>_REQUESTED_BY`
 in this profile's `.env` — not a global config value, so it switches
@@ -121,7 +131,7 @@ on the affected record: `[qkeee-erp-frappe-core] <action> — requested by
 or rolls back the underlying write. Mention in your report-back that the
 audit comment was posted.
 
-## Audit trail — Qkeee Bot doctypes
+### Audit trail — Qkeee Bot doctypes
 
 Every `mutate_resource()`/`gated_mutate_resource()` write is also logged
 to the `Qkeee Bot Audit Log` doctype (provisioned by `qkeee-erp-bot-init`),
@@ -177,7 +187,7 @@ personal account (see "Bot account" above): proactively mention it once
 per session and suggest `qkeee-erp-bot-init`, never silently ignore it
 and never let it block the user's actual request.
 
-## What you must do when invoked
+## Procedure
 
 **Path note, read before the first command below.** Every
 `scripts/erp_client.py` invocation in this document is relative to this
@@ -404,7 +414,7 @@ than guessing a second time.
     leave a record at `docstatus 0` and `submit` was already a distinct
     action.
 
-## Capabilities
+## Quick Reference
 
 | Capability | How | Notes |
 | --- | --- | --- |
@@ -424,6 +434,16 @@ than guessing a second time.
 | Generic resource mutate | `erp_client.py mutate <DocType> <create\|update\|submit\|cancel\|delete> --confirmation-token ... --issued-at ...` (`gated_mutate_resource()`) | Gated by `qkeee_erp.mode` + a resolved requester (inherited from `mutate_resource()`), **plus** a `confirmation_token`/`issued_at` from `render_draft.py` required in code — unconditionally, regardless of mode. Posts a best-effort audit Comment naming the requester on success, and always logs a two-phase Attempted→Success/Failure row to Qkeee Bot Audit Log (best-effort, never blocks the write — see Audit trail section above). No un-gated mutate path exists in this skill's own CLI — persona skills' own copies still expose plain `mutate_resource()` for their design-time-reviewed capabilities |
 | Connectivity health check | `erp_client.py health` | Run before first read/write of a session |
 | Harness capability discovery | Ask the harness (if it exposes tool listing) whether a native HTTP/report tool already exists | Applies to this skill and is the general pattern other qkeee-erp-* skills should follow too |
+
+## Verification
+
+Before proposing anything for a doctype/app not covered by a named
+persona skill: run `discover.py resolve` to confirm which app actually
+owns it, and `discover.py meta` to confirm the live field schema — never
+propose against assumed-stock shape. Before any write via
+`gated_mutate_resource()`: confirm the rendered draft's
+`confirmation_token`/`issued_at` came from `render_draft.py` for this
+exact call, not hand-constructed.
 
 ## Files
 

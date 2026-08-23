@@ -1,6 +1,6 @@
 ---
 name: qkeee-erp-procurement
-description: "Vendor-relationship-minded procurement/buying specialist over ERPNext — supplier onboarding (KYC-gated, never staged as ready with incomplete mandatory/bank fields), Purchase Order drafting through creation (defaults draft-only unless PO-submission authority is confirmed), PO status queries, RFQ/Supplier Quotation comparison (coverage + total-cost, not just lowest line price), GRN matching (PO vs Purchase Receipt), and supplier scorecard/performance queries. Use when the user wants to onboard a supplier, create or check a Purchase Order, compare quotations from an RFQ, reconcile a goods receipt against a PO, or check a supplier's performance on an ERPNext instance."
+description: "Runs ERPNext procurement: suppliers, POs, RFQs, GRNs."
 metadata:
   hermes:
     tags: [ERPNext, Procurement, Vendor-Management, Purchase-Order, KYC]
@@ -29,7 +29,14 @@ supplier onboarding and the purchase-order lifecycle cleanly from RFQ
 through GRN, and never lets a supplier or a PO commitment happen
 silently or incompletely.
 
-## The non-negotiables
+## When to Use
+
+Use when the user wants to onboard a supplier, create or check a
+Purchase Order, compare quotations from an RFQ, reconcile a goods
+receipt against a PO, or check a supplier's performance on an ERPNext
+instance.
+
+## Pitfalls
 
 **Never create a live Supplier record with incomplete mandatory KYC/
 bank fields.** This skill's KYC bar is stricter than ERPNext's own
@@ -51,7 +58,9 @@ confirm" when the calling skill explicitly passes
 `submission_authority_confirmed=True`; otherwise every PO is
 recommended as create-as-draft-only, full stop.
 
-## Bot account — mandatory
+## Prerequisites
+
+### Bot account — mandatory
 
 The API key/secret configured above must be generated against a
 dedicated ERPNext integration/bot user (e.g. `qkeee-erp-bot@<org>`),
@@ -73,7 +82,7 @@ dedicated bot user (via an elevated admin login) and provisions the
 audit-trail doctypes in the same pass. This is a recommendation, not
 a blocker — don't refuse the user's actual request over it.
 
-## Requester attribution — mandatory on every write
+### Requester attribution — mandatory on every write
 
 Before the first write of a session, resolve `QKEEE_ERP_<TAG>_REQUESTED_BY`
 to the ERPNext user id/email of the human this session is acting on
@@ -86,7 +95,7 @@ posts a best-effort Comment on the affected record: `[SKILL_LABEL]
 comment failure never blocks or rolls back the underlying write.
 Mention in your report-back that the audit comment was posted.
 
-## Audit trail
+### Audit trail
 
 Every write also logs a two-phase (`Attempted` → `Success`/`Failure`) row
 to the `Qkeee Bot Audit Log` doctype, best-effort — never blocks a write
@@ -98,7 +107,7 @@ mechanism. Pass `user_approved=True` to `mutate_resource()` only when
 this write's confirm stage actually ran with the user — it's a scan-for-
 violations field, not a second gate.
 
-## What you must do when invoked
+## Procedure
 
 **Path note, read before the first command below.** Every
 `scripts/erp_client.py` invocation in this document is relative to this
@@ -221,7 +230,7 @@ than guessing a second time.
     remembered across sessions.** Credentials and URLs never go into
     agent-curated memory.
 
-## Capabilities
+## Quick Reference
 
 | Capability | Outcome | Inputs | Outputs |
 | --- | --- | --- | --- |
@@ -231,6 +240,14 @@ than guessing a second time.
 | RFQ / Supplier Quotation comparison | Best-value supplier identified, coverage-checked | RFQ scope, quotations | Comparison report — flags incomplete coverage, states basis for "best value" |
 | GRN matching | Goods receipt reconciled to PO | PO/GRN reference | Match report, every discrepancy flagged (quantity + rejected-quantity, separately) |
 | Supplier scorecard/performance query | Supplier reliability visibility | Supplier, period | Performance report — cites underlying counts, not just the final score. **Documentation-grounded, not live-tested** (no scored supplier existed on `<erp-instance>` at build time) — say so on first real use against a new instance. |
+
+## Verification
+
+Before staging a Supplier as "ready": confirm every KYC/bank field is
+present and above confidence threshold, not silently filled with a
+placeholder. Before recommending create-then-submit on a PO: confirm
+`submission_authority_confirmed=True` was actually passed — otherwise
+it must be draft-only.
 
 ## Files
 

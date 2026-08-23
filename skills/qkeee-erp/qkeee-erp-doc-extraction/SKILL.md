@@ -1,6 +1,6 @@
 ---
 name: qkeee-erp-doc-extraction
-description: "Extracts structured, ERPNext-doctype-shaped data from attached PDFs/DOCX/XLSX/images (including scanned/photographed documents) or from a shared URL (LinkedIn profile, hosted invoice/document link) — supplier KYC docs, vendor invoices, resumes — and stages it as a reviewable report; never creates or updates an ERPNext record directly. Use when the user attaches a document or shares a link during HR/Procurement/Accounts work (or any qkeee-erp-* persona session), or asks to pull structured fields out of a PDF/resume/invoice/business card/scanned image/profile URL, ERP-related or not."
+description: "Extracts document fields into a staged review report."
 metadata:
   hermes:
     tags: [ERPNext, Document-Extraction, Utility, OCR, Staged-Review]
@@ -22,7 +22,21 @@ materially different capability — fetching arbitrary external web
 content — added on top of the plan's original scope; flagged here rather
 than presented as if the plan always covered it.
 
-## The non-negotiable
+## When to Use
+
+Use when the user attaches a document or shares a link during
+HR/Procurement/Accounts work (or any `qkeee-erp-*` persona session), or
+asks to pull structured fields out of a PDF/resume/invoice/business
+card/scanned image/profile URL, ERP-related or not.
+
+## Prerequisites
+
+No ERPNext credentials or environment configuration needed — this
+skill ships no connector at all (see Pitfalls). Only requirement is a
+harness that can read the attached file type or fetch the given URL;
+see Procedure step 1 for the tool-discovery order.
+
+## Pitfalls
 
 **Never create or update an ERPNext record directly from extraction
 output.** Output always lands as a staged, human-reviewable report first —
@@ -46,7 +60,7 @@ commonly are, to non-logged-in fetchers), say so plainly and stage
 whatever was actually retrieved as low-confidence rather than padding it
 with assumptions.
 
-## What you must do when invoked
+## Procedure
 
 1. **Discover harness file-reading and web-fetch tools before using
    bundled logic.** Concretely: if the harness exposes a tool-search or
@@ -125,7 +139,7 @@ with assumptions.
    image, or shared URL for a purpose unrelated to ERPNext is a
    legitimate, unblocked use.
 
-## Capabilities
+## Quick Reference
 
 | Capability | Outcome | Notes |
 | --- | --- | --- |
@@ -135,6 +149,14 @@ with assumptions.
 | Scanned/photographed image extraction | Same field sets as above, sourced from an image capture rather than a clean file | No OCR dependency — routed through native multimodal image reading; image quality issues (blur/glare/skew) push affected fields to lower confidence |
 | URL-based extraction | Structured fields pulled from a shared link (LinkedIn profile, hosted invoice/document page) | Public/unauthenticated fetch only — never bypasses login/paywall; partial/blocked fetches are flagged, not padded |
 | Harness file-tool + web-fetch discovery | Prefer existing PDF/DOCX/XLSX/image/URL-fetch tools over bundled parsing | Attempt-then-degrade — never hard-fail if discovery isn't supported |
+
+## Verification
+
+Every field must carry an explicit `value` (even if `null`) and a
+confidence rating before the report renders — `render_staged_report.py`
+refuses otherwise, don't work around that by inventing one. For an
+invoice, confirm the `reconciliation_check` field is present and states
+whether line items + tax tied out against `grand_total`.
 
 ## Files
 

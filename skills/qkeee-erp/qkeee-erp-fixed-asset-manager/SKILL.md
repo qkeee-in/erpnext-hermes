@@ -1,6 +1,6 @@
 ---
 name: qkeee-erp-fixed-asset-manager
-description: "Meticulous, audit-minded fixed-asset manager over ERPNext — full asset lifecycle from capitalization (source/cost-basis/category completeness gated) through depreciation (schedule review and double-confirmed depreciation runs, which post every overdue period in one call), transfer (source-location cross-checked against the asset's actual current location before staging as ready), maintenance scheduling, repair, and disposal (scrap or sale, double-confirmed, gain/loss stated explicitly), plus audit/physical-verification checklists. Use when the user wants to capitalize a new asset, review or run depreciation, transfer or relocate an asset, schedule or log maintenance/repair, dispose of or scrap an asset, or run a physical asset verification against an ERPNext instance."
+description: "Manages ERPNext fixed assets: capitalize to disposal."
 metadata:
   hermes:
     tags: [ERPNext, Fixed-Assets, Depreciation, Audit-Trail, Lifecycle-Management]
@@ -29,7 +29,14 @@ lifecycle — capitalize, depreciate, transfer/maintain, dispose — with
 an audit trail the user can trust, and never lets a depreciation run or
 a disposal happen on a single "yes."
 
-## The non-negotiables
+## When to Use
+
+Use when the user wants to capitalize a new asset, review or run
+depreciation, transfer or relocate an asset, schedule or log
+maintenance/repair, dispose of or scrap an asset, or run a physical
+asset verification against an ERPNext instance.
+
+## Pitfalls
 
 **Depreciation runs and disposals never execute without explicit
 confirmation, and get a DOUBLE confirm** — state the financial impact
@@ -72,7 +79,9 @@ refused rather than silently submitted. This applies to every submit
 in the skill — Asset capitalization, Asset Movement, Asset Repair — not
 only depreciation/disposal.
 
-## Bot account — mandatory
+## Prerequisites
+
+### Bot account — mandatory
 
 The API key/secret configured above must be generated against a
 dedicated ERPNext integration/bot user (e.g. `qkeee-erp-bot@<org>`),
@@ -94,7 +103,7 @@ dedicated bot user (via an elevated admin login) and provisions the
 audit-trail doctypes in the same pass. This is a recommendation, not
 a blocker — don't refuse the user's actual request over it.
 
-## Requester attribution — mandatory on every write
+### Requester attribution — mandatory on every write
 
 Before the first write of a session, resolve `QKEEE_ERP_<TAG>_REQUESTED_BY`
 to the ERPNext user id/email of the human this session is acting on
@@ -107,7 +116,7 @@ posts a best-effort Comment on the affected record: `[SKILL_LABEL]
 comment failure never blocks or rolls back the underlying write.
 Mention in your report-back that the audit comment was posted.
 
-## Audit trail
+### Audit trail
 
 Every write through `mutate_resource()` also logs a two-phase
 (`Attempted` → `Success`/`Failure`) row to the `Qkeee Bot Audit Log`
@@ -127,7 +136,7 @@ just don't yet produce a `Qkeee Bot Audit Log` row. Tell the user this
 explicitly if they're relying on the audit trail to cover depreciation/
 disposal activity specifically.
 
-## What you must do when invoked
+## Procedure
 
 **Path note, read before the first command below.** Every
 `scripts/erp_client.py` invocation in this document is relative to this
@@ -289,7 +298,7 @@ than guessing a second time.
     remembered across sessions.** Credentials and URLs never go into
     agent-curated memory.
 
-## Capabilities
+## Quick Reference
 
 | Capability | Outcome | Inputs | Outputs |
 | --- | --- | --- | --- |
@@ -301,6 +310,15 @@ than guessing a second time.
 | Asset repair | Repair logged, optionally capitalized | Asset, repair details | Asset Repair record — create/update/submit confirmed live |
 | Asset disposal/scrap | Asset retired correctly | Asset, disposal method (scrap/sale), reason | Disposal executed (scrap) or Sales Invoice drafted (sale) — gated, DOUBLE confirm required; states book value and, for sale, estimated gain/loss. **Sale path not live-tested end to end** — scrap path is |
 | Asset audit / physical verification checklist | Verification-ready checklist | Asset category/location scope | Checklist report, Markdown or HTML |
+
+## Verification
+
+Before a depreciation run or a disposal: state the financial impact
+(every period about to post; book value and gain/loss on disposal)
+and get a second, explicit confirmation — never chain confirm straight
+into execute. Before staging a transfer or capitalization as "ready":
+confirm source location/cost-basis/category completeness against the
+asset's real current record, not an assumed value.
 
 ## Files
 

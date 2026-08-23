@@ -1,6 +1,6 @@
 ---
 name: qkeee-erp-sales
-description: "Customer-facing sales executive over ERPNext — customer onboarding (KYC-ish completeness bar stricter than ERPNext's own, requires a reachable primary contact), Quotation drafting (always create-as-draft-only, never auto-submitted as a formal customer commitment), Sales Order status queries (delivery + billing fulfilment tracked separately), Delivery Note tracking, and sales pipeline-lite reporting (quotation-stage counts + open-order value/overdue exposure). Use when the user wants to onboard a customer, draft a quotation, check where a Sales Order or Delivery Note stands, or get a lightweight sales pipeline view on an ERPNext instance."
+description: "Runs ERPNext sales: onboarding, quotes, orders, tracking."
 metadata:
   hermes:
     tags: [ERPNext, Sales, Selling-Module, Customer-Onboarding, Quotation]
@@ -28,7 +28,13 @@ Quotation is never treated as a binding commitment prematurely. Handles
 customer onboarding and Selling-module query/reporting cleanly, scoped
 deliberately to ERPNext's Selling module — not a CRM replacement.
 
-## The non-negotiables
+## When to Use
+
+Use when the user wants to onboard a customer, draft a quotation, check
+where a Sales Order or Delivery Note stands, or get a lightweight sales
+pipeline view on an ERPNext instance.
+
+## Pitfalls
 
 **A Quotation is drafted, never auto-submitted as a formal customer
 commitment, without explicit confirmation.** Creating a Quotation
@@ -50,7 +56,9 @@ nothing else set creates cleanly). This skill's bar is stricter:
 Incomplete extractions must be flagged back to the user, never silently
 filled with a placeholder.
 
-## Bot account — mandatory
+## Prerequisites
+
+### Bot account — mandatory
 
 The API key/secret configured above must be generated against a
 dedicated ERPNext integration/bot user (e.g. `qkeee-erp-bot@<org>`),
@@ -72,7 +80,7 @@ dedicated bot user (via an elevated admin login) and provisions the
 audit-trail doctypes in the same pass. This is a recommendation, not
 a blocker — don't refuse the user's actual request over it.
 
-## Requester attribution — mandatory on every write
+### Requester attribution — mandatory on every write
 
 Before the first write of a session, resolve `QKEEE_ERP_<TAG>_REQUESTED_BY`
 to the ERPNext user id/email of the human this session is acting on
@@ -85,7 +93,7 @@ posts a best-effort Comment on the affected record: `[SKILL_LABEL]
 comment failure never blocks or rolls back the underlying write.
 Mention in your report-back that the audit comment was posted.
 
-## Audit trail
+### Audit trail
 
 Every write also logs a two-phase (`Attempted` → `Success`/`Failure`) row
 to the `Qkeee Bot Audit Log` doctype, best-effort — never blocks a write
@@ -97,7 +105,7 @@ mechanism. Pass `user_approved=True` to `mutate_resource()` only when
 this write's confirm stage actually ran with the user — it's a scan-for-
 violations field, not a second gate.
 
-## What you must do when invoked
+## Procedure
 
 **Path note, read before the first command below.** Every
 `scripts/erp_client.py` invocation in this document is relative to this
@@ -247,7 +255,7 @@ than guessing a second time.
     remembered across sessions.** Credentials and URLs never go into
     agent-curated memory.
 
-## Capabilities
+## Quick Reference
 
 | Capability | Outcome | Inputs | Outputs |
 | --- | --- | --- | --- |
@@ -256,6 +264,13 @@ than guessing a second time.
 | Sales Order status/query | Know where an SO stands, on both fulfilment axes | SO reference | Status report — `status`, `delivery_status`/`per_delivered`, `billing_status`/`per_billed` reported separately |
 | Delivery Note tracking | Know delivery status, and whether it's cleanly linked back to its order | SO/DN reference | Delivery status report — flags missing `so_detail` linkage as a likely cause of a fulfilment mismatch |
 | Sales pipeline lite reporting | Pipeline visibility: quotation-stage counts + open Sales Order exposure/overdue | Date range/territory | Pipeline report — quotation-stage counts (hand-aggregated, reconciled against total queried) + Sales Order Analysis-sourced open-order summary |
+
+## Verification
+
+A Quotation is never submitted automatically — confirm it stayed
+create-as-draft-only. Before staging a Customer as "ready": confirm a
+reachable primary contact and group/territory are actually present, not
+assumed.
 
 ## Files
 

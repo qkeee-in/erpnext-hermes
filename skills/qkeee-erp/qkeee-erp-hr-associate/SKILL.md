@@ -1,6 +1,6 @@
 ---
 name: qkeee-erp-hr-associate
-description: "Warm but process-compliant, privacy-conscious HR generalist/associate over Frappe HR (HRMS) on ERPNext — employee onboarding and updates (PII flagged explicitly, never surfaced/written outside task scope), leave application and balance checks, attendance query/regularization, employee separation/exit checklists, Job Opening/Job Applicant/Interview management, Offer Letter (Job Offer) drafting — Offer Letter and Employee Onboarding are always advisory-only, never auto-committed regardless of mode — and Payroll operations including batch Salary Slip creation/submission via REST API for individual or bulk payslip runs. Use when the user wants to onboard or update an employee, check/apply for leave, review attendance, run an exit checklist, manage a job opening or applicant, schedule an interview, draft an offer letter, create/submit salary slips, or pull an HR report (headcount, birthdays/anniversaries, probation-ending) on an ERPNext instance."
+description: "Runs ERPNext HR: onboarding, leave, payroll, offers, exits."
 metadata:
   hermes:
     tags: [ERPNext, HR, Payroll, Recruitment, Privacy]
@@ -29,7 +29,15 @@ checklists (onboarding, exit). Handles HR transactional and talent-
 acquisition tasks correctly and confidentially, end to end from
 candidate to exit.
 
-## The non-negotiables
+## When to Use
+
+Use when the user wants to onboard or update an employee, check/apply
+for leave, review attendance, run an exit checklist, manage a job
+opening or applicant, schedule an interview, draft an offer letter,
+create/submit salary slips, or pull an HR report (headcount,
+birthdays/anniversaries, probation-ending) on an ERPNext instance.
+
+## Pitfalls
 
 **Never surface or write sensitive employee PII (compensation, ID
 documents, personal contact details) outside the scope of the current
@@ -58,7 +66,9 @@ own separate, deliberately-confirmed step outside this renderer.
 domain-knowledge.md's "update employee details" guidance: never infer
 license to touch fields the user didn't actually ask about.
 
-## Bot account — mandatory
+## Prerequisites
+
+### Bot account — mandatory
 
 The API key/secret configured above must be generated against a
 dedicated ERPNext integration/bot user (e.g. `qkeee-erp-bot@<org>`),
@@ -80,7 +90,7 @@ dedicated bot user (via an elevated admin login) and provisions the
 audit-trail doctypes in the same pass. This is a recommendation, not
 a blocker — don't refuse the user's actual request over it.
 
-## Requester attribution — mandatory on every write
+### Requester attribution — mandatory on every write
 
 Before the first write of a session, resolve `QKEEE_ERP_<TAG>_REQUESTED_BY`
 to the ERPNext user id/email of the human this session is acting on
@@ -93,7 +103,7 @@ posts a best-effort Comment on the affected record: `[SKILL_LABEL]
 comment failure never blocks or rolls back the underlying write.
 Mention in your report-back that the audit comment was posted.
 
-## Audit trail
+### Audit trail
 
 Every write also logs a two-phase (`Attempted` → `Success`/`Failure`) row
 to the `Qkeee Bot Audit Log` doctype, best-effort — never blocks a write
@@ -105,7 +115,7 @@ mechanism. Pass `user_approved=True` to `mutate_resource()` only when
 this write's confirm stage actually ran with the user — it's a scan-for-
 violations field, not a second gate.
 
-## What you must do when invoked
+## Procedure
 
 **Path note, read before the first command below.** Every
 `scripts/erp_client.py` invocation in this document is relative to this
@@ -234,7 +244,7 @@ than guessing a second time.
     Prefer cancel over delete, and tell the user upfront that cancel, not
     delete, is the realistic outcome for anything past a bare create.
 
-## Capabilities
+## Quick Reference
 
 | Capability | Outcome | Inputs | Outputs |
 | --- | --- | --- | --- |
@@ -249,6 +259,14 @@ than guessing a second time.
 | Offer Letter drafting | Offer ready for a human to extend | Applicant, offer terms | Advisory-only draft — never auto-committed, any mode |
 | HR reports | Headcount, birthdays/anniversaries, probation-ending visibility | Date range / department | Report, Markdown or HTML |
 | Payroll — batch salary slips | Create and submit Salary Slips for one or many employees across pay periods | Employee list, month/period list, Salary Structure | Draft payslips created, submitted, or both — with dedup detection and per-payslip status report; see `references/payroll-batch-operations.md` for the full batch-script pattern and rate-limiting discipline |
+
+## Verification
+
+Offer Letter and Employee Onboarding writes are always advisory-only —
+confirm nothing was auto-committed, regardless of `qkeee_erp.mode`.
+Before writing any PII field, confirm it's actually in scope for the
+current authorized task. Before marking an exit `status: "Left"`,
+confirm a `relieving_date` is set.
 
 ## Files
 

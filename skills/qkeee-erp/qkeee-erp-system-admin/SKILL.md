@@ -1,6 +1,6 @@
 ---
 name: qkeee-erp-system-admin
-description: "Pragmatic, security-conscious ERPNext sysadmin — user creation and role assignment (with elevated-role acknowledgment for System Manager/Administrator grants), permission/role matrix review, role/permission changes (add/update/remove/reset, all double-confirmed), simple DocType customization (Custom Field / one Property Setter value, with a live-confirmed meta-cache-lag warning on verification), destructive actions (disable/delete a user, delete a customization — double-confirmed with a stated reason), notification/webhook config review, and a system health check (scheduler status, overdue scheduled jobs, recent Error Log entries). Use when the user wants to provision or deactivate an ERPNext user, review or change who can do what, add a simple custom field, review notifications/integrations, or check whether the instance is healthy."
+description: "Administers ERPNext users, roles, permissions, health."
 metadata:
   hermes:
     tags: [ERPNext, System-Admin, Permissions, Security, Audit-Trail]
@@ -30,7 +30,13 @@ This is the widest-blast-radius persona in the `qkeee-erp` library
 the module plan's roadmap precisely so it could reuse the confirm-gate
 patterns already proven out across every other `qkeee-erp-*` skill.
 
-## The non-negotiable
+## When to Use
+
+Use when the user wants to provision or deactivate an ERPNext user,
+review or change who can do what, add a simple custom field, review
+notifications/integrations, or check whether the instance is healthy.
+
+## Pitfalls
 
 **Any permission/role change or destructive action (disable user,
 delete a customization) must be scoped explicitly and confirmed — never
@@ -63,7 +69,9 @@ conversation affirmatively confirms that specific rendered action, one
 turn later at minimum. Treat the token as a tamper/staleness check, not
 a substitute for actually waiting for the user's answer.
 
-## Bot account — mandatory
+## Prerequisites
+
+### Bot account — mandatory
 
 The API key/secret configured above must be generated against a
 dedicated ERPNext integration/bot user (e.g. `qkeee-erp-bot@<org>`),
@@ -85,7 +93,7 @@ dedicated bot user (via an elevated admin login) and provisions the
 audit-trail doctypes in the same pass. This is a recommendation, not
 a blocker — don't refuse the user's actual request over it.
 
-## Requester attribution — mandatory on every write
+### Requester attribution — mandatory on every write
 
 Before the first write of a session, resolve `QKEEE_ERP_<TAG>_REQUESTED_BY`
 to the ERPNext user id/email of the human this session is acting on
@@ -98,7 +106,7 @@ posts a best-effort Comment on the affected record: `[SKILL_LABEL]
 comment failure never blocks or rolls back the underlying write.
 Mention in your report-back that the audit comment was posted.
 
-## Audit trail
+### Audit trail
 
 Every write through `mutate_resource()` also logs a two-phase
 (`Attempted` → `Success`/`Failure`) row to the `Qkeee Bot Audit Log`
@@ -124,7 +132,7 @@ previously the one unaudited write path in the library — the
 double-confirm token gate and `requested_by` enforcement always applied
 in full; only the Audit Log row was missing before this fix.
 
-## What you must do when invoked
+## Procedure
 
 **Path note, read before the first command below.** Every
 `scripts/erp_client.py` invocation in this document is relative to this
@@ -346,7 +354,7 @@ than guessing a second time.
     plaintext) unless `QKEEE_ERP_<TAG>_ALLOW_INSECURE=1` is explicitly
     set — a deliberate opt-out for local/dev, never the default path.
 
-## Capabilities
+## Quick Reference
 
 | Capability | Outcome | Inputs | Outputs |
 | --- | --- | --- | --- |
@@ -360,6 +368,16 @@ than guessing a second time.
 | System health check | Background jobs / error log status known | none | Health report — scheduler status, overdue Scheduled Job Types, recent Error Log entries; explicitly reports that live RQ Job/queue depth is not readable via this API, with a stated fallback (desk UI / `bench`) |
 | Integration/webhook config review | Integration surface understood | none | Read-only Webhook report; creating a new Webhook is a token-gated write (treated as an outbound-data/SSRF surface, not "inert") |
 | Destructive action (disable/delete user, delete customization) | Access/config removed deliberately, never by accident | Target, reason | Executed action — gated, DOUBLE confirm required; states exactly what's disabled/deleted and why; reason also written to ERPNext as a Comment (best-effort) for an audit trail outside the chat transcript |
+
+## Verification
+
+Before any permission/role change or destructive action: confirm the
+scope was resolved to specific role/doctype names, not a broad or
+implicit request, and that the double confirm actually happened one
+turn after the user's own reply — not chained in the same turn as the
+render. A matching `confirmation_token` proves recency/consistency
+only, never that a human read and approved the draft (see the token
+gate's known limitation, above).
 
 ## Files
 

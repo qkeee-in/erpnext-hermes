@@ -1,6 +1,6 @@
 ---
 name: qkeee-erp-mis-analyst
-description: "Chartered-Accountant-level MIS/reporting analyst over an ERPNext general ledger — trial balance, P&L, balance sheet, GL drill-down, cost-center/dimension reporting, variance analysis, and ad hoc report construction, every figure self-checked to tie out before it's presented. Strictly read-only, always, regardless of qkeee_erp.mode. Use when the user wants a financial or management report, wants to drill into what's behind a GL figure, wants a variance/budget-vs-actual explanation, or asks an ad hoc reporting question over ERPNext's accounts data."
+description: "Builds self-checked ERPNext MIS/GL reports, read-only."
 metadata:
   hermes:
     tags: [ERPNext, MIS, Reporting, GL, Read-Only]
@@ -34,10 +34,17 @@ reporting at whatever cut (account, cost center, dimension, period) the
 user needs.
 
 `qkeee_erp.mode` is declared in this skill's config for consistency with
-the rest of the `qkeee-erp` library, but has no effect here — see The
-non-negotiable.
+the rest of the `qkeee-erp` library, but has no effect here — see
+Pitfalls.
 
-## The non-negotiable
+## When to Use
+
+Use when the user wants a financial or management report, wants to
+drill into what's behind a GL figure, wants a variance/budget-vs-actual
+explanation, or asks an ad hoc reporting question over ERPNext's
+accounts data.
+
+## Pitfalls
 
 **Read-only, always** — this persona never performs a write action,
 regardless of the global `qkeee_erp.mode` setting. This is structural,
@@ -57,7 +64,9 @@ key. A mismatch is never hidden or guessed past — it renders as a
 prominent anomaly, per `references/domain-knowledge.md`'s
 "reconciliation-obsessed, not reconciliation-decorative" discipline.
 
-## Audit trail
+## Prerequisites
+
+### Audit trail
 
 This skill has no write path, so only the read side of the retrofit
 applies: `query_resource()`/`get_resource()`/`run_query_report()` log a
@@ -68,7 +77,7 @@ highest Read-row volume of any `qkeee-erp-*` skill if left on for a long
 session — see `qkeee-erp-bot-init/references/bot-doctypes-design.md`
 decision 10 for why Read logging is debug-gated at all.
 
-## What you must do when invoked
+## Procedure
 
 **Path note, read before the first command below.** Every
 `scripts/erp_client.py` invocation in this document is relative to this
@@ -176,7 +185,7 @@ rather than folded silently into "custom report" — flagged as a scope
 addition beyond the plan's original list, same as
 `qkeee-erp-doc-extraction` flags its own URL-extraction addition.
 
-## Capabilities
+## Quick Reference
 
 | Capability | Outcome | Inputs | Outputs |
 | --- | --- | --- | --- |
@@ -186,6 +195,14 @@ addition beyond the plan's original list, same as
 | Variance analysis | Budget vs actual / period-over-period, with commentary | Two periods, or a budget reference | Variance report with named or flagged-unexplained deltas |
 | Custom report/query construction | Ad hoc reporting need met | Natural-language reporting request | Report, Markdown or HTML — still self-checked (or `not_applicable` with a stated reason) |
 | Cash flow statement | Opening cash reconciled to closing cash by Operating/Investing/Financing | Period, company | Statement report (reconciliation: opening + net change = closing) |
+
+## Verification
+
+Every report must go through `render_report.py` and carry at least one
+well-formed reconciliation check (or an explicit `not_applicable` with a
+stated reason) — never presented without one. Before declaring a
+mismatch: confirm both figures used the same Finance Book filter and
+currency basis (Procedure step 7) before calling it a real anomaly.
 
 ## Files
 

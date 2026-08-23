@@ -1,6 +1,6 @@
 ---
 name: qkeee-erp-inventory
-description: "Physically-grounded warehouse/inventory controller over ERPNext — stock level queries (per item/warehouse, reconciliation-checked), stock transfers (source availability verified against a freshly-fetched balance before staging as ready, since ERPNext itself only rejects insufficient stock at submit, not at draft), stock reconciliation (current qty always resolved via ERPNext's own get_items method, never guessed — critical for batch-tracked items, where an unresolved current_qty risks silently inflating stock instead of correcting it), reorder/Material Request triggers, and batch/serial trace queries. Use when the user wants to check stock levels, transfer or move stock between warehouses, reconcile a physical count against system stock, trigger a reorder/purchase requisition, or trace a batch/serial number's history on an ERPNext instance."
+description: "Manages ERPNext stock: levels, transfers, reconciliation."
 metadata:
   hermes:
     tags: [ERPNext, Inventory, Warehouse, Stock-Management, Reconciliation]
@@ -29,7 +29,14 @@ stock visibility and movement so the system's record matches physical
 reality, and never lets a transfer or reconciliation adjust the record
 silently.
 
-## The non-negotiable
+## When to Use
+
+Use when the user wants to check stock levels, transfer or move stock
+between warehouses, reconcile a physical count against system stock,
+trigger a reorder/purchase requisition, or trace a batch/serial
+number's history on an ERPNext instance.
+
+## Pitfalls
 
 **Stock transfers and reconciliations never adjust silently — the
 physical and financial impact is stated plainly before confirm, every
@@ -55,7 +62,9 @@ this is enforced in code, not just in the prompt:
   get_stock_reconciliation_items()` (ERPNext's own `get_items` method) —
   never guessed, never hand-supplied.
 
-## Bot account — mandatory
+## Prerequisites
+
+### Bot account — mandatory
 
 The API key/secret configured above must be generated against a
 dedicated ERPNext integration/bot user (e.g. `qkeee-erp-bot@<org>`),
@@ -77,7 +86,7 @@ dedicated bot user (via an elevated admin login) and provisions the
 audit-trail doctypes in the same pass. This is a recommendation, not
 a blocker — don't refuse the user's actual request over it.
 
-## Requester attribution — mandatory on every write
+### Requester attribution — mandatory on every write
 
 Before the first write of a session, resolve `QKEEE_ERP_<TAG>_REQUESTED_BY`
 to the ERPNext user id/email of the human this session is acting on
@@ -90,7 +99,7 @@ posts a best-effort Comment on the affected record: `[SKILL_LABEL]
 comment failure never blocks or rolls back the underlying write.
 Mention in your report-back that the audit comment was posted.
 
-## Audit trail
+### Audit trail
 
 Every write also logs a two-phase (`Attempted` → `Success`/`Failure`) row
 to the `Qkeee Bot Audit Log` doctype, best-effort — never blocks a write
@@ -102,7 +111,7 @@ mechanism. Pass `user_approved=True` to `mutate_resource()` only when
 this write's confirm stage actually ran with the user — it's a scan-for-
 violations field, not a second gate.
 
-## What you must do when invoked
+## Procedure
 
 **Path note, read before the first command below.** Every
 `scripts/erp_client.py` invocation in this document is relative to this
@@ -235,7 +244,7 @@ than guessing a second time.
     remembered across sessions.** Credentials and URLs never go into
     agent-curated memory.
 
-## Capabilities
+## Quick Reference
 
 | Capability | Outcome | Inputs | Outputs |
 | --- | --- | --- | --- |
@@ -244,6 +253,14 @@ than guessing a second time.
 | Stock reconciliation assist | System matches physical count | Physical count data | Stock Reconciliation (gated, confirm) — refuses "ready" unless current_qty (and, for batch-tracked items, batch_no) came from ERPNext's own get_items resolver; states qty/value delta plainly |
 | Reorder / purchase requisition trigger | Low stock actioned | Item, reorder threshold context | Material Request drafted (single-confirm) |
 | Batch/serial tracking query | Trace a batch/serial | Batch/serial number | Trace report — running-balance-consistency checked against Stock Ledger Entry |
+
+## Verification
+
+Before staging a transfer as "ready": confirm the outgoing line's qty
+against a freshly-fetched Bin balance, not a stale/assumed figure.
+Before staging a reconciliation as "ready" for a batch-tracked item:
+confirm `current_qty`/`batch_no` came from `get_stock_reconciliation_
+items()`, never guessed or hand-supplied.
 
 ## Files
 
