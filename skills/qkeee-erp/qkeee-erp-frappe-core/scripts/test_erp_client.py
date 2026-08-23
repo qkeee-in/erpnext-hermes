@@ -120,10 +120,13 @@ class EnsurePersonaRegisteredTests(unittest.TestCase):
         mock_request.assert_not_called()
         self.assertEqual(result, "already_registered")
 
+    @patch.object(ec, "_audit_insert")
     @patch.object(ec, "resource_exists", return_value=False)
     @patch.object(ec, "get_env_config", return_value={"tag": "default"})
     @patch.object(ec, "_request")
-    def test_creates_when_not_registered(self, mock_request, mock_get_env_config, mock_resource_exists):
+    def test_creates_when_not_registered(self, mock_request, mock_get_env_config, mock_resource_exists,
+                                          mock_audit_insert):
+        mock_request.return_value = {"data": {"name": "qkeee-erp-sales"}}
         result = ec.ensure_persona_registered(
             "default", persona_code="qkeee-erp-sales", persona_label="Sales",
             default_mode="read-write", non_negotiables="never bulk-delete",
@@ -140,17 +143,32 @@ class EnsurePersonaRegisteredTests(unittest.TestCase):
         self.assertEqual(payload["persona_label"], "Sales")
         self.assertEqual(payload["default_mode"], "Read Write")
         self.assertEqual(payload["non_negotiables"], "never bulk-delete")
+        # PERSONA_DOCTYPE is no longer AUDIT_EXEMPT — the create is audited
+        # via a single-shot _audit_insert() (not the two-phase write-path
+        # helpers, which are excluded from read-only personas' own copy).
+        mock_audit_insert.assert_called_once()
+        audit_fields = mock_audit_insert.call_args[0][1]
+        self.assertEqual(audit_fields["action"], "Create")
+        self.assertEqual(audit_fields["reference_doctype"], ec.PERSONA_DOCTYPE)
+        self.assertEqual(audit_fields["reference_name"], "qkeee-erp-sales")
+        self.assertEqual(audit_fields["status"], "Success")
 
+    @patch.object(ec, "_audit_insert")
     @patch.object(ec, "resource_exists", return_value=False)
     @patch.object(ec, "get_env_config", return_value={"tag": "default"})
     @patch.object(ec, "_request", side_effect=ec.ConnectorError("Persona doctype not provisioned"))
-    def test_swallows_failure_when_doctype_not_provisioned(self, mock_request, mock_get_env_config, mock_resource_exists):
+    def test_swallows_failure_when_doctype_not_provisioned(self, mock_request, mock_get_env_config,
+                                                             mock_resource_exists, mock_audit_insert):
         with patch("sys.stderr") as mock_stderr:
             result = ec.ensure_persona_registered(
                 "default", persona_code="qkeee-erp-sales", persona_label="Sales",
             )
         self.assertEqual(result, "failed")
         self.assertTrue(mock_stderr.write.called)
+        mock_audit_insert.assert_called_once()
+        audit_fields = mock_audit_insert.call_args[0][1]
+        self.assertEqual(audit_fields["status"], "Failure")
+        self.assertEqual(audit_fields["error_detail"], "Persona doctype not provisioned")
 
 
 class RunQueryReportTests(unittest.TestCase):

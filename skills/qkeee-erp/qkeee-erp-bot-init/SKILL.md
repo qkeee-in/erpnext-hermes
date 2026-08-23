@@ -21,22 +21,27 @@ metadata:
 # qkeee-erp-bot-init
 
 Technical/infrastructure skill, run occasionally (setup, or after a schema
-change), not a persona a user talks to for functional work. Checks whether
-the 4 `Qkeee Bot *` audit-trail doctypes and the `Qkeee Bot` role already
-exist in the target ERPNext instance, and creates whatever's missing.
-Idempotent — safe to re-run against an instance that's already initialized.
-Live-validated end-to-end (dry-run → real-run → idempotent re-run) against
+change), not a persona a user talks to for functional work. `init_bot.py`
+provisions, in ONE combined dry-run/confirm-token round trip: the `Qkeee
+Bot` role, the 2 `Qkeee Bot *` audit-trail doctypes, every persona in
+`scripts/doctype_defs.py`'s `PERSONA_MANIFEST` (the `Qkeee Bot Persona`
+master row for each shipped `qkeee-erp-*` skill, audited on creation —
+see bot-doctypes-design.md), the `qkeee-erp.env` credentials file skeleton
+if it doesn't exist yet (header only, no secrets — see "Bot user
+provisioning" below for why), and — if `--bot-email` is given — the
+dedicated bot-user account itself (create-or-update, role, enable, API
+keys). Idempotent — safe to re-run against an instance that's already
+initialized, each piece existence-checked independently. Live-validated
+end-to-end (dry-run → real-run → idempotent re-run) against
 `demo.qkeee.in` — see `references/bot-doctypes-design.md`'s
 deferred-field-patch note for what that run found and fixed.
 
-**Also checks for and can provision the dedicated
-`qkeee-erp-bot@<org>`-style service-account User** the persona skills'
-shared `QKEEE_ERP_<TAG>_API_KEY`/`_API_SECRET` should authenticate as —
-see "Bot user provisioning" below. This is a related but separate concern
-from the doctype/role provisioning above: the doctypes/role are the audit
-*schema*; the bot user is the *account* persona skills actually log in as
-day to day. Both are this skill's job because both are one-time/occasional
-per-environment setup an elevated admin credential is needed for.
+**`--bot-email` folds bot-user provisioning into the same run** — the
+dedicated `qkeee-erp-bot@<org>`-style service-account User the persona
+skills' shared `QKEEE_ERP_<TAG>_API_KEY`/`_API_SECRET` should authenticate
+as. Omit it to skip bot-user provisioning entirely and run
+`scripts/ensure_bot_user.py` separately instead (its own standalone
+dry-run/confirm flow, unchanged — see "Bot user provisioning" below).
 
 ## When to Use
 
@@ -49,12 +54,24 @@ environment.
 
 ## Bot user provisioning
 
-Run `scripts/ensure_bot_user.py` to check whether a given ERPNext email
-already exists as a User, and if so whether it holds the `Qkeee Bot` role,
-is enabled, and has an API key configured. If the User doesn't exist yet,
-this script — using the same elevated admin credential as the doctype
-provisioning above — can create it (System User, no welcome email, `Qkeee
-Bot` role attached) and generate a fresh API key/secret pair for it.
+**Two ways to run this, pick one per invocation:**
+- **Folded into `init_bot.py`** via `--bot-email` (see Procedure below) —
+  one dry-run/confirm-token round trip covers role + doctypes + personas
+  + env-file skeleton + bot user together. Preferred for a fresh
+  instance/first-time setup.
+- **Standalone** via `scripts/ensure_bot_user.py` — its own separate
+  dry-run/confirm-token flow, for provisioning/rotating the bot user
+  independently of a schema init (e.g. `--regenerate-keys` on an
+  already-initialized instance, or adding the bot user well after the
+  doctypes were set up). Requires the `Qkeee Bot` role to already exist —
+  errors out with that instruction if it doesn't (run the doctype/role
+  init flow first).
+
+Either way, it checks whether the given ERPNext email already exists as a
+User, and if so whether it holds the `Qkeee Bot` role, is enabled, and has
+an API key configured — using the elevated admin credential, creates it
+if missing (System User, no welcome email, `Qkeee Bot` role attached) and
+generates a fresh API key/secret pair.
 
 **Trigger this proactively, not only when explicitly asked to "init the
 bot."** If a user is setting up ERPNext credentials for the first time, or
@@ -63,38 +80,41 @@ looks like a real person rather than a service account, or the user
 mentions they don't yet have a dedicated bot account: surface this
 capability and offer to run it, rather than waiting to be asked by name.
 
-1. **Requires the `Qkeee Bot` role to already exist.** Run the doctype/role
-   init flow (steps above) first if it doesn't — `ensure_bot_user.py`
-   errors out with this instruction rather than silently creating a user
-   with a role that doesn't exist.
-2. **Ask for (or confirm) the bot email** the user wants — suggest a
+1. **Ask for (or confirm) the bot email** the user wants — suggest a
    `qkeee-erp-bot@<org-domain>`-style address if they don't have one in
    mind, but let them choose; don't invent one silently.
-3. **Dry-run first**: `python scripts/ensure_bot_user.py --tag <tag>
-   --bot-email <email> --requested-by <admin-id> --dry-run`. Shows exactly
-   what would change (create user / assign role / re-enable / generate
-   keys) and prints a `--confirm-token`/`--issued-at` pair, same
-   discipline as the doctype-provisioning flow above.
-4. **Run for real only after the user explicitly confirms** — including
+2. **Dry-run first**: either `python scripts/init_bot.py --tag <tag>
+   --requested-by <admin-id> --bot-email <email> --dry-run` (folded-in
+   path) or `python scripts/ensure_bot_user.py --tag <tag> --bot-email
+   <email> --requested-by <admin-id> --dry-run` (standalone path). Shows
+   exactly what would change (create user / assign role / re-enable /
+   generate keys, plus role/doctypes/personas for the folded-in path) and
+   prints a `--confirm-token`/`--issued-at` pair.
+3. **Run for real only after the user explicitly confirms** — including
    confirming that this email really is meant to be a dedicated bot
    account, not someone's personal login (the whole point of the
    Bot-account non-negotiable in `qkeee-erp-frappe-core`'s SKILL.md). Pass the
-   token back verbatim.
-5. **If new keys are generated, they print to stdout exactly once.** Tell
+   token back verbatim, to whichever script printed it.
+4. **If new keys are generated, they print to stdout exactly once.** Tell
    the user to copy `QKEEE_ERP_<TAG>_API_KEY` / `_API_SECRET` into
    **`$HERMES_HOME/qkeee-erp.env`** (the dedicated, isolated file
    `erp_client.py`'s `_qkeee_env_file_path()` reads — deliberately separate
    from the profile's main `.env`/`env_passthrough` mechanism; see
    `qkeee-erp-frappe-core/SKILL.md`'s "Resolve config" section for why) or
-   OS credential manager immediately — this skill never stores them
-   anywhere (not in the Qkeee Bot audit trail, not in a file, not in agent
-   memory). **This copy step happens out-of-band, on the user's own
-   machine — never by you reading the keys back out of stdout and
-   re-emitting them into a command, and never by catting/reading
-   `qkeee-erp.env` afterward to confirm it landed correctly**; if the user
-   wants confirmation, have them check the file themselves. If lost,
-   re-run with `--regenerate-keys` (through the same dry-run/confirm flow)
-   to issue a new pair — this invalidates the old one.
+   OS credential manager immediately. **Both paths create the file itself
+   if it's missing (`ensure_qkeee_env_file_skeleton()`) — header comment
+   only, no `BASE_URL`/`API_KEY`/`API_SECRET` lines — so the user has
+   somewhere to paste into, never a file this tooling pre-fills with the
+   actual secret.** This skill never stores real credential values
+   anywhere itself (not in the Qkeee Bot audit trail, not in a file, not
+   in agent memory). **The copy-the-real-values step happens out-of-band,
+   on the user's own machine — never by you reading the keys back out of
+   stdout and re-emitting them into a command, and never by catting/
+   reading `qkeee-erp.env` afterward to confirm it landed correctly**; if
+   the user wants confirmation, have them check the file themselves. If
+   lost, re-run `ensure_bot_user.py --regenerate-keys` (through its own
+   dry-run/confirm flow) to issue a new pair — this invalidates the old
+   one.
 6. **If the user says they'd rather create/share the bot user themselves**
    (e.g. their org's ERPNext admin access is restricted to specific
    people), don't push — tell them what's needed: a dedicated User with
@@ -149,25 +169,35 @@ than guessing a second time.
    health check itself only reports identity, not roles; the write calls
    below are what actually enforce the permission (they 403 otherwise).
 3. **Run a dry-run first**: `python scripts/init_bot.py --tag <tag>
-   --requested-by <admin-id> --dry-run`. This prints the plan (exactly
-   what would be created) and a `--confirm-token`/`--issued-at` pair.
+   --requested-by <admin-id> --dry-run` — add `--bot-email <email>` too if
+   the bot-user account should be provisioned in this same pass (see "Bot
+   user provisioning" above). This prints the plan (exactly what would be
+   created — role, doctypes, personas, `qkeee-erp.env` skeleton if
+   missing, and the bot user if `--bot-email` was given) and a
+   `--confirm-token`/`--issued-at` pair covering all of it as one unit.
    Show the plan to the user before doing anything for real.
 4. **Run for real only after the user explicitly confirms the printed
-   plan**, passing the token back verbatim:
+   plan**, passing the token back verbatim (and the SAME `--bot-email`
+   value if it was on the dry-run — a mismatched or dropped `--bot-email`
+   changes the plan and the token won't match):
    `python scripts/init_bot.py --tag <tag> --requested-by <admin-id>
-   --confirm-token <token> --issued-at <issued_at>`.
+   [--bot-email <email>] --confirm-token <token> --issued-at <issued_at>`.
    This is code-enforced, not just prompt-instructed (see
-   `scripts/confirm_token.py`): `init_bot.py` recomputes the token from
-   the target's *current* live state and refuses to proceed if it
-   doesn't match (target changed since the dry-run, wrong tag/requester,
-   or a tampered/copied-from-elsewhere token) or if more than 15 minutes
-   have passed since the dry-run. Never compute a token and immediately
-   consume it in the same turn — only pass `--confirm-token` after the
-   user's own reply affirmatively confirms the printed plan. Idempotent
-   — records that already exist are skipped, not recreated or
-   overwritten; if nothing needs creating, no token is required. Report
-   the summary (`doctypes_created` vs `doctypes_already_present`) back to
-   the user.
+   `scripts/confirm_token.py`'s `full_init_plan_token()`): `init_bot.py`
+   recomputes the token from the target's *current* live state and
+   refuses to proceed if it doesn't match (target changed since the
+   dry-run, wrong tag/requester/bot-email, or a tampered/copied-from-
+   elsewhere token) or if more than 15 minutes have passed since the
+   dry-run. Never compute a token and immediately consume it in the same
+   turn — only pass `--confirm-token` after the user's own reply
+   affirmatively confirms the printed plan. Idempotent — records that
+   already exist are skipped, not recreated or overwritten; if nothing
+   needs creating/changing, no token is required. Report the summary
+   (`doctypes_created`/`doctypes_already_present`, `personas`,
+   `qkeee_env_file_created`, `bot_user`) back to the user — if
+   `--bot-email` generated fresh keys, they print to stdout once (see
+   step 4 of "Bot user provisioning" above for what to tell the user to
+   do with them).
 5. **This skill provisions schema only — it does not itself write audit
    rows.** Actually calling into these doctypes on every read/write (the
    two-phase `Attempted`→`Success`/`Failure` Audit Log write, the
@@ -197,10 +227,12 @@ than guessing a second time.
 | Doctype/role existence check | `erp_client.py resource_exists()` (404-tolerant GET) | Read-only, always safe to run |
 | Role provisioning | `init_bot.py` creates `Role: Qkeee Bot` if missing | Desk-access role, no doctype permissions of its own beyond what each doctype's `permissions` array grants it |
 | Doctype provisioning | `init_bot.py` creates each of the 2 `Qkeee Bot *` doctypes if missing, via `mutate_resource("DocType", "create", ...)` | `custom: 1`, module `Custom` — no app, no Python controller. See design doc for why |
-| Dry-run | `init_bot.py --dry-run` | Reports what would be created and issues a `--confirm-token`/`--issued-at` pair, without writing anything |
+| Persona provisioning | `init_bot.py` calls `ensure_persona_registered()` for every entry in `doctype_defs.PERSONA_MANIFEST` | Idempotent per persona; audited on creation (see bot-doctypes-design.md — `Qkeee Bot Persona` is no longer `AUDIT_EXEMPT_DOCTYPES`) |
+| `qkeee-erp.env` skeleton | `init_bot.py` calls `erp_client.ensure_qkeee_env_file_skeleton()` if the file doesn't exist | Header comment only, no secrets — see "Bot user provisioning" above for why this tooling never writes the real values itself |
+| Dry-run | `init_bot.py --dry-run [--bot-email <email>]` | Reports what would be created/changed (role, doctypes, personas, env-file skeleton, and bot user if `--bot-email` given) and issues one `--confirm-token`/`--issued-at` pair covering all of it, without writing anything |
 | Connectivity health check | `erp_client.py health` | Run before init; also confirms which ERPNext user the configured key belongs to |
-| Bot user existence/role/enabled/key check | `ensure_bot_user.py --dry-run` | Read-only-equivalent — reports what's missing without writing anything; requires the `Qkeee Bot` role to already exist |
-| Bot user provisioning | `ensure_bot_user.py` creates the User (if missing), assigns the `Qkeee Bot` role, re-enables if disabled, and generates a fresh API key/secret if none is configured | Same dry-run → confirm-token → real-run discipline as doctype provisioning; keys print once, never stored by this skill |
+| Bot user existence/role/enabled/key check | `ensure_bot_user.py --dry-run` (standalone) or folded into `init_bot.py --bot-email --dry-run` | Read-only-equivalent — reports what's missing without writing anything; the standalone path requires the `Qkeee Bot` role to already exist, the folded-in path doesn't (role may be created in the same run) |
+| Bot user provisioning | `ensure_bot_user.py` (standalone) or `init_bot.py --bot-email` (folded-in) creates the User (if missing), assigns the `Qkeee Bot` role, re-enables if disabled, and generates a fresh API key/secret if none is configured | Same dry-run → confirm-token → real-run discipline either way; keys print once, never stored by this skill; `--regenerate-keys` is standalone-only |
 
 ## Verification
 
@@ -219,7 +251,9 @@ the dry-run's plan said would happen.
   the `AUDIT_EXEMPT_DOCTYPES` recursion guard, and the decision log this
   design came from. Read this before extending or modifying the schema.
 - `scripts/doctype_defs.py` — the actual `DocType`/`Role` create payloads,
-  synced from the design doc. Field-for-field source of what gets created.
+  synced from the design doc, plus `PERSONA_MANIFEST` (persona_code/label
+  for every shipped `qkeee-erp-*` persona — hand-maintained, add an entry
+  here when a new persona skill ships).
 - `scripts/erp_client.py` — connector copy (self-contained-copies pattern,
   synced from `qkeee-erp-frappe-core` including its two-phase audit-log write
   path), plus `resource_exists()` — a 404-tolerant existence check this
@@ -231,14 +265,27 @@ the dry-run's plan said would happen.
   backstop (same pattern as `qkeee-erp-system-admin`'s file of the same
   name): tokens the exact create-plan so a real run can't proceed on a
   stale or tampered token, or without a prior dry-run at all.
-- `scripts/init_bot.py` — the init flow: health check → compute plan →
-  (dry-run: print plan + token) or (real: verify token → ensure role →
-  ensure each doctype), existence-checked and idempotent throughout.
-- `scripts/ensure_bot_user.py` — the bot-user flow:
+- `scripts/init_bot.py` — the combined init flow: health check → compute
+  plan (role, doctypes, personas, and — if `--bot-email` given — the bot
+  user, all against current live state) → (dry-run: print plan + one
+  combined token) or (real: verify token → ensure role → ensure each
+  doctype → register every manifest persona → ensure the `qkeee-erp.env`
+  skeleton exists → provision the bot user if `--bot-email` given),
+  existence-checked and idempotent throughout. `ensure_bot_user_step()`
+  inlines the same create/update/keygen logic `ensure_bot_user.py` uses
+  standalone, so the folded-in path reuses `init_bot.py`'s own
+  already-verified combined token instead of `ensure_bot_user.py`'s
+  narrower one.
+- `scripts/ensure_bot_user.py` — the standalone bot-user flow, for
+  provisioning/rotating the bot user independently of a schema init:
   health check → compute plan (user exists? has `Qkeee Bot` role? enabled?
   has an API key?) → (dry-run: print plan + token) or (real: verify token
   → create-or-update the User → generate API keys if needed, printed once).
-  Requires the `Qkeee Bot` role to already exist (run `init_bot.py` first).
+  Requires the `Qkeee Bot` role to already exist (run `init_bot.py` first)
+  — `compute_plan()`'s `require_role_exists` param exists only so
+  `init_bot.py`'s combined dry-run can reuse this same plan logic before
+  the role has been created yet; standalone invocation always uses the
+  default (hard-fail) behavior.
 - `scripts/test_erp_client.py`, `scripts/test_init_bot.py`,
   `scripts/test_doctype_defs.py`, `scripts/test_ensure_bot_user.py` — unit
   coverage for the connector gating, the plan/token flows, the doctype

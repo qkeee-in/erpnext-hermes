@@ -450,11 +450,47 @@ this is always sourced from ERPNext's own response (never guessed), for
 a `WARN` to stderr in that case precisely because it shouldn't happen; if
 you see one, check that stderr line for the raw response shape.
 
-**`AUDIT_EXEMPT_DOCTYPES`** (`Qkeee Bot Audit Log`/`Persona`, plus
-`Comment`) is checked before any audit-wrap step — without it, logging a
-write to Audit Log would recursively log itself forever, and every
-audited write would silently double-log itself via the `Comment` write
-`record_comment()` already makes.
+**`AUDIT_EXEMPT_DOCTYPES`** (`Qkeee Bot Audit Log`, plus `Comment`) is
+checked before any audit-wrap step — without it, logging a write to
+Audit Log would recursively log itself forever, and every audited write
+would silently double-log itself via the `Comment` write
+`record_comment()` already makes. **`Qkeee Bot Persona` is deliberately
+NOT in this set** (removed 2026-08-23) — persona-registration creates
+are now audited, via `ensure_persona_registered()` calling
+`_audit_insert()` directly with the outcome already known
+(`Success`/`Failure`, single row, no `Attempted` pre-image, never
+submitted), rather than the raw unaudited `_request()` call it used
+before. This deliberately does NOT reuse `record_audit_log_start()`/
+`record_audit_log_finish()` — those, and the `_audit_update()`/
+`_audit_submit()` calls inside `_finish`, are
+`# qkeee-erp:write-path`-marked and get excluded from a read-only
+persona skill's own connector copy (e.g. `qkeee-erp-mis-analyst`), but
+persona registration must keep working there too — it's unconditional
+master data, not gated by `qkeee_erp.mode`. `_audit_insert()` itself
+carries no such marker, so every skill's copy has it. Persona rows are
+single-digit in count and only ever written at registration, so this
+doesn't reopen the volume problem the exemption exists to prevent for
+`Audit Log`/`Comment`.
+
+**`channel`/`channel_metadata` — thread these on every call, same as
+`session_id`.** `channel` (`--channel`, one of the doctype's Select
+options — `Web`/`Discord`/`Telegram`/`WhatsApp`/`Email`/`Slack`/`CLI`/
+`API`/`Other`) and `channel_metadata` (`--channel-metadata`, a JSON
+object) are accepted by every read (`query`/`get`/`report`) and write
+(`mutate`) call and threaded straight into the Audit Log row — but
+unlike `session_id`, `requested_by`, and `mode`, **nothing enforces
+these in code; a caller that never passes them gets silently blank
+`channel`/`channel_metadata` on every row, with no error.** Every
+persona skill's own instructions must explicitly tell the calling agent
+to identify the inbound conversation surface and pass `--channel`, and
+to capture any channel-specific tracing id (a chat id, a WhatsApp
+`wamid`, an email `Message-Id` header, a Slack thread ts) as
+`--channel-metadata '{"...": "..."}'` — the same way they're already
+told to thread `--session-id`. `channel_metadata` has no fixed schema;
+put whatever tracing detail the channel actually offers in it as JSON,
+or `{"channel_name": "..."}` if the real channel isn't yet one of the
+Select options. See bot-doctypes-design.md's Audit Log field table and
+"Extension points".
 
 **Read logging is opt-in, not automatic.** `query_resource()`/
 `get_resource()` take a `debug` kwarg (CLI `--debug`); only when true is a

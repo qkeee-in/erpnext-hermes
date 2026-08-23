@@ -122,3 +122,22 @@ AUDIT_LOG = {
 # dependency on Persona either — this list order is just Persona-before-
 # Audit-Log for readability, not a Frappe requirement.
 ALL_DOCTYPES = [PERSONA, AUDIT_LOG]
+
+# The persona_code/persona_label/default_mode this library ships today —
+# hand-maintained, same as PERSONA_SKILLS in
+# qkeee-erp-frappe-core/scripts/sync_to_personas.py (that list drives the
+# connector-file sync; this one drives init_bot.py's ensure_personas()
+# step). Kept in sync by hand when a persona skill is added/removed —
+# no automated derivation exists yet for either list. Every persona ships
+# read-only as its default_mode today; a future persona whose default
+# should be read-write needs its own entry here, not a blanket assumption.
+PERSONA_MANIFEST = [
+    {"persona_code": "qkeee-erp-accounts-executive", "persona_label": "Accounts Executive"},
+    {"persona_code": "qkeee-erp-fixed-asset-manager", "persona_label": "Fixed Asset Manager"},
+    {"persona_code": "qkeee-erp-hr-associate", "persona_label": "HR Associate"},
+    {"persona_code": "qkeee-erp-inventory", "persona_label": "Inventory"},
+    {"persona_code": "qkeee-erp-mis-analyst", "persona_label": "MIS Analyst"},
+    {"persona_code": "qkeee-erp-procurement", "persona_label": "Procurement"},
+    {"persona_code": "qkeee-erp-sales", "persona_label": "Sales"},
+    {"persona_code": "qkeee-erp-system-admin", "persona_label": "System Admin"},
+]

@@ -566,7 +566,8 @@ def record_audit_log_finish(cfg: dict, log_name: str, *, status: str, reference_
 
 
 def ensure_persona_registered(tag: str, *, persona_code: str, persona_label: str,
-                               default_mode: str = "read-only", non_negotiables: str = None) -> str:
+                               default_mode: str = "read-only", non_negotiables: str = None,
+                               requested_by: str = None, session_id: str = None) -> str:
     """Best-effort idempotent upsert of this persona's Qkeee Bot Persona row.
     Unconditional — NOT debug-gated, not a log (master data, see
     bot-doctypes-design.md's Persona section). Never raises, never blocks
@@ -578,6 +579,27 @@ def ensure_persona_registered(tag: str, *, persona_code: str, persona_label: str
     registered") were indistinguishable from the outside, so nothing ever
     told the calling skill (or the user) that registration wasn't landing.
 
+    The create itself IS audited (PERSONA_DOCTYPE was removed from
+    AUDIT_EXEMPT_DOCTYPES 2026-08-23 — single-digit-row, create-only,
+    non-recursive) via a single-shot `_audit_insert()` call with the
+    outcome already known, same collapsed pattern `_log_read()` uses for
+    reads (not the two-phase `record_audit_log_start`/`_finish` path
+    `mutate_resource()` uses) — deliberately, because those two-phase
+    helpers (and the `_audit_update`/`_audit_submit` calls inside
+    `record_audit_log_finish`) are `# qkeee-erp:write-path`-marked and
+    get excluded from a read-only persona skill's own connector copy
+    (e.g. qkeee-erp-mis-analyst), whereas persona registration must keep
+    working unconditionally there too — it's master data, not gated by
+    `qkeee_erp.mode`. `_audit_insert()` itself carries no such marker, so
+    it's present in every skill's copy. Trade-off: this row is never
+    submitted (no docstatus lock) and has no `Attempted` pre-image, unlike
+    every other audited action — acceptable here since the point is
+    visibility of the event, not tamper-evidence on a business write.
+    `requested_by` defaults to the tag's own QKEEE_ERP_<TAG>_REQUESTED_BY
+    if not passed explicitly — a blank requested_by still doesn't block
+    the create (audit logging is best-effort), it just leaves that field
+    blank on the row.
+
     Returns "already_registered" | "created" | "failed". A caller that
     gets "failed" should treat it as the same signal as a `logged_in_as`
     that looks like a personal account — worth proactively surfacing and
@@ -585,16 +607,46 @@ def ensure_persona_registered(tag: str, *, persona_code: str, persona_label: str
     cfg = get_env_config(tag)
     if resource_exists(tag, PERSONA_DOCTYPE, persona_code):
         return "already_registered"
+    effective_requested_by = requested_by or cfg.get("requested_by_default") or ""
     try:
-        _request(cfg, "POST", f"/api/resource/{urllib.parse.quote(PERSONA_DOCTYPE)}", payload={
+        result = _request(cfg, "POST", f"/api/resource/{urllib.parse.quote(PERSONA_DOCTYPE)}", payload={
             "doctype": PERSONA_DOCTYPE,
             "persona_code": persona_code,
             "persona_label": persona_label,
             "default_mode": "Read Write" if default_mode == "read-write" else "Read Only",
             "non_negotiables": non_negotiables or "",
         })
+        created_name = (result.get("data") or {}).get("name") or persona_code
+        _audit_insert(cfg, {
+            "session": _session_or_fallback(session_id),
+            "persona_code": persona_code,
+            "environment_tag": cfg.get("tag", ""),
+            "action": "Create",
+            "reference_doctype": PERSONA_DOCTYPE,
+            "reference_name": created_name,
+            "requested_by": effective_requested_by,
+            "timestamp": _now_iso(),
+            "status": "Success",
+            "payload_after": json.dumps(result.get("data")) if result.get("data") else None,
+            "user_approved": "Approved",
+            "approval_note": "persona master-data registration, unconditional",
+        })
         return "created"
     except ConnectorError as e:
+        _audit_insert(cfg, {
+            "session": _session_or_fallback(session_id),
+            "persona_code": persona_code,
+            "environment_tag": cfg.get("tag", ""),
+            "action": "Create",
+            "reference_doctype": PERSONA_DOCTYPE,
+            "reference_name": "",
+            "requested_by": effective_requested_by,
+            "timestamp": _now_iso(),
+            "status": "Failure",
+            "error_detail": str(e)[:1900],
+            "user_approved": "Approved",
+            "approval_note": "persona master-data registration, unconditional",
+        })
         print(f"WARN: persona registration failed (non-fatal): {e}", file=sys.stderr)
         return "failed"
 

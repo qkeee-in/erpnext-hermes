@@ -84,6 +84,37 @@ def init_plan_token(tag: str, requested_by: str, role_needed: bool,
     )
 
 
+def full_init_plan_token(tag: str, requested_by: str, role_needed: bool, doctypes_needed: list,
+                          personas_needed: list, bot_email: str = None, user_needed: bool = False,
+                          user_role_needed: bool = False, enable_needed: bool = False,
+                          keys_needed: bool = False, issued_at: int = None) -> str:
+    """Token over init_bot.py's FULL combined plan — role, doctypes,
+    persona registrations, and (if --bot-email was given) the bot-user
+    plan — all confirmed in one dry-run/real-run round trip rather than
+    four separate ones. Same determinism/freshness contract as
+    init_plan_token()/bot_user_plan_token() above; this supersedes both
+    for init_bot.py's own CLI (which now always covers role+doctypes+
+    personas, and optionally the bot user), while those two functions
+    stay in place for ensure_bot_user.py's standalone/direct-invocation
+    path, which still round-trips its own narrower token."""
+    if issued_at is None:
+        raise ValueError("issued_at is required — pass the dry-run-time epoch seconds.")
+    return compute_token(
+        kind="bot_init_full_plan",
+        tag=tag,
+        requested_by=requested_by,
+        role_needed=bool(role_needed),
+        doctypes_needed=sorted(doctypes_needed),
+        personas_needed=sorted(personas_needed),
+        bot_email=bot_email or "",
+        user_needed=bool(user_needed),
+        user_role_needed=bool(user_role_needed),
+        enable_needed=bool(enable_needed),
+        keys_needed=bool(keys_needed),
+        issued_at=int(issued_at),
+    )
+
+
 def bot_user_plan_token(tag: str, requested_by: str, bot_email: str, user_needed: bool,
                          role_needed: bool, enable_needed: bool, keys_needed: bool,
                          issued_at: int = None) -> str:

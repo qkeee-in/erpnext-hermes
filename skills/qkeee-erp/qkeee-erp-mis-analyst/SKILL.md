@@ -118,6 +118,15 @@ than guessing a second time.
    the start of the session and pass it as `--session-id` on every
    subsequent `query`/`get`/`report` call — it's a plain string
    correlator on Audit Log rows, not a reference to any doctype. This skill has no `mutate` path, so there is nothing to attribute to a write.
+   **Same discipline applies to `--channel`/`--channel-metadata` — pass
+   them on every call too, nothing enforces this in code and a caller
+   that never passes them gets silently blank Audit Log rows.** Identify
+   the inbound conversation surface (`Web`/`Discord`/`Telegram`/
+   `WhatsApp`/`Email`/`Slack`/`CLI`/`API`/`Other`) and pass it as
+   `--channel`; capture any channel-specific tracing id the surface
+   actually offers (a chat id, a WhatsApp `wamid`, an email `Message-Id`
+   header, a Slack thread ts) as `--channel-metadata
+   '{"...": "..."}'`.
 5. **Route every ERPNext read through `scripts/erp_client.py`.** Don't
    hand-roll HTTP calls elsewhere. For any of ERPNext's standard reports
    (General Ledger, Trial Balance, Profit and Loss Statement, Balance

@@ -76,11 +76,22 @@ def has_role(user_doc: dict, role_name: str) -> bool:
     return any(r.get("role") == role_name for r in (user_doc or {}).get("roles", []))
 
 
-def compute_plan(tag: str, bot_email: str) -> dict:
+def compute_plan(tag: str, bot_email: str, require_role_exists: bool = True) -> dict:
     """Existence/role/enabled/key-checks against the live target right
     now. Re-run fresh on every dry-run AND every real run — see module
-    docstring."""
-    if not erp_client.resource_exists(tag, "Role", ROLE_NAME):
+    docstring.
+
+    `require_role_exists=False` skips the hard-fail below and just treats
+    the role as not-yet-held (same effective plan either way — a missing
+    role and a role the user doesn't hold both mean `role_needed: True`).
+    Used only by `init_bot.py`'s combined dry-run, which computes this
+    plan BEFORE the Role has been created — by its own real-run, the role
+    is created first, so by the time this same plan is recomputed there
+    it always exists and this parameter is moot. Direct/standalone
+    invocation of this script always uses the default (True) — the
+    hard-fail is real guidance for a human running this file on its own
+    without having run init_bot.py first."""
+    if require_role_exists and not erp_client.resource_exists(tag, "Role", ROLE_NAME):
         raise erp_client.ConnectorError(
             f"Role '{ROLE_NAME}' does not exist on tag '{tag}' yet. Run "
             f"init_bot.py against this tag first (it provisions the role "
