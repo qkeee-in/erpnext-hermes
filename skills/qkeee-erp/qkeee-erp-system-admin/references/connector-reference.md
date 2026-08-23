@@ -288,16 +288,16 @@ retrofit, noted here only because it was nearly lost during the sync and
 is worth flagging as a deliberate, skill-specific hardening not present
 in every `qkeee-erp-*` copy.
 
-**Known gap, and the one that matters most in this skill:
-`call_permission_manager()` bypasses this entirely.** Permission
+**`call_permission_manager()` doesn't delegate to `mutate_resource()`,
+so it logs itself directly instead (fixed 2026-08-23).** Permission
 add/update/remove/reset POST directly to the Role Permission Manager's
 own whitelisted methods — a shape `mutate_resource()` doesn't fit — so
-none of the four are logged to `Qkeee Bot Audit Log`. The double-confirm
-token gate and `requested_by` enforcement are unaffected; only the audit
-row is missing. This is the widest-blast-radius write path in the whole
-`qkeee-erp` library and currently the least audited one — flag this to
-the user if they're relying on the audit trail to cover permission
-changes specifically.
+the same two-phase `Attempted`→`Success`/`Failure` logging is wrapped
+around that POST call inline rather than inherited. `reference_doctype`
+is the target DocType being changed; `reference_name` is a synthetic
+`"<role>@permlevel<N>"` label (a DocPerm row has no `name` of its own).
+This was the widest-blast-radius write path in the whole `qkeee-erp`
+library and, before this fix, its least-audited one.
 
 Full mechanism, decision log, and doctype schema:
 `qkeee-erp-frappe-core/references/connector-reference.md`'s own "Audit-trail

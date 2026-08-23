@@ -31,11 +31,13 @@ Audit Log (two-phase, best-effort — see qkeee-erp-bot-init/references/
 bot-doctypes-design.md). destructive_mutate(), gated_config_mutate(),
 and create_user() all delegate to mutate_resource() internally, so they
 inherit audit logging for free — no separate wiring needed for those
-three. KNOWN GAP: call_permission_manager() below does NOT delegate to
+three. call_permission_manager() below does NOT delegate to
 mutate_resource() (it POSTs directly to the Role Permission Manager's
 own whitelisted methods, a shape mutate_resource()'s create/update/
-submit/cancel/delete doesn't fit) — permission add/update/remove/reset
-are NOT yet audit-logged. Flagged in references/connector-reference.md.
+submit/cancel/delete doesn't fit), so it wraps the same two-phase
+Attempted->Success/Failure logging directly around its own POST call
+instead (fixed 2026-08-23, adversarial-review follow-up — this was
+previously the one unaudited write path in the library).
 """
 
 import argparse
@@ -981,15 +983,16 @@ def call_permission_manager(tag: str, action: str, doctype: str, role: str, perm
     natural record to attach one to. The calling skill should surface
     `requested_by` in its own report-back for this capability instead.
 
-    KNOWN GAP: does NOT delegate to mutate_resource() (this
-    RPC shape doesn't fit create/update/submit/cancel/delete), so it is
-    NOT yet logged to Qkeee Bot Audit Log either — the widest-blast-
-    radius write path in the entire qkeee-erp library is currently the
-    least audited. Flagged prominently in
-    references/connector-reference.md; closing this gap means either a
-    bespoke two-phase log call here or a refactor onto a shared
-    write-wrapper, both deferred as follow-up work, not fixed in this
-    pass.
+    Audit-logged directly (two-phase Attempted -> Success/Failure to
+    Qkeee Bot Audit Log), same as every other write path, even though
+    this RPC shape doesn't fit mutate_resource()'s create/update/submit/
+    cancel/delete signature and so can't just delegate to it. Fixed
+    2026-08-23 (adversarial-review follow-up) — this was previously the
+    single unaudited write path in the library, and the widest-blast-
+    radius one. `reference_doctype` is the target DocType being changed;
+    `reference_name` is a synthetic `"<role>@permlevel<permlevel>"`
+    label, since a DocPerm/Custom DocPerm row has no `name` of its own
+    the way a document record does.
     """
     if action not in PERMISSION_MANAGER_METHODS:
         raise ConnectorError(f"Unknown permission_manager action '{action}'.")
@@ -1036,7 +1039,19 @@ def call_permission_manager(tag: str, action: str, doctype: str, role: str, perm
         body["if_owner"] = 0
     if action == "reset":
         body = {"doctype": doctype}
-    result = _request(cfg, "POST", PERMISSION_MANAGER_METHODS[action], payload=body)
+
+    reference_name = f"{role or ''}@permlevel{permlevel}"
+    audit_log_name = record_audit_log_start(
+        cfg, action=f"Permission {action.capitalize()}", doctype=doctype, name=reference_name,
+        requested_by=requested_by, user_approved=True,
+        approval_note="call_permission_manager: double-confirm token verified",
+    )
+    try:
+        result = _request(cfg, "POST", PERMISSION_MANAGER_METHODS[action], payload=body)
+    except ConnectorError as e:
+        record_audit_log_finish(cfg, audit_log_name, status="Failure", error_detail=str(e))
+        raise
+    record_audit_log_finish(cfg, audit_log_name, status="Success", reference_name=reference_name)
     return result
 
 

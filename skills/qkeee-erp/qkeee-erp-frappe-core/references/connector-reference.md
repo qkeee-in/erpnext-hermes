@@ -39,6 +39,19 @@ metadata (`discover.py meta`/`resolve`) vs. which are inferred from the
 user's request, and never itself calls ERPNext — it only stages the
 draft and computes the token the gated write later checks.
 
+**Known limitation, same as every other confirmation-token gate in this
+library: the token proves fact-consistency and recency, not human
+presence.** A matching `confirmation_token` only proves the call is
+identical to what `render_draft.py` rendered and that it happened
+within `DEFAULT_TOKEN_TTL_SECONDS`. It cannot detect an agent that
+renders a draft and immediately consumes its own token in the same turn
+without a human actually replying — that discipline has to come from
+how this skill's instructions are followed (never use the token until
+the user's own reply confirms that specific draft), not from anything
+this connector can enforce. See `confirm_token.py`'s module docstring
+and `qkeee-erp-system-admin/SKILL.md`'s "Known limitation of the token
+gate" for the same caveat applied to its double-confirm gates.
+
 ## What this layer does, and doesn't, know
 
 - **Does know:** auth, environment/tag resolution, generic REST primitives,
@@ -630,11 +643,8 @@ surrounding harness) via `--session-id`/`session_id`, threaded through
 subsequent `mutate`/`query`/`get` calls, with nothing else to set up.
 See bot-doctypes-design.md.
 
-**Not yet done — a known gap, not an oversight:** none of the 7
-write-capable persona skills' own `erp_client.py` copies have been synced
-with this retrofit yet. Each one still runs the connector version
-predating the audit-trail retrofit (read-only-gate + requester-attribution
-+ save-draft-review-submit, but no audit logging). Syncing this file into
-each persona skill's `scripts/`
-directory is the next mechanical step before any persona skill's writes
-actually reach `Qkeee Bot Audit Log`.
+**Sync status:** `sync_to_personas.py` has synced this retrofit into all 7
+write-capable persona skills' `erp_client.py` copies — `record_audit_log_start`
+is present in every persona's copy, verified directly. Persona writes reach
+`Qkeee Bot Audit Log`. Re-run `sync_to_personas.py --dry-run` after any future
+change to this file's `SHARED_FUNCTIONS` to confirm no persona has drifted.

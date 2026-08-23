@@ -1,5 +1,6 @@
 .env
 .env.*
+qkeee-erp.env
 auth.json
 credentials.json
 token*.json

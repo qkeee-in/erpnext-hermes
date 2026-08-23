@@ -50,9 +50,9 @@ Defined in `SOUL.md` — direct, precise, schema-over-memory, explains the "why"
 
 ## Config Summary
 
-- Model / provider: *(fill in from `config.yaml`)*
-- MCP servers: *(list connected servers, e.g. ERPNext connector)*
-- Cron/scheduled jobs: *(list if any recurring reports/syncs configured)*
+- Model / provider: `openrouter/auto-beta` via OpenRouter (`config.yaml` → `model`).
+- MCP servers: none configured (`mcp.json` → `mcpServers` is empty). ERPNext access goes through the `qkeee-erp` skills' REST connector scripts, not MCP.
+- Cron/scheduled jobs: none configured (`cron/jobs.json` → `jobs` is empty).
 
 ## Escalation
 

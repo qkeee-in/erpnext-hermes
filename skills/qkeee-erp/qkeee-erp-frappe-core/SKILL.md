@@ -308,6 +308,22 @@ than guessing a second time.
     wasn't known in advance. If a specific fallback-investigation
     capability ends up trusted and repeated, that's a signal it deserves to graduate into a
     proper persona skill, not a reason to loosen this skill's own default.
+
+    **Known limitation of the token gate — read this before treating it
+    as sufficient on its own.** A matching `confirmation_token` proves
+    the call being made is byte-for-byte identical to what
+    `render_draft.py` last printed, and that it happened within the
+    last 15 minutes (`DEFAULT_TOKEN_TTL_SECONDS` in `confirm_token.py`)
+    — no more than that. It does **not** prove a human read the
+    rendered draft and said yes; nothing in this connector can observe
+    that. The actual second confirm only means something if the agent
+    invoking this skill never renders a draft and consumes its token in
+    the same turn — `confirmation_token`/`issued_at` must only be used
+    after the user's own reply affirmatively confirms that specific
+    rendered draft, one turn later at minimum. Treat the token as a
+    tamper/staleness check, not a substitute for actually waiting for
+    the user's answer (same caveat `qkeee-erp-system-admin/SKILL.md`
+    documents for its own double-confirm gates).
 12. **Prefer a harness-native HTTP-capable tool if one is discoverable.**
     If the host harness exposes a way to enumerate installed tools/skills
     and one already does authenticated HTTP well, prefer it over shelling

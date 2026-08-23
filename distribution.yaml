@@ -5,8 +5,17 @@ hermes_requires: ""
 author: "Qkeee"
 license: "MIT"
 env_requires: []
+# Hermes's default distribution_owned (when this key is omitted entirely) is
+# SOUL.md, config.yaml, mcp.json, skills/, cron/, distribution.yaml. Listing
+# this key at all replaces that default outright, so every path we still
+# want owned has to be repeated here explicitly — mcp.json included below to
+# match the default (it was previously narrowed out silently). profile.md is
+# deliberately NOT listed: it ships with placeholder prose meant to be
+# filled in per-install (see profile.md's "Config Summary" section) and is
+# user-owned/customizable, not replaced on `profile update`.
 distribution_owned:
   - SOUL.md
   - skills/qkeee-erp/            # only ERPNext related skills; other installed skills stay
   - cron/jobs.json
   - config.yaml
+  - mcp.json

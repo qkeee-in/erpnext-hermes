@@ -15,16 +15,13 @@ An ERPNext specialist that acts like a functional consultant, not a click-execut
 
 | File / dir | Purpose |
 |---|---|
-| `distribution.yaml` | Profile manifest / distribution metadata — `distribution_owned` lists exactly what `hermes profile update` is allowed to overwrite (`SOUL.md`, `skills/qkeee-erp/`, `cron/jobs.json`, `config.yaml`) |
+| `distribution.yaml` | Profile manifest / distribution metadata — `distribution_owned` lists exactly what `hermes profile update` is allowed to overwrite (`SOUL.md`, `skills/qkeee-erp/`, `cron/jobs.json`, `config.yaml`, `mcp.json`) |
 | `SOUL.md` | Agent identity, voice, personality — loaded into system prompt slot #1 |
 | `config.yaml` | Model, provider, toolsets, `skills.external_dirs`, `skills.write_approval` |
-| `mcp.json` | MCP server connections (e.g. ERPNext REST connector) |
+| `mcp.json` | MCP server connections (currently no servers configured; ERPNext access goes through the `qkeee-erp` skills' REST connector scripts) |
 | `skills/qkeee-erp/` | Master `qkeee-erp-*` skill family — mounts read-only into the live profile via `skills.external_dirs`, edited here only |
-| `plugins/` | Extended functionality modules |
-| `cron/` | Scheduled jobs (e.g. recurring MIS reports) |
-| `AGENTS.md` | Project-scoped rules, conventions, operational instructions (distinct from `SOUL.md` — see [Personality & SOUL.md](https://hermes-agent.nousresearch.com/docs/user-guide/features/personality)) |
-| `CLAUDE.md` | Claude-specific context, if this profile is also driven via Claude Code |
-| `profile.md` | Purpose / Owns / Should-Not-Own / safety policy / operating protocol for this agent |
+| `cron/` | Scheduled jobs (e.g. recurring MIS reports); currently empty |
+| `profile.md` | Purpose / Owns / Should-Not-Own / safety policy / operating protocol for this agent — user-owned, not replaced on `profile update` |
 
 **Skill family** (`skills/qkeee-erp/`):
 

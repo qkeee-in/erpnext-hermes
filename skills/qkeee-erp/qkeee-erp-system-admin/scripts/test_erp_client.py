@@ -283,7 +283,16 @@ class TestCallPermissionManager(unittest.TestCase):
                 confirmation_token=token, issued_at=self.now,
                 requested_by="priya@org.com",
             )
-            mock_req.assert_called_once()
+            # Two calls: the Attempted audit-log insert, then the actual
+            # reset POST (record_audit_log_finish() no-ops here since the
+            # mocked {} response makes _audit_insert() resolve no log name).
+            self.assertEqual(mock_req.call_count, 2)
+            reset_call = mock_req.call_args_list[-1]
+            self.assertEqual(
+                reset_call.args[2],
+                "/api/method/frappe.core.page.permission_manager.permission_manager.reset",
+            )
+            self.assertEqual(reset_call.kwargs["payload"], {"doctype": "Contact"})
 
     def test_update_requires_matching_token(self):
         with self.assertRaises(erp_client.ConnectorError):
@@ -329,6 +338,55 @@ class TestCallPermissionManager(unittest.TestCase):
         mock_req.return_value = {"message": [{"role": "Auditor"}]}
         result = erp_client.get_permissions("qa", "Contact")
         self.assertEqual(result, [{"role": "Auditor"}])
+
+    def test_success_logs_attempted_then_success_to_audit_log(self):
+        """Regression test for the 2026-08-23 audit-logging fix:
+        call_permission_manager() used to be the one write path in the
+        library that never reached Qkeee Bot Audit Log at all. Assert
+        both phases actually fire, with the doctype/synthetic-name shape
+        documented in the function's own docstring."""
+        token = permission_change_token("update", "Contact", "Auditor", 0, "write", 1, self.now)
+        with mock.patch("erp_client._audit_insert") as mock_insert, \
+                mock.patch("erp_client._audit_update") as mock_update, \
+                mock.patch("erp_client._audit_submit") as mock_submit, \
+                mock.patch("erp_client._request") as mock_req:
+            mock_insert.return_value = "AUDIT-0001"
+            mock_update.return_value = True
+            mock_req.return_value = {}
+            erp_client.call_permission_manager(
+                "qa", "update", "Contact", "Auditor", 0, ptype="write", value=1,
+                mode="read-write", confirmation_token=token, issued_at=self.now,
+                requested_by="priya@org.com",
+            )
+            start_fields = mock_insert.call_args[0][1]
+            self.assertEqual(start_fields["status"], "Attempted")
+            self.assertEqual(start_fields["action"], "Permission Update")
+            self.assertEqual(start_fields["reference_doctype"], "Contact")
+            self.assertEqual(start_fields["reference_name"], "Auditor@permlevel0")
+            self.assertEqual(start_fields["requested_by"], "priya@org.com")
+            self.assertEqual(start_fields["user_approved"], "Approved")
+
+            finish_fields = mock_update.call_args[0][2]
+            self.assertEqual(finish_fields["status"], "Success")
+            mock_submit.assert_called_once_with(mock.ANY, "AUDIT-0001")
+
+    def test_failure_logs_attempted_then_failure_to_audit_log(self):
+        """The RPC call itself failing must still flip the Attempted row
+        to Failure (and re-raise) — same contract as mutate_resource()."""
+        token = permission_change_token("update", "Contact", "Auditor", 0, "write", 1, self.now)
+        with mock.patch("erp_client._audit_insert") as mock_insert, \
+                mock.patch("erp_client._audit_update") as mock_update, \
+                mock.patch("erp_client._request") as mock_req:
+            mock_insert.return_value = "AUDIT-0002"
+            mock_req.side_effect = erp_client.ConnectorError("boom")
+            with self.assertRaises(erp_client.ConnectorError):
+                erp_client.call_permission_manager(
+                    "qa", "update", "Contact", "Auditor", 0, ptype="write", value=1,
+                    mode="read-write", confirmation_token=token, issued_at=self.now,
+                    requested_by="priya@org.com",
+                )
+            finish_fields = mock_update.call_args[0][2]
+            self.assertEqual(finish_fields["status"], "Failure")
 
 
 class TestCreateUser(unittest.TestCase):

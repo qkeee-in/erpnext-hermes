@@ -109,16 +109,18 @@ too, but only when the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true` (default `
 `qkeee-erp-frappe-core/SKILL.md`'s "Audit trail" section and `qkeee-erp-bot-
 init/references/bot-doctypes-design.md` for the full mechanism.
 
-**Known gap, and it's the one that matters most in this skill:
-`call_permission_manager()` (permission add/update/remove/reset) is NOT
-yet audit-logged.** It POSTs directly to the Role Permission Manager's
-own whitelisted methods — a shape `mutate_resource()`'s create/update/
-submit/cancel/delete doesn't fit — so it sits outside the retrofit
-above. Permission changes are the widest-blast-radius write this skill
-makes and are currently the least audited. The double-confirm token
-gate and `requested_by` enforcement still apply in full; only the
-`Qkeee Bot Audit Log` row is missing. Tell the user this explicitly if
-they're relying on the audit trail to cover permission-change activity.
+**`call_permission_manager()` (permission add/update/remove/reset) is
+now audit-logged directly** (fixed 2026-08-23, adversarial-review
+follow-up) — it POSTs directly to the Role Permission Manager's own
+whitelisted methods, a shape `mutate_resource()`'s create/update/
+submit/cancel/delete doesn't fit, so rather than delegating it wraps
+the same two-phase `Attempted`→`Success`/`Failure` logging directly
+around its own POST call. `reference_doctype` is the target DocType
+being changed; `reference_name` is a synthetic `"<role>@permlevel<N>"`
+label, since a DocPerm row has no `name` of its own. This was
+previously the one unaudited write path in the library — the
+double-confirm token gate and `requested_by` enforcement always applied
+in full; only the Audit Log row was missing before this fix.
 
 ## What you must do when invoked
 

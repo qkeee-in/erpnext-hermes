@@ -28,10 +28,20 @@ dashboard:
     secret: ""
 tts:
   use_gateway: false
-command_allowlist:
-  - execute_code
-  - script execution via heredoc
-  - script execution via -e/-c flag
+# command_allowlist intentionally empty. Hermes's actual schema (see
+# website/docs/user-guide/security.md "Permanent Allowlist") expects
+# literal command patterns/globs here (e.g. "rm", "git push *") that get
+# silently pre-approved past the dangerous-command approval gate. This
+# used to hold "execute_code" / "script execution via heredoc" / "script
+# execution via -e/-c flag" — descriptive prose, not command patterns,
+# so those entries never matched anything and were dead config. Removed
+# 2026-08-23 (adversarial-review follow-up) rather than left in place,
+# since a stray real pattern added here later next to bogus-looking
+# entries could plausibly go unnoticed on review. Every
+# `python scripts/erp_client.py mutate ...` invocation should go through
+# Hermes's normal dangerous-command approval flow, on top of (not
+# instead of) this library's own advisory-first/confirmation-token gate.
+command_allowlist: []
 onboarding:
   seen:
     tool_progress_prompt: true
@@ -89,9 +99,17 @@ platforms:
     enabled: true
   google_chat:
     enabled: true
+# `terminal.cwd` intentionally omitted: a hardcoded absolute dev-machine
+# path here (this file is `distribution_owned`, shipped to every install)
+# would be Hermes's own documented "machine-local path" anti-pattern —
+# see website/docs/user-guide/skills/bundled/software-development/
+# software-development-hermes-agent-skill-authoring.md, "Never use
+# machine-local paths". Omitting the key lets Hermes fall back to
+# TERMINAL_CWD / the profile's actual process cwd (terminal_tool.py),
+# which is portable across installs. Set TERMINAL_CWD in the environment
+# instead if a fixed working directory is needed on a given machine.
 terminal:
   backend: local
-  cwd: /work/storage/hermes/agent-profiles/dev-erpnext/cwd
 approvals:
   destructive_slash_confirm: true
 updates:

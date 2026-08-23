@@ -220,9 +220,12 @@ than guessing a second time.
 | Bank reconciliation assist | Statement lines matched to entries, each unmatched line hypothesized | Bank statement (via doc-extraction if scanned) | Reconciliation draft, unmatched-lines list with a stated reason each |
 | Expense claim review | Claims checked against a stated policy point | Expense Claim reference, **plus the org's actual policy text** — asked for explicitly if not already provided in-session; this skill has no built-in expense policy of its own, see below | Review notes, approve/flag recommendation with the specific policy cited |
 | TDS computation/query | Withholding liability visible (core ERPNext Tax Withholding Category) | Party, period, Tax Withholding Category | TDS report |
-| GST return prep assist (GSTR-1) | Return data summarized — **needs India Compliance app**; GSTR-3B has no identified `report_name` at all, see `references/erpnext-accounting-docs.md` | Period, GSTIN | GST summary report, with confirm-app-installed caveat |
-| E-invoicing (IRN) generation assist | E-invoice data prepared — **needs India Compliance app** | Invoice reference | IRN request draft (live call only where confirmed enabled) |
-| E-way bill generation assist | E-way bill data prepared — **needs India Compliance app** | Delivery/invoice reference | E-way bill draft, with confirm-app-installed caveat |
+| GST return prep assist (GSTR-1) † | Return data summarized — **needs India Compliance app**; GSTR-3B has no identified `report_name` at all, see `references/erpnext-accounting-docs.md` | Period, GSTIN | GST summary report, with confirm-app-installed caveat |
+| E-invoicing (IRN) generation assist † | E-invoice data prepared — **needs India Compliance app** | Invoice reference | IRN request draft (live call only where confirmed enabled) |
+| E-way bill generation assist † | E-way bill data prepared — **needs India Compliance app** | Delivery/invoice reference | E-way bill draft, with confirm-app-installed caveat |
+
+† Unverified end-to-end in this skill's own build — no India-Compliance-enabled
+instance was available to exercise these rows live (see note 10 above).
 
 ## Files
 
