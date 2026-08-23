@@ -155,32 +155,25 @@ only; it never turns debug off (there's no equivalent override to force
 it off for one call when the tag has it on). Writes are audited
 unconditionally regardless of this flag.
 
-**Session/Message logging (`open_session()`/`log_message()`/
-`close_session()`) is fully opt-in per caller**, not wired into
-`mutate_resource()`/`query_resource()` automatically — call these
-explicitly, gated on the same per-tag `QKEEE_ERP_<TAG>_DEBUG`. Every
-write-capable persona skill (and this skill, in fallback-investigation
-mode) calls these when the active tag's debug default is
-true. Full schema, the two-phase mechanism, and the debug-mode
-volume-gating rationale: `qkeee-erp-bot-init/references/bot-doctypes-design.md`.
+Every `query`/`get`/`report`/`mutate` call accepts a `--session-id` —
+it's a plain string correlator threaded into Audit Log's `session`
+field, nothing more to set up. Full schema, the two-phase mechanism,
+and the debug-mode volume-gating rationale for reads:
+`qkeee-erp-bot-init/references/bot-doctypes-design.md`.
 
-**A "success" from `register-persona`/`open-session` does not mean the
-row actually landed — check the returned status, don't assume.** Every
-best-effort write into the `Qkeee Bot *` doctypes above swallows its own
+**A "success" from `register-persona` does not mean the row actually
+landed — check the returned status, don't assume.** Every best-effort
+write into the `Qkeee Bot *` doctypes above swallows its own
 `ConnectorError` by design (a target instance that hasn't run
 `qkeee-erp-bot-init` yet must never block a user's real request), but
 that means the CLI exiting 0 is not proof the row was written:
 `register-persona` returns `{"status": "created"|"already_registered"|"failed"}`
 — `"failed"` means the `Qkeee Bot Persona` row was NOT created, almost
-always because the doctype isn't provisioned on this instance yet.
-`open-session` always prints a `session_id`, but on failure it's a
-locally-generated `local-<timestamp>` fallback rather than a real Frappe
-record name — a session/message logged under a `local-` id was never
-actually persisted to ERPNext. Either signal should be treated the same
-as a `logged_in_as` that looks like a personal account (see "Bot account"
-above): proactively mention it once per session and suggest
-`qkeee-erp-bot-init`, never silently ignore it and never let it block the
-user's actual request.
+always because the doctype isn't provisioned on this instance yet. This
+should be treated the same as a `logged_in_as` that looks like a
+personal account (see "Bot account" above): proactively mention it once
+per session and suggest `qkeee-erp-bot-init`, never silently ignore it
+and never let it block the user's actual request.
 
 ## What you must do when invoked
 
@@ -217,22 +210,13 @@ than guessing a second time.
    mention it once, proactively, and suggest running `qkeee-erp-bot-init`;
    never silently ignore it, and never let it block the user's actual
    request.
-3. **Session/message logging — only when the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true`.**
-   If debug is `false` (the default), skip this step entirely: no
-   `open-session`, no `log-message`, no `--session-id` threading. When
-   the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true`: after persona registration, call
-   `open-session --persona-code
-   qkeee-erp-frappe-core --mode <qkeee_erp.mode>` once (omit `--user` — it falls back to `QKEEE_ERP_<TAG>_REQUESTED_BY`; pass it explicitly only to override that for this one call), and thread the
-   returned `session_id` into every subsequent `query`/`get`/`report`/`roles`/`mutate`
-   call's `--session-id`. If `session_id` starts with `local-`, the
-   session row was never actually persisted to ERPNext (Session/Message
-   logging failed, most likely because `qkeee-erp-bot-init` hasn't been
-   run on this instance) — surface that once, same as a failed persona
-   registration, and keep working from the local id rather than
-   blocking. Call `log-message` at natural turns — `User` for the user's
-   ask, `Bot Analysis` for your reasoning, `Bot Response` for what you
-   tell the user, `Bot Action` around a `mutate` — and `close-session`
-   when the session ends.
+3. **Session id — thread one string through the whole conversation.**
+   Pick any stable string (e.g. a locally-generated `local-<timestamp>`,
+   or a real conversation/thread id from the surrounding harness) at the
+   start of the session and pass it as `--session-id` on every
+   subsequent `query`/`get`/`report`/`roles`/`mutate` call — it's a
+   plain string correlator on Audit Log rows, not a reference to any
+   doctype.
 4. **Health check on first real use.** Before the first query/mutate of a
    session, run a connectivity check (`python scripts/erp_client.py --tag
    <tag> health`) and surface a clear error if the URL/credentials are
@@ -430,10 +414,9 @@ than guessing a second time.
   Includes the Qkeee Bot audit-trail retrofit:
   `record_audit_log_start()`/`record_audit_log_finish()` (two-phase write
   logging, wired into `mutate_resource()`), debug-gated read logging in
-  `query_resource()`/`get_resource()`, opt-in `open_session()`/
-  `log_message()`/`close_session()` for full conversation logging, and
-  this skill's own `gated_mutate_resource()` write entry point (not
-  synced to persona copies — see `scripts/sync_to_personas.py`).
+  `query_resource()`/`get_resource()`, and this skill's own
+  `gated_mutate_resource()` write entry point (not synced to persona
+  copies — see `scripts/sync_to_personas.py`).
 - `scripts/discover.py` — installed-app discovery, DocType → module → app
   resolution, live field-schema fetch. Every persona skill's synced copy
   gets this too, whether or not that persona currently uses it (matches

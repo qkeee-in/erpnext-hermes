@@ -175,7 +175,8 @@ def _cli():
     p.add_argument("--debug", action="store_true",
                    help="from qkeee_erp.debug — logs this metadata read to Qkeee Bot Audit Log")
     p.add_argument("--requested-by", help="threaded into the debug-mode audit row, if --debug is set")
-    p.add_argument("--session-id", help="from the caller's open_session() — threaded into audit rows")
+    p.add_argument("--session-id", help="plain string correlator threaded into Qkeee Bot Audit Log rows "
+                        "(no doctype backs it — pass any string you want related calls to share)")
     p.add_argument("--persona-code", default="qkeee-erp-mis-analyst",
                    help="threaded into audit rows (persona-skill copies should default this to their own name)")
     sub = p.add_subparsers(dest="command", required=True)

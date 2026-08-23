@@ -220,11 +220,11 @@ this is always sourced from ERPNext's own response (never guessed), for
 a `WARN` to stderr in that case precisely because it shouldn't happen; if
 you see one, check that stderr line for the raw response shape.
 
-**`AUDIT_EXEMPT_DOCTYPES`** (`Qkeee Bot Session`/`Message`/`Audit Log`/
-`Persona`, plus `Comment`) is checked before any audit-wrap step —
-without it, logging a write to Audit Log would recursively log itself
-forever, and every audited write would silently double-log itself via the
-`Comment` write `record_comment()` already makes.
+**`AUDIT_EXEMPT_DOCTYPES`** (`Qkeee Bot Audit Log`/`Persona`, plus
+`Comment`) is checked before any audit-wrap step — without it, logging a
+write to Audit Log would recursively log itself forever, and every
+audited write would silently double-log itself via the `Comment` write
+`record_comment()` already makes.
 
 **Read logging is opt-in, not automatic.** `query_resource()`/
 `get_resource()` take a `debug` kwarg (CLI `--debug`); only when true is a
@@ -234,19 +234,13 @@ read-heavy caller (query-report-driven skills especially) could otherwise
 generate far more Read rows than any write path, making Audit Log itself
 the volume/bloat problem the debug gate exists to prevent.
 
-**Session/Message are fully opt-in, per caller, via `open_session()`/
-`log_message()`/`close_session()`.** None of these are called from inside
-`mutate_resource()`/`query_resource()` automatically — a persona skill
-adopting full conversation logging must call them explicitly (typically
-gated on the active tag's `QKEEE_ERP_<TAG>_DEBUG` at the SKILL.md level)
-and thread the returned
-`session_id` through subsequent `mutate`/`query`/`get` calls. `open_session()`
-returns a locally-generated fallback id (`local-<timestamp>`) if the insert
-itself failed, so callers always have a usable `session_id` string to pass
-along even when Session logging isn't actually landing anywhere —
-`Qkeee Bot Audit Log.session` is a plain Data field precisely so it can
-carry either a real Session row's `name` or this fallback string
-interchangeably (see bot-doctypes-design.md decision 10).
+**`session_id` is a plain string correlator, not a doctype reference.**
+`Qkeee Bot Audit Log.session` is a `Data` field, not a Link — the caller
+passes any `session_id` string it likes (a locally-generated
+`local-<timestamp>`, or a real conversation/thread id from the
+surrounding harness) via `--session-id`/`session_id`, threaded through
+subsequent `mutate`/`query`/`get` calls, with nothing else to set up.
+See bot-doctypes-design.md.
 
 **Not yet done — a known gap, not an oversight:** none of the 7
 write-capable persona skills' own `erp_client.py` copies have been synced
@@ -621,7 +615,7 @@ someone's shell can never silently pick the mode. `--requested-by` and
 `--debug` are different: they DO have a fallback, but a deliberate,
 scoped one — the active tag's own `QKEEE_ERP_<TAG>_REQUESTED_BY` /
 `_DEBUG` (see "Requester attribution and debug are per-tag" above), not
-an arbitrary shell variable. `mutate`/`open-session` still refuse to run
+an arbitrary shell variable. `mutate` still refuses to run
 if neither the env var nor the flag resolves to a requester.
 
 ```
@@ -671,7 +665,7 @@ raises if absent:
   the env var set to `true`.
 - **`QKEEE_ERP_<TAG>_REQUESTED_BY`** (`requested_by_default` key) — no
   default; empty string if unset. A `--requested-by` CLI flag overrides
-  it per-call. `mutate`/`open-session` refuse to run (a specific
+  it per-call. `mutate` refuses to run (a specific
   `p.error` naming the exact env var, not a generic failure) if neither
   the env var nor the flag resolves to a non-empty value.
 

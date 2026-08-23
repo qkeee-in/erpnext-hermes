@@ -117,8 +117,7 @@ class TestMutateGates(unittest.TestCase):
 
 class TestAuditExemptDoctypes(unittest.TestCase):
     def test_audit_doctypes_and_comment_are_exempt(self):
-        for dt in ("Qkeee Bot Audit Log", "Qkeee Bot Session", "Qkeee Bot Message",
-                   "Qkeee Bot Persona", "Comment"):
+        for dt in ("Qkeee Bot Audit Log", "Qkeee Bot Persona", "Comment"):
             self.assertIn(dt, AUDIT_EXEMPT_DOCTYPES)
 
     def test_doctype_and_role_are_not_exempt(self):

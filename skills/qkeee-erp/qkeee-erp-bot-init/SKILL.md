@@ -1,6 +1,6 @@
 ---
 name: qkeee-erp-bot-init
-description: "Provisions the Qkeee Bot audit-trail doctypes (Qkeee Bot Persona, Qkeee Bot Session, Qkeee Bot Message, Qkeee Bot Audit Log) plus the Qkeee Bot role into a target ERPNext instance, if they don't already exist — idempotent, no custom app required. Also detects/provisions the dedicated qkeee-erp-bot service-account User the persona skills' shared API key should belong to, assigning it the Qkeee Bot role and generating fresh API keys if needed. Use when setting up a fresh ERPNext instance for the qkeee-erp-* skill library, when a persona skill reports the audit doctypes are missing or that its credentials don't look like a dedicated bot account, or when explicitly asked to 'initialize the bot' / 'set up the audit trail' / 'create a bot user' / 'run bot init' against an environment."
+description: "Provisions the Qkeee Bot audit-trail doctypes (Qkeee Bot Persona, Qkeee Bot Audit Log) plus the Qkeee Bot role into a target ERPNext instance, if they don't already exist — idempotent, no custom app required. Also detects/provisions the dedicated qkeee-erp-bot service-account User the persona skills' shared API key should belong to, assigning it the Qkeee Bot role and generating fresh API keys if needed. Use when setting up a fresh ERPNext instance for the qkeee-erp-* skill library, when a persona skill reports the audit doctypes are missing or that its credentials don't look like a dedicated bot account, or when explicitly asked to 'initialize the bot' / 'set up the audit trail' / 'create a bot user' / 'run bot init' against an environment."
 metadata:
   hermes:
     config:
@@ -160,21 +160,18 @@ than guessing a second time.
 5. **This skill provisions schema only — it does not wire up runtime
    audit logging.** Actually calling into these doctypes on every
    read/write (the two-phase `Attempted`→`Success`/`Failure` Audit Log
-   write, the `in_reply_to` message linkage, the `AUDIT_EXEMPT_DOCTYPES`
-   recursion guard) is `qkeee-erp-frappe-core` connector work — a follow-up
-   retrofit across `erp_client.py` and the persona skills that copy it,
-   not something this skill does at init time. Say so if a user expects
-   audit rows to start appearing immediately after running this.
+   write, the `AUDIT_EXEMPT_DOCTYPES` recursion guard) is
+   `qkeee-erp-frappe-core` connector work — a follow-up retrofit across
+   `erp_client.py` and the persona skills that copy it, not something
+   this skill does at init time. Say so if a user expects audit rows to
+   start appearing immediately after running this.
 6. **Ground every doctype/field/permission decision in
    `references/bot-doctypes-design.md`** — that file, not this one, is
    the source of truth for the schema. If a user asks to add a field or
    change a permission, update the design doc first, then
-   `scripts/doctype_defs.py` to match, then re-run init. The one field-
-   drift case this skill currently handles is the mutual Message ↔ Audit
-   Log reference (`DEFERRED_FIELD_PATCHES` / `ensure_deferred_fields()`,
-   run automatically as the last step of every real run) — beyond that
-   specific pattern, reconciling arbitrary future field-level drift on an
-   already-created doctype is still a known gap, not yet built.
+   `scripts/doctype_defs.py` to match, then re-run init. Reconciling
+   arbitrary field-level drift on an already-created doctype is a known
+   gap, not yet built.
 7. **Prefer a harness-native HTTP-capable tool if discoverable**, same
    discovery-first pattern as every other `qkeee-erp-*` skill.
 
@@ -184,7 +181,7 @@ than guessing a second time.
 | --- | --- | --- |
 | Doctype/role existence check | `erp_client.py resource_exists()` (404-tolerant GET) | Read-only, always safe to run |
 | Role provisioning | `init_bot.py` creates `Role: Qkeee Bot` if missing | Desk-access role, no doctype permissions of its own beyond what each doctype's `permissions` array grants it |
-| Doctype provisioning | `init_bot.py` creates each of the 4 `Qkeee Bot *` doctypes if missing, via `mutate_resource("DocType", "create", ...)` | `custom: 1`, module `Custom` — no app, no Python controller. See design doc for why |
+| Doctype provisioning | `init_bot.py` creates each of the 2 `Qkeee Bot *` doctypes if missing, via `mutate_resource("DocType", "create", ...)` | `custom: 1`, module `Custom` — no app, no Python controller. See design doc for why |
 | Dry-run | `init_bot.py --dry-run` | Reports what would be created and issues a `--confirm-token`/`--issued-at` pair, without writing anything |
 | Connectivity health check | `erp_client.py health` | Run before init; also confirms which ERPNext user the configured key belongs to |
 | Bot user existence/role/enabled/key check | `ensure_bot_user.py --dry-run` | Read-only-equivalent — reports what's missing without writing anything; requires the `Qkeee Bot` role to already exist |
@@ -193,16 +190,12 @@ than guessing a second time.
 ## Files
 
 - `references/bot-doctypes-design.md` — the canonical, buildable spec for
-  all 4 doctypes: full field tables, permission matrix, the two-phase
+  both doctypes: full field tables, permission matrix, the two-phase
   Attempted/Success/Failure write discipline, the debug-mode volume gate,
   the `AUDIT_EXEMPT_DOCTYPES` recursion guard, and the decision log this
   design came from. Read this before extending or modifying the schema.
 - `scripts/doctype_defs.py` — the actual `DocType`/`Role` create payloads,
   synced from the design doc. Field-for-field source of what gets created.
-  Also defines `DEFERRED_FIELD_PATCHES`: fields that can't be in their
-  doctype's initial create payload because they Link to a doctype created
-  later (live-confirmed that Frappe rejects that at create
-  time) — currently just `Qkeee Bot Message.linked_audit_log`.
 - `scripts/erp_client.py` — connector copy (self-contained-copies pattern,
   synced from `qkeee-erp-frappe-core` including its two-phase audit-log write
   path), plus `resource_exists()` — a 404-tolerant existence check this
@@ -216,8 +209,7 @@ than guessing a second time.
   stale or tampered token, or without a prior dry-run at all.
 - `scripts/init_bot.py` — the init flow: health check → compute plan →
   (dry-run: print plan + token) or (real: verify token → ensure role →
-  ensure each doctype → `ensure_deferred_fields()`), existence-checked
-  and idempotent throughout.
+  ensure each doctype), existence-checked and idempotent throughout.
 - `scripts/ensure_bot_user.py` — the bot-user flow:
   health check → compute plan (user exists? has `Qkeee Bot` role? enabled?
   has an API key?) → (dry-run: print plan + token) or (real: verify token

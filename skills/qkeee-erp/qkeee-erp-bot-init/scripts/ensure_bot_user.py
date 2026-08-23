@@ -2,7 +2,7 @@
 """
 qkeee-erp-bot-init — detect/provision the steady-state qkeee-erp-bot
 service-account User (as distinct from ensure the Qkeee Bot Persona/
-Session/Message/Audit Log doctypes + Role, which init_bot.py handles).
+Audit Log doctypes + Role, which init_bot.py handles).
 
 Persona skills authenticate to ERPNext as ONE shared bot/service account
 per environment tag (QKEEE_ERP_<TAG>_API_KEY/_SECRET — see
@@ -10,7 +10,7 @@ qkeee-erp-frappe-core/SKILL.md's "Bot account — mandatory" section). That
 account must be a dedicated ERPNext User, never a real staff member's
 personal login, and should hold the `Qkeee Bot` role once it exists (see
 doctype_defs.py / init_bot.py) so the audit-trail doctypes' permission
-matrix (Qkeee Bot role: read/write/create on Session/Message/Audit Log)
+matrix (Qkeee Bot role: read/write/create on Persona/Audit Log)
 actually applies to it. This script closes the gap where nothing in the
 library previously checked any of that automatically — an org could run
 persona skills for months against a personal login and nobody would

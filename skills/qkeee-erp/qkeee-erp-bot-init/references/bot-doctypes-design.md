@@ -1,6 +1,6 @@
 # Qkeee Bot audit-trail doctype design (canonical)
 
-Source of truth for the 4 `Qkeee Bot *` doctypes this skill creates. If
+Source of truth for the `Qkeee Bot *` doctypes this skill creates. If
 you're extending or fixing the audit-trail schema, start here — this file,
 not the create-payloads in `scripts/doctype_defs.py`, is the design record;
 sync the script from this doc, not the other way around.
@@ -9,7 +9,7 @@ Decision log / debate history for how this design was reached lives in
 `qkeee-erp-skills-library-plan.md`'s "Bot Audit-Trail Doctype Design"
 section. This file is the buildable spec that came out of it.
 
-## Why 4 doctypes, no app
+## Why no app
 
 Every field/permission decision below assumes: doctypes are created at
 runtime as `custom: 1` records via `POST /api/resource/DocType`, attached
@@ -36,7 +36,7 @@ read/write only) and should *not* itself be able to create doctypes or
 roles. Treat init as a one-time/occasional elevated-credential operation,
 separate from steady-state bot traffic.
 
-## The 4 doctypes
+## The doctypes
 
 ### 1. `Qkeee Bot Persona`
 
@@ -54,55 +54,7 @@ rows, ever).
 
 Autoname: `field:persona_code`.
 
-### 2. `Qkeee Bot Session`
-
-One row per conversation. **Only created when `qkeee_erp.debug` is
-`true`** (decision 10) — outside debug mode, a session is identified only
-by the raw session-id string threaded through Audit Log rows (see
-`Qkeee Bot Audit Log.session` below), with no corresponding doctype record.
-
-| Field | Type | Notes |
-| --- | --- | --- |
-| `user` | Link → User, reqd | the human this session serves (`requested_by`), never the bot service account |
-| `persona` | Link → Qkeee Bot Persona, reqd | |
-| `environment_tag` | Data, reqd | connector's active-env tag at session start |
-| `channel` | Select (`Web`/`Discord`/`Telegram`/`WhatsApp`/`Email`/`Slack`/`CLI`/`API`/`Other`) | the conversation surface this session came in on; `Other` is the escape hatch for a channel not yet enumerated here rather than blocking on a schema change |
-| `channel_metadata` | Long Text (JSON) | free-form per-channel tracing detail — e.g. `{"chat_id": "..."}` (Discord/Telegram/WhatsApp), `{"message_id": "...", "thread_index": "..."}` (email headers), `{"channel_id": "...", "ts": "..."}` (Slack). Deliberately unstructured JSON rather than named columns per channel, so a new channel or a new attribute on an existing one never needs a schema change — see `channel`/`channel_metadata` in the Extension points section |
-| `mode` | Select (`Read Only`/`Read Write`) | mode at session start; mode changes mid-session are logged as Messages, not backfilled here |
-| `debug_mode` | Check | debug state at session start |
-| `started_on` | Datetime | |
-| `ended_on` | Datetime | |
-| `status` | Select (`Active`/`Closed`/`Error`) | default `Active` |
-
-Autoname: `hash` (random, unguessable session id — this value is what
-Audit Log's `session` field carries as a plain string when debug is off).
-
-Permission: create + read + write (to close out `status`/`ended_on`) for
-role `Qkeee Bot`. No delete.
-
-### 3. `Qkeee Bot Message`
-
-One row per conversation turn. **Only created when `qkeee_erp.debug` is
-`true`** (decision 10) — this is the doctype the debug gate exists
-primarily to protect against bloat.
-
-| Field | Type | Notes |
-| --- | --- | --- |
-| `session` | Link → Qkeee Bot Session, reqd | indexed |
-| `speaker` | Select (`User`/`Bot Analysis`/`Bot Response`/`Bot Action`/`System`), reqd | splits bot analysis / response / action rather than one generic "Bot" role, per the original ask |
-| `content` | Long Text, reqd | |
-| `related_capability` | Data | e.g. "Journal Entry drafting" — ties the turn back to the persona's capability table |
-| `in_reply_to` | Link → Qkeee Bot Message | self-link; the User message this turn answers. **Required for reconstructing conversations under interleaved/async turns** (decision 5) — do not rely on `creation` order alone once a harness allows a user to send a second message before the bot finishes responding to the first |
-| `linked_audit_log` | Link → Qkeee Bot Audit Log | set only on Bot-Action messages that actually touched ERPNext. **Not present in the initial `DocType` create payload** — live-confirmed that Frappe rejects a Link field naming a not-yet-existing doctype at create time (`WrongOptionsDoctypeLinkError`), and Message is created before Audit Log. Added via a post-create `update` patch once Audit Log exists — see `scripts/doctype_defs.py`'s `DEFERRED_FIELD_PATCHES` and `init_bot.py`'s `ensure_deferred_fields()`. |
-
-Autoname: `hash`.
-
-Permission: **create-only** for role `Qkeee Bot` — `write: 0` after
-insert (decision 9). Ordering for reconstruction: use Frappe's own
-`creation` field, never a client-computed `sequence_no` (decision 6) —
-client-side counters gap/collide under crash-and-retry.
-
-### 4. `Qkeee Bot Audit Log`
+### 2. `Qkeee Bot Audit Log`
 
 One row per ERPNext record the bot reads/creates/updates/submits/
 cancels/deletes. **The only doctype that is (mostly) unconditional** —
@@ -110,12 +62,11 @@ see the debug split below.
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `session` | **Data**, not Link, reqd | raw session-id string. Deliberately not a Link to `Qkeee Bot Session` — that doctype may not exist outside debug mode (decision 10); a Data field stays populated as a correlator regardless, and still lets you group rows by conversation if a Session record does exist |
-| `persona_code` | Data | denormalized from Persona, not resolved via a Session join, for the same reason |
+| `session` | **Data**, not Link, reqd | raw session-id string — a plain correlator, populated by the caller via `--session-id`/`session_id`, never resolved through a doctype join (decision 10) |
+| `persona_code` | Data | denormalized string, set directly by the caller, no doctype join |
 | `environment_tag` | Data | denormalized, same reason |
-| `channel` | Select, same options as `Qkeee Bot Session.channel` | denormalized from Session for the same reason a Session record may not exist outside debug mode; populated directly by the caller (the persona skill/connector knows the inbound channel regardless of whether Session logging is on) |
-| `channel_metadata` | Long Text (JSON) | denormalized from Session, same reason; also settable directly per-row so a channel-specific tracing id (a chat id, an email `Message-Id` header, a WhatsApp `wamid`) is captured even when no Session exists to denormalize from |
-| `triggering_message` | Link → Qkeee Bot Message | optional; only non-null when Message rows exist (debug on) |
+| `channel` | Select | populated directly by the caller (the persona skill/connector knows the inbound channel) |
+| `channel_metadata` | Long Text (JSON) | settable directly per-row so a channel-specific tracing id (a chat id, an email `Message-Id` header, a WhatsApp `wamid`) is captured |
 | `action` | Select (`Read`/`Create`/`Update`/`Submit`/`Cancel`/`Delete`), reqd | |
 | `reference_doctype` | Link → DocType, reqd | |
 | `reference_name` | Dynamic Link (`reference_doctype`) | populated from the live write response — for `Create`, the doctype's assigned `name` as returned by ERPNext (never guessed/pre-computed); for `Update`/`Submit`/`Cancel`/`Delete`, the caller-supplied `name` as a guaranteed fallback if response parsing comes up empty. **Blank `reference_name` is expected on a `Failure` row** (the write never completed, nothing to reference) — `_audit_submit()` locks both `Success` and `Failure` rows the same way, so the list view's "Submitted" badge alone does not distinguish them; check `status`/`error_detail` on that row before treating a blank name as a bug. Blank `reference_name` on a `status = Success` row is NOT expected — `erp_client.py`'s `mutate_resource()` prints a `WARN` to stderr when this happens, since it means ERPNext's response shape didn't match what the connector assumes |
@@ -139,10 +90,10 @@ Autoname: `hash`. **Submittable** (`is_submittable: 1`) — once `Success`/
   ("write/update log" from the original ask) and stays low-to-moderate
   volume even for busy personas.
 - `Read` rows — **debug-mode only.** Identified as the likely
-  highest-volume source of the four doctypes (a read-heavy persona like
-  MIS Analyst can generate far more Read calls per session than Message
-  turns) — gating Message alone would not have solved the stated bloat
-  concern.
+  highest-volume source of Audit Log rows (a read-heavy persona like MIS
+  Analyst can generate far more Read calls per session than a busier
+  write-path persona ever would) — hence the debug gate on reads
+  specifically, independent of the always-on write logging above.
 
 **Two-phase write (decision 7) — the core integrity mechanism:**
 1. Insert Audit Log row with `status = Attempted`, *before* calling
@@ -163,7 +114,6 @@ catch anything either logger missed.
 
 ```python
 AUDIT_EXEMPT_DOCTYPES = {
-    "Qkeee Bot Session", "Qkeee Bot Message",
     "Qkeee Bot Audit Log", "Qkeee Bot Persona",
     "Comment",  # the best-effort audit-comment post itself
 }
@@ -181,11 +131,9 @@ documents it).
 | Doctype | Role `Qkeee Bot` | Role `System Manager` |
 | --- | --- | --- |
 | Persona | read only (`read:1`, rest `0`) | full (managed via init/admin, not runtime bot traffic) |
-| Session | create, read, write (`submit:0`, `delete:0`) | read only |
-| Message | create, read (`write:0` — immutable after insert) | read only |
 | Audit Log | create, read, write (to flip Attempted→Success/Failure), submit (`cancel:0`, `delete:0`) | read only |
 
-No role gets `delete` on any of the four doctypes via the permission
+No role gets `delete` on either doctype via the permission
 model, including `System Manager` on `Qkeee Bot Persona` — master data
 included, so a decommissioned persona row is disabled (the `active`
 checkbox) rather than deleted, keeping history intact. Retention/cleanup
@@ -212,8 +160,7 @@ profile's own `.env`, default `false` if unset (2026-08-18 retrofit;
 originally a single global `metadata.hermes.config` key,
 `qkeee_erp.debug`, shared across every tag — moved per-tag so a profile
 juggling multiple environments can debug-log one and not another). Gates
-Session + Message creation and Audit Log's Read rows, per the split
-above. `qkeee_erp.active_env`/`qkeee_erp.mode` remain global
+Audit Log's Read rows, per the split above. `qkeee_erp.active_env`/`qkeee_erp.mode` remain global
 `metadata.hermes.config` keys; `QKEEE_ERP_<TAG>_REQUESTED_BY` moved
 alongside `_DEBUG` for the same per-tag reason. See
 `qkeee-erp-frappe-core/references/connector-reference.md`'s "Requester

@@ -130,17 +130,12 @@ than guessing a second time.
    qkeee-erp-accounts-executive --persona-label "Accounts Executive"
    --default-mode read-only`. This upserts the `Qkeee Bot Persona` master
    row — it's not a log and isn't gated on the active tag's `QKEEE_ERP_<TAG>_DEBUG`. Check the returned `status` — `"failed"` means the `Qkeee Bot Persona` row was NOT created (almost always because `qkeee-erp-bot-init` hasn't been run on this instance yet), even though the command still exits cleanly. Treat `"failed"` the same as a `logged_in_as` that looks like a personal account — mention it once, proactively, and suggest running `qkeee-erp-bot-init`; never silently ignore it, and never let it block the user's actual request.
-4. **Session/message logging — only when the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true`.**
-   If debug is `false` (the default), skip this step entirely: no
-   `open-session`, no `log-message`, no `--session-id` threading. When
-   the active tag's `QKEEE_ERP_<TAG>_DEBUG` is `true`: after persona registration, call
-   `open-session --persona-code
-   qkeee-erp-accounts-executive --mode <qkeee_erp.mode>` once (omit `--user` — it falls back to `QKEEE_ERP_<TAG>_REQUESTED_BY`; pass it explicitly only to override that for this one call), and thread
-   the returned `session_id` into every subsequent `query`/`get`/`mutate`
-   call's `--session-id`. If `session_id` starts with `local-`, the session row was never actually persisted to ERPNext (Session/Message logging failed, most likely because `qkeee-erp-bot-init` hasn't been run on this instance) — surface that once, same as a failed persona registration, and keep working from the local id rather than blocking. Call `log-message` at natural turns — `User` for
-   the user's ask, `Bot Analysis` for your reasoning, `Bot Response` for
-   what you tell the user, `Bot Action` around a `mutate` (e.g. a JE
-   create/submit) — and `close-session` when the session ends.
+4. **Session id — thread one string through the whole conversation.**
+   Pick any stable string (e.g. a locally-generated `local-<timestamp>`,
+   or a real conversation/thread id from the surrounding harness) at
+   the start of the session and pass it as `--session-id` on every
+   subsequent `query`/`get`/`mutate` call — it's a plain string
+   correlator on Audit Log rows, not a reference to any doctype.
 5. **Route every ERPNext call through `scripts/erp_client.py`.** For AR/AP
    aging, sales/purchase registers, or any other built-in ERPNext report,
    prefer `erp_client.py report <report_name>` (wraps `run_query_report()`)

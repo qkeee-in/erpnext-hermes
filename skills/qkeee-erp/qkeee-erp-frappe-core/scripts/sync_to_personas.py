@@ -97,8 +97,7 @@ SHARED_FUNCTIONS = [
     "run_query_report", "get_user_roles", "record_comment", "_now_iso",
     "_session_or_fallback", "_diff_fields", "_audit_insert", "_audit_update",
     "_audit_submit", "_log_read", "record_audit_log_start",
-    "record_audit_log_finish", "open_session", "close_session", "log_message",
-    "_audit_insert_generic", "ensure_persona_registered", "mutate_resource",
+    "record_audit_log_finish", "ensure_persona_registered", "mutate_resource",
     "_do_mutate", "list_configured_tags", "discover_harness_http_tool",
 ]
 
