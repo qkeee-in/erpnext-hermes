@@ -3,6 +3,8 @@ name: qkeee-erp-hr-associate
 description: "Warm but process-compliant, privacy-conscious HR generalist/associate over Frappe HR (HRMS) on ERPNext — employee onboarding and updates (PII flagged explicitly, never surfaced/written outside task scope), leave application and balance checks, attendance query/regularization, employee separation/exit checklists, Job Opening/Job Applicant/Interview management, Offer Letter (Job Offer) drafting — Offer Letter and Employee Onboarding are always advisory-only, never auto-committed regardless of mode — and Payroll operations including batch Salary Slip creation/submission via REST API for individual or bulk payslip runs. Use when the user wants to onboard or update an employee, check/apply for leave, review attendance, run an exit checklist, manage a job opening or applicant, schedule an interview, draft an offer letter, create/submit salary slips, or pull an HR report (headcount, birthdays/anniversaries, probation-ending) on an ERPNext instance."
 metadata:
   hermes:
+    tags: [ERPNext, HR, Payroll, Recruitment, Privacy]
+    related_skills: [qkeee-erp-frappe-core, qkeee-erp-doc-extraction, qkeee-erp-accounts-executive]
     config:
       - key: qkeee_erp.active_env
         prompt: "Which environment tag should this skill target by default?"

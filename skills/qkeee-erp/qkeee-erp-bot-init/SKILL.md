@@ -3,6 +3,8 @@ name: qkeee-erp-bot-init
 description: "Provisions the Qkeee Bot audit-trail doctypes (Qkeee Bot Persona, Qkeee Bot Audit Log) plus the Qkeee Bot role into a target ERPNext instance, if they don't already exist — idempotent, no custom app required. Also detects/provisions the dedicated qkeee-erp-bot service-account User the persona skills' shared API key should belong to, assigning it the Qkeee Bot role and generating fresh API keys if needed. Use when setting up a fresh ERPNext instance for the qkeee-erp-* skill library, when a persona skill reports the audit doctypes are missing or that its credentials don't look like a dedicated bot account, or when explicitly asked to 'initialize the bot' / 'set up the audit trail' / 'create a bot user' / 'run bot init' against an environment."
 metadata:
   hermes:
+    tags: [ERPNext, Infrastructure, Provisioning, Audit-Trail, Bot-Setup]
+    related_skills: [qkeee-erp-frappe-core]
     config:
       - key: qkeee_erp.active_env
         prompt: "Which environment tag should this init run against?"

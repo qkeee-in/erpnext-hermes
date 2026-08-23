@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# qkeee-erp:read-only-skill
 """
 qkeee-erp-mis-analyst connector — read-only-only copy of the canonical
 qkeee-erp-frappe-core ERPNext (Frappe REST API) client.

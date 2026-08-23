@@ -329,14 +329,11 @@ surrounding harness) via `--session-id`/`session_id`, threaded through
 subsequent `mutate`/`query`/`get` calls, with nothing else to set up.
 See bot-doctypes-design.md.
 
-**Not yet done — a known gap, not an oversight:** none of the 7
-write-capable persona skills' own `erp_client.py` copies have been synced
-with this retrofit yet. Each one still runs the connector version
-predating the audit-trail retrofit (read-only-gate + requester-attribution
-+ save-draft-review-submit, but no audit logging). Syncing this file into
-each persona skill's `scripts/`
-directory is the next mechanical step before any persona skill's writes
-actually reach `Qkeee Bot Audit Log`.
+**Sync status:** `sync_to_personas.py` has synced this retrofit into all 7
+write-capable persona skills' `erp_client.py` copies — `record_audit_log_start`
+is present in every persona's copy, verified directly. Persona writes reach
+`Qkeee Bot Audit Log`. Re-run `sync_to_personas.py --dry-run` after any future
+change to this file's `SHARED_FUNCTIONS` to confirm no persona has drifted.
 
 ## What this layer does, and doesn't, know
 

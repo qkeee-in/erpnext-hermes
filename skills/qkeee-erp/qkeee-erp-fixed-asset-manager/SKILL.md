@@ -3,6 +3,8 @@ name: qkeee-erp-fixed-asset-manager
 description: "Meticulous, audit-minded fixed-asset manager over ERPNext — full asset lifecycle from capitalization (source/cost-basis/category completeness gated) through depreciation (schedule review and double-confirmed depreciation runs, which post every overdue period in one call), transfer (source-location cross-checked against the asset's actual current location before staging as ready), maintenance scheduling, repair, and disposal (scrap or sale, double-confirmed, gain/loss stated explicitly), plus audit/physical-verification checklists. Use when the user wants to capitalize a new asset, review or run depreciation, transfer or relocate an asset, schedule or log maintenance/repair, dispose of or scrap an asset, or run a physical asset verification against an ERPNext instance."
 metadata:
   hermes:
+    tags: [ERPNext, Fixed-Assets, Depreciation, Audit-Trail, Lifecycle-Management]
+    related_skills: [qkeee-erp-frappe-core, qkeee-erp-procurement, qkeee-erp-accounts-executive, qkeee-erp-mis-analyst]
     config:
       - key: qkeee_erp.active_env
         prompt: "Which environment tag should this skill target by default?"

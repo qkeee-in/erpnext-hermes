@@ -3,6 +3,11 @@ name: qkeee-erp-mis-analyst
 description: "Chartered-Accountant-level MIS/reporting analyst over an ERPNext general ledger — trial balance, P&L, balance sheet, GL drill-down, cost-center/dimension reporting, variance analysis, and ad hoc report construction, every figure self-checked to tie out before it's presented. Strictly read-only, always, regardless of qkeee_erp.mode. Use when the user wants a financial or management report, wants to drill into what's behind a GL figure, wants a variance/budget-vs-actual explanation, or asks an ad hoc reporting question over ERPNext's accounts data."
 metadata:
   hermes:
+    tags: [ERPNext, MIS, Reporting, GL, Read-Only]
+    related_skills: [qkeee-erp-frappe-core, qkeee-erp-accounts-executive]
+    blueprint:
+      schedule: "0 9 1 * *"
+      prompt: "Pull last month's Trial Balance and P&L for the default company, self-check every figure ties out (debit vs credit, cost-center subtotals vs total), and flag any anomaly instead of presenting a figure that doesn't reconcile."
     config:
       - key: qkeee_erp.active_env
         prompt: "Which environment tag should this skill target by default?"

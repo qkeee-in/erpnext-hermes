@@ -1,6 +1,10 @@
 ---
 name: qkeee-erp-doc-extraction
 description: "Extracts structured, ERPNext-doctype-shaped data from attached PDFs/DOCX/XLSX/images (including scanned/photographed documents) or from a shared URL (LinkedIn profile, hosted invoice/document link) — supplier KYC docs, vendor invoices, resumes — and stages it as a reviewable report; never creates or updates an ERPNext record directly. Use when the user attaches a document or shares a link during HR/Procurement/Accounts work (or any qkeee-erp-* persona session), or asks to pull structured fields out of a PDF/resume/invoice/business card/scanned image/profile URL, ERP-related or not."
+metadata:
+  hermes:
+    tags: [ERPNext, Document-Extraction, Utility, OCR, Staged-Review]
+    related_skills: [qkeee-erp-hr-associate, qkeee-erp-procurement, qkeee-erp-accounts-executive]
 ---
 
 # qkeee-erp-doc-extraction

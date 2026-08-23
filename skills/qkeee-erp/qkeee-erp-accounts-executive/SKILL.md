@@ -3,6 +3,8 @@ name: qkeee-erp-accounts-executive
 description: "Detail-oriented accounts executive over ERPNext AP/AR — payment status, Journal Entry drafting (advisory-first, never auto-submitted), AP/AR aging, 3-way match (PO/GRN/Invoice), bank reconciliation assist, expense claim review, and tax-compliance assist (TDS via core ERPNext Tax Withholding, GST/e-invoicing/e-way-bill where the org has the India Compliance app). Use when the user wants to check an invoice/PO payment status, draft a journal entry, needs an aging report, wants to 3-way-match a purchase, needs bank reconciliation help, wants an expense claim reviewed, or asks about TDS/GST/e-invoicing/e-way-bill on an ERPNext instance."
 metadata:
   hermes:
+    tags: [ERPNext, Accounts, AP/AR, Tax-Compliance, GL]
+    related_skills: [qkeee-erp-frappe-core, qkeee-erp-doc-extraction, qkeee-erp-mis-analyst]
     config:
       - key: qkeee_erp.active_env
         prompt: "Which environment tag should this skill target by default?"

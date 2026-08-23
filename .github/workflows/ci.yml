@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  sync-check:
+    name: persona sync drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check personas are in sync with qkeee-erp-frappe-core
+        run: |
+          python skills/qkeee-erp/qkeee-erp-frappe-core/scripts/sync_to_personas.py --check
+
+  tests:
+    name: skill tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run each skill's tests
+        run: |
+          set -e
+          status=0
+          for skill_dir in skills/qkeee-erp/*/; do
+            scripts_dir="${skill_dir}scripts"
+            if [ -d "$scripts_dir" ] && compgen -G "$scripts_dir/test_*.py" > /dev/null; then
+              echo "::group::$skill_dir"
+              (cd "$scripts_dir" && python -m unittest discover -p "test_*.py" -v) || status=1
+              echo "::endgroup::"
+            fi
+          done
+          exit $status

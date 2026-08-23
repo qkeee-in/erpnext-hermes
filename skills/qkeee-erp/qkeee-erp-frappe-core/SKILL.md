@@ -3,6 +3,8 @@ name: qkeee-erp-frappe-core
 description: "Canonical ERPNext (Frappe REST API) connector — environment/tag management, auth, generic read/write primitives, and the read-only/read-write safety gate. Infrastructure skill: every qkeee-erp-* persona skill ships its own copy of this connector. Also this library's fallback-investigation skill (merged from the former qkeee-erp-catch-all) for whatever doesn't fit one of the eight named persona skills — companion Frappe apps (CRM, Helpdesk, LMS, Insights, ...) and org-specific custom doctypes — investigating the target instance's actual installed apps and live DocType metadata before proposing anything, and building a per-instance knowledge base over sessions. Use when the user wants to configure an ERPNext environment, run a raw ERPNext query, check ERPNext connectivity outside of a specific persona (HR/Accounts/Procurement/etc), or asks about a doctype/feature that doesn't belong to any named persona skill."
 metadata:
   hermes:
+    tags: [ERPNext, Connector, Infrastructure, Fallback-Investigation, REST-API]
+    related_skills: [qkeee-erp-accounts-executive, qkeee-erp-hr-associate, qkeee-erp-fixed-asset-manager, qkeee-erp-system-admin, qkeee-erp-procurement, qkeee-erp-sales, qkeee-erp-inventory, qkeee-erp-mis-analyst, qkeee-erp-bot-init]
     config:
       - key: qkeee_erp.active_env
         prompt: "Which environment tag should this skill target by default?"

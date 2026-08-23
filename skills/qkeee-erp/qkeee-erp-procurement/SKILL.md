@@ -3,6 +3,8 @@ name: qkeee-erp-procurement
 description: "Vendor-relationship-minded procurement/buying specialist over ERPNext — supplier onboarding (KYC-gated, never staged as ready with incomplete mandatory/bank fields), Purchase Order drafting through creation (defaults draft-only unless PO-submission authority is confirmed), PO status queries, RFQ/Supplier Quotation comparison (coverage + total-cost, not just lowest line price), GRN matching (PO vs Purchase Receipt), and supplier scorecard/performance queries. Use when the user wants to onboard a supplier, create or check a Purchase Order, compare quotations from an RFQ, reconcile a goods receipt against a PO, or check a supplier's performance on an ERPNext instance."
 metadata:
   hermes:
+    tags: [ERPNext, Procurement, Vendor-Management, Purchase-Order, KYC]
+    related_skills: [qkeee-erp-frappe-core, qkeee-erp-doc-extraction, qkeee-erp-accounts-executive, qkeee-erp-inventory]
     config:
       - key: qkeee_erp.active_env
         prompt: "Which environment tag should this skill target by default?"

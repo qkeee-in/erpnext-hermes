@@ -3,6 +3,8 @@ name: qkeee-erp-sales
 description: "Customer-facing sales executive over ERPNext — customer onboarding (KYC-ish completeness bar stricter than ERPNext's own, requires a reachable primary contact), Quotation drafting (always create-as-draft-only, never auto-submitted as a formal customer commitment), Sales Order status queries (delivery + billing fulfilment tracked separately), Delivery Note tracking, and sales pipeline-lite reporting (quotation-stage counts + open-order value/overdue exposure). Use when the user wants to onboard a customer, draft a quotation, check where a Sales Order or Delivery Note stands, or get a lightweight sales pipeline view on an ERPNext instance."
 metadata:
   hermes:
+    tags: [ERPNext, Sales, Selling-Module, Customer-Onboarding, Quotation]
+    related_skills: [qkeee-erp-frappe-core, qkeee-erp-procurement]
     config:
       - key: qkeee_erp.active_env
         prompt: "Which environment tag should this skill target by default?"

@@ -494,6 +494,7 @@ def get_user_roles(tag: str, user: str = "") -> dict:
     return {"user": target, "roles": roles, "warning": warning}
 
 
+# qkeee-erp:write-path
 def record_comment(cfg: dict, doctype: str, name: str, content: str) -> bool:
     """Best-effort: post a Comment onto an ERPNext record via
     frappe.desk.form.utils.add_comment, so the audit trail lives in
@@ -540,6 +541,7 @@ def _session_or_fallback(session_id: str) -> str:
     return session_id or f"local-{_now_iso()}"
 
 
+# qkeee-erp:write-path
 def _diff_fields(before: dict, after: dict) -> list:
     """Field-by-field diff for the Update action's field_diff JSON. Compares
     top-level keys only (child-table diffing isn't attempted — a child
@@ -574,6 +576,7 @@ def _audit_insert(cfg: dict, fields: dict) -> str:
         return None
 
 
+# qkeee-erp:write-path
 def _audit_update(cfg: dict, log_name: str, fields: dict) -> bool:
     """Raw best-effort update of an existing Audit Log row. Returns success."""
     if not log_name:
@@ -587,6 +590,7 @@ def _audit_update(cfg: dict, log_name: str, fields: dict) -> bool:
         return False
 
 
+# qkeee-erp:write-path
 def _audit_submit(cfg: dict, log_name: str) -> bool:
     """Best-effort submit (docstatus lock) of a finished Audit Log row.
     Failure here (e.g. the row's own mandatory fields didn't validate)
@@ -632,6 +636,7 @@ def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id:
     _audit_submit(cfg, log_name)
 
 
+# qkeee-erp:write-path
 def record_audit_log_start(cfg: dict, *, action: str, doctype: str, name: str, requested_by: str,
                             session_id: str = None, persona_code: str = None,
                             channel: str = None, channel_metadata: dict = None,
@@ -666,6 +671,7 @@ def record_audit_log_start(cfg: dict, *, action: str, doctype: str, name: str, r
     })
 
 
+# qkeee-erp:write-path
 def record_audit_log_finish(cfg: dict, log_name: str, *, status: str, reference_name: str = None,
                              payload_before: dict = None, payload_after: dict = None,
                              error_detail: str = None, audit_comment_posted: bool = None) -> None:
@@ -730,6 +736,7 @@ def ensure_persona_registered(tag: str, *, persona_code: str, persona_label: str
 # Writes
 # --------------------------------------------------------------------------
 
+# qkeee-erp:write-path
 def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
                      name: str = None, mode: str = "read-only", requested_by: str = None,
                      skip_comment: bool = False,
@@ -902,6 +909,7 @@ def gated_mutate_resource(tag: str, doctype: str, action: str, payload: dict = N
     )
 
 
+# qkeee-erp:write-path
 def _do_mutate(cfg: dict, doctype: str, action: str, payload: dict, name: str, requested_by: str,
                 skip_comment: bool = False) -> dict:
     """The actual per-action HTTP dispatch, unchanged from before the

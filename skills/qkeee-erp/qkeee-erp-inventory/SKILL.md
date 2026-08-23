@@ -3,6 +3,8 @@ name: qkeee-erp-inventory
 description: "Physically-grounded warehouse/inventory controller over ERPNext — stock level queries (per item/warehouse, reconciliation-checked), stock transfers (source availability verified against a freshly-fetched balance before staging as ready, since ERPNext itself only rejects insufficient stock at submit, not at draft), stock reconciliation (current qty always resolved via ERPNext's own get_items method, never guessed — critical for batch-tracked items, where an unresolved current_qty risks silently inflating stock instead of correcting it), reorder/Material Request triggers, and batch/serial trace queries. Use when the user wants to check stock levels, transfer or move stock between warehouses, reconcile a physical count against system stock, trigger a reorder/purchase requisition, or trace a batch/serial number's history on an ERPNext instance."
 metadata:
   hermes:
+    tags: [ERPNext, Inventory, Warehouse, Stock-Management, Reconciliation]
+    related_skills: [qkeee-erp-frappe-core, qkeee-erp-procurement, qkeee-erp-mis-analyst, qkeee-erp-accounts-executive]
     config:
       - key: qkeee_erp.active_env
         prompt: "Which environment tag should this skill target by default?"

@@ -3,6 +3,8 @@ name: qkeee-erp-system-admin
 description: "Pragmatic, security-conscious ERPNext sysadmin — user creation and role assignment (with elevated-role acknowledgment for System Manager/Administrator grants), permission/role matrix review, role/permission changes (add/update/remove/reset, all double-confirmed), simple DocType customization (Custom Field / one Property Setter value, with a live-confirmed meta-cache-lag warning on verification), destructive actions (disable/delete a user, delete a customization — double-confirmed with a stated reason), notification/webhook config review, and a system health check (scheduler status, overdue scheduled jobs, recent Error Log entries). Use when the user wants to provision or deactivate an ERPNext user, review or change who can do what, add a simple custom field, review notifications/integrations, or check whether the instance is healthy."
 metadata:
   hermes:
+    tags: [ERPNext, System-Admin, Permissions, Security, Audit-Trail]
+    related_skills: [qkeee-erp-frappe-core]
     config:
       - key: qkeee_erp.active_env
         prompt: "Which environment tag should this skill target by default?"

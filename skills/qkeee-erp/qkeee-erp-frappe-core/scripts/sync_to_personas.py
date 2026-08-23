@@ -69,24 +69,18 @@ CONFIRM_TOKEN_SKILLS = [
     "qkeee-erp-system-admin",
 ]
 
-# Skills that deliberately ship no write path at all (structural
-# read-only guarantee, not a config-driven restraint — see each such
-# skill's own module docstring). Sync must never (re)introduce
-# WRITE_PATH_FUNCTIONS into these, even though they're "missing" by the
-# normal missing-in-target-but-present-in-core-and-shared_names logic.
-READ_ONLY_SKILLS = ["qkeee-erp-mis-analyst"]
-
-# The write-path subset of SHARED_FUNCTIONS — withheld from
-# READ_ONLY_SKILLS specifically (see READ_ONLY_SKILLS above and the
-# module docstring's postmortem). Every name here still gets synced
-# normally (updated-if-present) for every skill NOT in READ_ONLY_SKILLS;
-# this list only controls whether merge_py() is allowed to APPEND one of
-# these to a read-only skill that has never had it.
-WRITE_PATH_FUNCTIONS = {
-    "record_comment", "_diff_fields", "_audit_update", "_audit_submit",
-    "record_audit_log_start", "record_audit_log_finish", "mutate_resource",
-    "_do_mutate",
-}
+# READ_ONLY_SKILLS and WRITE_PATH_FUNCTIONS used to be hand-maintained
+# lists here — that's exactly what silently broke qkeee-erp-mis-analyst
+# once already (2026-08-18 postmortem, see module docstring): nothing
+# forced this file to stay in sync with which skills/functions actually
+# are read-only/write-path. Both are now derived from checkable markers
+# in the source files themselves — see _derive_write_path_functions()
+# and _derive_read_only_skills() below. `# qkeee-erp:write-path` sits on
+# the line immediately above each write-path `def` in core's
+# erp_client.py; `# qkeee-erp:read-only-skill` sits near the top of a
+# persona's own erp_client.py. Sync must never (re)introduce a
+# write-path function into a read-only-marked skill, even though it's
+# "missing" by the normal missing-in-target-but-present-in-core logic.
 
 # Every top-level function in core's erp_client.py that is shared connector
 # plumbing, never persona-specific business logic. `_cli` is intentionally
@@ -107,6 +101,42 @@ CORE_TEST_CLASSES_TO_APPEND = ["RunQueryReportTests", "GetUserRolesTests"]
 
 def read(path: Path) -> str:
     return path.read_text(encoding="utf-8").replace("\r\n", "\n")
+
+
+def _derive_write_path_functions(core_src: str) -> set:
+    """Functions marked `# qkeee-erp:write-path` on the line immediately
+    above their `def` in core's erp_client.py. Checkable directly from
+    the source instead of a hand-maintained list — see the module
+    docstring's mis-analyst postmortem."""
+    marker = "# qkeee-erp:write-path"
+    lines = core_src.split("\n")
+    names = set()
+    for i, line in enumerate(lines):
+        if line.strip() != marker:
+            continue
+        for j in range(i + 1, len(lines)):
+            stripped = lines[j].strip()
+            if not stripped:
+                continue
+            m = re.match(r"def (\w+)\(", stripped)
+            if m:
+                names.add(m.group(1))
+            break
+    return names
+
+
+def _derive_read_only_skills() -> list:
+    """Persona skills whose own erp_client.py carries a
+    `# qkeee-erp:read-only-skill` marker near the top. Checkable
+    directly from each persona's file instead of a hand-maintained
+    list — see the module docstring's mis-analyst postmortem."""
+    marker = "# qkeee-erp:read-only-skill"
+    out = []
+    for skill in PERSONA_SKILLS:
+        p = SKILLS_DIR / skill / "scripts" / "erp_client.py"
+        if p.exists() and marker in read(p):
+            out.append(skill)
+    return out
 
 
 def split_py_blocks(src: str, keyword: str):
@@ -271,10 +301,12 @@ def sync_erp_client(skill: str, apply: bool) -> dict:
     target_path = SKILLS_DIR / skill / "scripts" / "erp_client.py"
     if not target_path.exists():
         return {"skipped": "no erp_client.py in target"}
+    core_src = read(core_path)
     appendable = SHARED_FUNCTIONS
-    if skill in READ_ONLY_SKILLS:
-        appendable = [n for n in SHARED_FUNCTIONS if n not in WRITE_PATH_FUNCTIONS]
-    merged, report = merge_py(read(core_path), read(target_path), SHARED_FUNCTIONS, "def",
+    if skill in _derive_read_only_skills():
+        write_path_functions = _derive_write_path_functions(core_src)
+        appendable = [n for n in SHARED_FUNCTIONS if n not in write_path_functions]
+    merged, report = merge_py(core_src, read(target_path), SHARED_FUNCTIONS, "def",
                                appendable_names=appendable)
     if apply:
         target_path.write_text(merged, encoding="utf-8", newline="\n")
@@ -300,10 +332,15 @@ def sync_discover(skill: str, apply: bool) -> dict:
     target_script = SKILLS_DIR / skill / "scripts" / "discover.py"
     target_test = SKILLS_DIR / skill / "scripts" / "test_discover.py"
     existed = target_script.exists()
+    # Compare against the persona-substituted content, not just existence —
+    # a byte-for-byte match must report no drift, or --check would flag
+    # every persona on every run regardless of whether anything changed.
+    script_changed = (not existed) or read(target_script) != persona_script
+    test_changed = (not target_test.exists()) or read(target_test) != core_test
     if apply:
         target_script.write_text(persona_script, encoding="utf-8", newline="\n")
         target_test.write_text(core_test, encoding="utf-8", newline="\n")
-    return {"created": not existed, "updated": existed}
+    return {"created": not existed, "updated": existed and (script_changed or test_changed)}
 
 
 def sync_test_erp_client(skill: str, apply: bool) -> dict:
@@ -356,35 +393,58 @@ def sync_connector_reference(skill: str, apply: bool) -> dict:
     return report
 
 
+def _drifted(report: dict) -> bool:
+    """True if a sync_*() report shows any pending change (excludes
+    persona_only_kept/unchanged, which are expected steady state)."""
+    return bool(report.get("updated") or report.get("added") or
+                report.get("created"))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true", help="write changes (default: dry-run, report only)")
     ap.add_argument("--skill", action="append", help="limit to one or more skills (repeatable); default: all")
+    ap.add_argument("--check", action="store_true",
+                     help="dry-run and exit non-zero if any persona has drifted from core "
+                          "(no files written even if combined with --apply). For CI.")
     args = ap.parse_args()
 
     skills = args.skill or PERSONA_SKILLS
-    apply = args.apply
+    apply = args.apply and not args.check
+    any_drift = False
 
     for skill in skills:
         print(f"\n{'='*80}\n{skill}\n{'='*80}")
 
         r = sync_erp_client(skill, apply)
         print(f"erp_client.py: {r}")
+        any_drift = any_drift or _drifted(r)
 
         r = sync_test_erp_client(skill, apply)
         print(f"test_erp_client.py: {r}")
+        any_drift = any_drift or _drifted(r)
 
         r = sync_discover(skill, apply)
         print(f"discover.py/test_discover.py: {r}")
+        any_drift = any_drift or _drifted(r)
 
         if skill in CONFIRM_TOKEN_SKILLS:
             r = sync_confirm_token(skill, apply)
             print(f"confirm_token.py: {r}")
+            any_drift = any_drift or _drifted(r)
 
         r = sync_connector_reference(skill, apply)
         print(f"connector-reference.md: {r}")
+        any_drift = any_drift or _drifted(r)
 
-    if not apply:
+    if args.check:
+        if any_drift:
+            print("\n\nDRIFT DETECTED — one or more personas are out of sync with "
+                  "qkeee-erp-frappe-core. Run `python sync_to_personas.py --apply` "
+                  "and commit the result.")
+            raise SystemExit(1)
+        print("\n\nNo drift — all personas in sync with qkeee-erp-frappe-core.")
+    elif not apply:
         print("\n\nDRY RUN — no files written. Re-run with --apply to write changes.")
 
 
