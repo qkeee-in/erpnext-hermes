@@ -715,3 +715,114 @@ own specific error for that, no need to duplicate it.
 debug/requested_by — switching environments should never silently also
 change write access, so `mode` needs to require its own explicit
 confirmation independent of which tag is active.
+
+## PROD requester validation (mandatory, reads and writes)
+
+**On a PROD tag, `requested_by` is no longer just "attribution" — it's a
+validated, permission-checked gate, enforced in code before any read or
+write reaches ERPNext.** `_validate_prod_requester()` runs at the top of
+`query_resource()`/`get_resource()`/`run_query_report()`/
+`mutate_resource()` (every read AND write, 2026-08-24 retrofit — the
+requester-attribution mechanism above predates this and stays write-only;
+this is stricter and PROD-only). No-op on a non-PROD tag; on PROD, for
+any doctype not in `PROD_GATE_EXEMPT_DOCTYPES`:
+
+1. **`requested_by` must be present, and the `QKEEE_ERP_<TAG>_REQUESTED_BY`
+   env-var default is REFUSED even if configured.** `resolve_requested_by()`
+   (called from every persona's `_cli()`) returns the CLI's own
+   `--requested-by` value on a PROD tag and nothing else — never the tag
+   default — so a call with no explicit requester ends up empty and fails
+   closed, rather than silently substituting a standing default. This is
+   the code-level version of "never go with the default requested-by
+   field on PROD."
+2. **`requested_by` must be a real ERPNext User** — `resource_exists(tag,
+   "User", requested_by)`. Never proceed with an unvalidated channel
+   identity (a Google Chat/Teams user id, assumed to be the same string
+   as their ERPNext email) — look it up first.
+3. **`requested_by` must actually hold the permission this call needs** —
+   `check_user_permission()` calls `frappe.client.has_permission` with
+   `user=<requested_by>`, `doctype`, `perm_type` (read for every read
+   path; `create`/`write`/`submit`/`cancel`/`delete` per
+   `mutate_resource()`'s action, via `_MUTATE_ACTION_TO_PTYPE`), and
+   `docname` where one exists (record-level check) — doctype-level only
+   for a list query with no single record.
+
+Any failure raises `UnvalidatedProdRequesterError` (a `ConnectorError`
+subclass) — fails closed, before the real HTTP call, before any
+audit-log `Attempted` row. `PROD_GATE_EXEMPT_DOCTYPES` (`User`,
+`DocType`, `Role`, `Qkeee Bot Audit Log`, `Qkeee Bot Persona`, `Comment`)
+is mandatory, not optional, for the same recursion reason
+`AUDIT_EXEMPT_DOCTYPES` exists — `_validate_prod_requester()` itself
+calls `resource_exists(tag, "User", requested_by)`, which would recurse
+into validating the requester's own existence check forever without
+`"User"` exempted; `DocType`/`Role`/`Qkeee Bot Persona` are infra this
+library's own admin flows (`qkeee-erp-bot-init`, `qkeee-erp-system-admin`)
+manage under their own elevated-credential/confirm-token controls, not a
+business requester acting through a persona skill.
+
+**"PROD" is name-based, not a separate declared config value.**
+`_is_prod_tag(tag)` matches `/prod/i` anywhere in the tag name —
+`PROD_ERP`, `prod`, `client-a-prod` all gate; a tag not named with
+"prod" in it does NOT get this gate, so name production tags
+accordingly.
+
+**KNOWN GAP, confirm live before trusting this on a real instance:**
+stock Frappe's `frappe.client.has_permission` checks the CURRENTLY
+AUTHENTICATED user's own permission by default — honoring a `user=`
+param to check permission "as" a different user is only confirmed on
+some Frappe versions/configurations (typically requires the
+authenticated caller — here, the bot account — to itself hold System
+Manager or similar). This connector always sends `user=<requested_by>`
+and trusts whatever comes back, but has NOT been live-validated to
+confirm the target instance actually evaluates for `requested_by`
+rather than silently evaluating for the bot account instead (which
+would make every check pass as long as the bot itself has access,
+defeating the point). Confirm this against each target instance the
+same way every other endpoint assumption in this file was confirmed
+live (see "Verified against a live instance" above) before relying on
+it as a real per-requester gate — `get_user_roles()`'s role-membership
+heuristic remains the fallback signal if `has_permission` turns out not
+to honor `user=` on a given instance.
+
+## Guardrails: scope, sensitive data, content safety (mandatory)
+
+**Scope — ERPNext/organizational work only.** This library exists to
+help with ERPNext/organizational operations (records, reports,
+approvals, data lookups within the connected instance). A request
+unrelated to that — a general-knowledge question, world facts, coding
+help unrelated to this connector, personal advice, anything outside
+ERPNext/organizational work — is out of scope, even if the answer is
+easy or already known. Decline briefly and politely (e.g. "That's
+outside what this agent handles — ERPNext/organizational work. I can't
+help with that here.") and don't attempt to answer it; redirect back to
+what the skill can actually do if that's useful. Don't apply this so
+rigidly that it blocks legitimate ERPNext-adjacent context-gathering
+(e.g. confirming a tax rule, a holiday calendar date, an accounting
+term) — the line is "is this in service of an ERPNext/organizational
+task," not "is this phrased as a question."
+
+**Sensitive data (SSN, credit card numbers, similar) — never write it in
+raw form anywhere.** `redact_pii()` in `erp_client.py` is a code-level
+backstop, applied automatically to Comment content
+(`record_comment()`) and Audit Log free-text fields (`approval_note`,
+`channel_metadata`) — but it's narrow (SSN + Luhn-valid card numbers
+only) and a backstop, not the primary control, and it deliberately does
+NOT touch `payload`/`payload_before`/`payload_after` (real business
+data being written intentionally, not free text a user pasted). Never
+type a raw SSN, credit card number, or similarly sensitive value into
+any field, draft, comment, or report this skill produces. If a user
+pastes sensitive data into chat, don't echo it back verbatim in your own
+response either — acknowledge without repeating it ("noted the card
+number you shared — redacting it here and going forward").
+
+**Content safety — refuse abusive, exploitative, or sexual content
+outright; never launder it into a write.** If a request contains or
+asks this skill to produce/relay abusive language, hate speech, sexual
+content, or anything related to child sexual exploitation: refuse
+plainly, don't create/store/forward it into any ERPNext record, Comment,
+or report, and don't repeat the offending content back in the refusal.
+This applies to what goes into any write (a Comment, a Journal Entry
+narration, an Employee note) as much as to a direct conversational
+request — never let unsafe user-supplied text pass through into a
+persisted ERPNext field unfiltered, even embedded inside an otherwise
+legitimate business write.

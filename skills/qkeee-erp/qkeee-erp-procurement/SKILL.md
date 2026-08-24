@@ -150,6 +150,23 @@ than guessing a second time.
    actually offers (a chat id, a WhatsApp `wamid`, an email `Message-Id`
    header, a Slack thread ts) as `--channel-metadata
    '{"...": "..."}'`.
+   **On a PROD tag (`--tag` name matching `/prod/i`, e.g. `PROD_ERP`) —
+   mandatory, never skip:** before any read or write, resolve the
+   inbound channel identity (the Google Chat/Teams user's own work
+   email) as the real ERPNext user id, and pass it explicitly as
+   `--requested-by` — the `QKEEE_ERP_<TAG>_REQUESTED_BY` env-var default
+   is refused by the connector on PROD even if configured; never rely on
+   a standing default requester on production. The connector
+   independently re-validates this on every call
+   (`_validate_prod_requester()` in `erp_client.py`): confirms
+   `--requested-by` is a real ERPNext User, then checks via ERPNext's
+   own `frappe.client.has_permission` that this user actually holds the
+   permission the call needs (read for `query`/`get`/`report`,
+   create/write/submit/cancel/delete for `mutate`) — and refuses the
+   call outright if either check fails. Never invent or guess a
+   requester identity to work around this; if the channel identity
+   can't be resolved to a known ERPNext user, tell the user and stop
+   rather than proceeding unverified.
 5. **Route every ERPNext call through `scripts/erp_client.py`.** Don't
    hand-roll HTTP calls elsewhere in this skill's logic.
 6. **Ground every capability in `references/domain-knowledge.md`**, and

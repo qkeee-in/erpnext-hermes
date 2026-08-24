@@ -43,6 +43,7 @@ previously the one unaudited write path in the library).
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -68,13 +69,49 @@ CONFIG_CHANGE_KINDS = {"create_webhook", "toggle_workflow"}
 AUDIT_LOG_DOCTYPE = "Qkeee Bot Audit Log"
 PERSONA_DOCTYPE = "Qkeee Bot Persona"
 AUDIT_EXEMPT_DOCTYPES = {
-    AUDIT_LOG_DOCTYPE, PERSONA_DOCTYPE,
+    AUDIT_LOG_DOCTYPE,
     "Comment",
+}
+
+# Doctypes exempt from the PROD requester-validation gate below (see
+# _validate_prod_requester()). Mandatory, not optional, for the same
+# recursion reason AUDIT_EXEMPT_DOCTYPES exists: _validate_prod_requester()
+# itself calls resource_exists(tag, "User", requested_by), which calls
+# get_resource(tag, "User", ...) -- without "User" here, validating a
+# requester would recurse into validating the requester's own existence
+# check forever. "DocType"/"Role" are exempt for a related reason: they're
+# read/written by qkeee-erp-bot-init and qkeee-erp-system-admin under their
+# own elevated-credential/confirm-token controls, not by a business
+# requester acting through a persona skill -- gating them through this
+# business-permission check doesn't fit and isn't needed. PERSONA_DOCTYPE/
+# AUDIT_LOG_DOCTYPE/Comment are this connector's own bookkeeping, same
+# rationale as AUDIT_EXEMPT_DOCTYPES.
+PROD_GATE_EXEMPT_DOCTYPES = {
+    "User", "DocType", "Role",
+    AUDIT_LOG_DOCTYPE, PERSONA_DOCTYPE, "Comment",
+}
+
+# SSN-shaped (###-##-####) and Luhn-valid 13-19 digit runs (spaces/dashes
+# tolerated) -- see redact_pii() below.
+_SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+_CC_CANDIDATE_RE = re.compile(r"\b\d(?:[ -]?\d){12,18}\b")
+
+# mutate_resource()'s action -> frappe.client.has_permission's perm_type.
+_MUTATE_ACTION_TO_PTYPE = {
+    "create": "create", "update": "write", "submit": "submit",
+    "cancel": "cancel", "delete": "delete",
 }
 
 
 class ConnectorError(Exception):
     """Raised for missing config / auth / HTTP failures with a specific, actionable message."""
+
+
+class UnvalidatedProdRequesterError(ConnectorError):
+    """Raised on a PROD tag (see _is_prod_tag()) when requested_by is
+    missing, isn't a real ERPNext User, or lacks the permission this call
+    needs per ERPNext's own frappe.client.has_permission check. See
+    _validate_prod_requester()."""
 
 
 class ReadOnlyModeError(ConnectorError):
@@ -264,12 +301,17 @@ def record_comment(cfg: dict, doctype: str, name: str, content: str) -> bool:
     frappe.desk.form.utils.add_comment, so the audit trail lives in
     ERPNext itself, not only in this session's chat transcript. Never
     raises — a comment failure must not block or roll back the actual
-    write it's documenting. Returns True on success, False on failure."""
+    write it's documenting. Returns True on success, False on failure.
+
+    `content` is passed through redact_pii() first — see that function's
+    docstring for why (a Comment is a permanent, human-visible ERPNext
+    record; an SSN/credit-card number pasted into chat and echoed
+    verbatim into a Comment would otherwise persist there indefinitely)."""
     try:
         _request(cfg, "POST", "/api/method/frappe.desk.form.utils.add_comment", payload={
             "reference_doctype": doctype,
             "reference_name": name,
-            "content": content,
+            "content": redact_pii(content),
         })
         return True
     except ConnectorError:
@@ -318,6 +360,7 @@ def query_resource(tag: str, doctype: str, filters: list = None, fields: list = 
     would have made Audit Log itself the volume/bloat problem the debug
     gate exists to avoid. See bot-doctypes-design.md decision 10.
     """
+    _validate_prod_requester(tag, requested_by, doctype, "read")
     cfg = get_env_config(tag)
     params = {"limit_page_length": limit + 1}
     if filters:
@@ -379,6 +422,7 @@ def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
     query_resource() — see that function's docstring for why this is
     debug-gated rather than unconditional.
     """
+    _validate_prod_requester(tag, requested_by, doctype, "read", docname=name)
     cfg = get_env_config(tag)
     path = f"/api/resource/{urllib.parse.quote(doctype)}/{urllib.parse.quote(name)}"
     result = _request(cfg, "GET", path)
@@ -506,7 +550,7 @@ def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id:
         "persona_code": persona_code or "",
         "environment_tag": cfg.get("tag", ""),
         "channel": channel or "",
-        "channel_metadata": json.dumps(channel_metadata) if channel_metadata else None,
+        "channel_metadata": json.dumps(_redact_pii_deep(channel_metadata)) if channel_metadata else None,
         "action": "Read",
         "reference_doctype": doctype,
         "reference_name": name or "",
@@ -539,7 +583,7 @@ def record_audit_log_start(cfg: dict, *, action: str, doctype: str, name: str, r
         "persona_code": persona_code or "",
         "environment_tag": cfg.get("tag", ""),
         "channel": channel or "",
-        "channel_metadata": json.dumps(channel_metadata) if channel_metadata else None,
+        "channel_metadata": json.dumps(_redact_pii_deep(channel_metadata)) if channel_metadata else None,
         "action": action,
         "reference_doctype": doctype,
         "reference_name": name or "",
@@ -548,7 +592,7 @@ def record_audit_log_start(cfg: dict, *, action: str, doctype: str, name: str, r
         "status": "Attempted",
         "payload_before": json.dumps(payload_before) if payload_before else None,
         "user_approved": "Approved" if user_approved else "Not Confirmed",
-        "approval_note": approval_note,
+        "approval_note": redact_pii(approval_note) if approval_note else approval_note,
     })
 
 
@@ -732,6 +776,7 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
             f"Set {_tag_env_var(tag, 'REQUESTED_BY')} in this profile's .env (per-tag default), "
             f"or pass --requested-by for this call only."
         )
+    _validate_prod_requester(tag, requested_by, doctype, _MUTATE_ACTION_TO_PTYPE[action], docname=name)
 
     cfg = get_env_config(tag)
 
@@ -1393,7 +1438,7 @@ def _cli():
         except ConnectorError:
             pass
     effective_debug = args.debug or tag_debug_default
-    effective_requested_by = args.requested_by or tag_requested_by_default
+    effective_requested_by = resolve_requested_by(args.tag, args.requested_by, tag_requested_by_default)
 
     if effective_debug and args.command in (
         "query", "report", "get", "mutate", "destructive-mutate", "get-permissions",
@@ -1408,6 +1453,17 @@ def _cli():
             file=sys.stderr,
         )
 
+    if (args.command in (
+            "query", "report", "get", "mutate", "destructive-mutate", "get-permissions",
+            "permission", "create-user", "config-mutate",
+        ) and _is_prod_tag(args.tag) and not effective_requested_by):
+        p.error(
+            f"--requested-by is required for '{args.command}' on PROD tag '{args.tag}' "
+            f"(tag name matches /prod/i) - the {_tag_env_var(args.tag, 'REQUESTED_BY')} "
+            f"env-var default is refused on PROD, even if configured. Look the inbound "
+            f"channel identity (e.g. the Google Chat/Teams user's own work email) up as "
+            f"a real ERPNext user first, then pass it explicitly."
+        )
     if args.command in ("mutate", "destructive-mutate", "permission", "create-user", "config-mutate") and not effective_requested_by:
         p.error(
             f"--requested-by is required for '{args.command}' (or set "
@@ -1527,6 +1583,7 @@ def run_query_report(tag: str, report_name: str, filters: dict = None,
     reference_doctype "Report" with reference_name=report_name, since a
     query report isn't itself a DocType record being read.
     """
+    _validate_prod_requester(tag, requested_by, "Report", "read", docname=report_name)
     cfg = get_env_config(tag)
     params = {"report_name": report_name}
     if filters:
@@ -1587,6 +1644,184 @@ def get_user_roles(tag: str, user: str = "") -> dict:
 
 def _parse_bool_env(raw: str) -> bool:
     return (raw or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _is_prod_tag(tag: str) -> bool:
+    """A tag counts as PRODUCTION if its name contains "prod" (case-
+    insensitive) anywhere — "PROD_ERP", "prod", "client-a-prod" all match.
+    Deliberately name-based, not a separate declared config value: there
+    is no QKEEE_ERP_<TAG>_ENV_CLASS or similar — a tag not named with
+    "prod" in it will NOT get the requester-validation gate below, so
+    name new production tags accordingly. See _validate_prod_requester()."""
+    return bool(re.search(r"prod", tag, re.IGNORECASE))
+
+
+def check_user_permission(tag: str, doctype: str, perm_type: str, requested_by: str,
+                           docname: str = None) -> bool:
+    """Asks ERPNext itself (frappe.client.has_permission) whether
+    `requested_by` — NOT the bot account this connector authenticates
+    as — holds `perm_type` ("read"/"write"/"create"/"submit"/"cancel"/
+    "delete") on `doctype` (and on the specific `docname`, if given, for
+    a record-level check; doctype-level only if omitted).
+
+    KNOWN GAP, confirm live before trusting this in production: stock
+    Frappe's `frappe.client.has_permission` whitelisted method checks the
+    CURRENTLY AUTHENTICATED user's own permission by default — passing a
+    `user=` query param to check permission "as" a different user is only
+    honored on some Frappe versions/configurations (typically requires
+    the authenticated caller to itself hold System Manager or similar).
+    This connector always sends `user=<requested_by>` and trusts whatever
+    ERPNext returns, but has NOT been live-validated against a real
+    instance to confirm the target Frappe version actually evaluates
+    permission for `requested_by` rather than silently ignoring the
+    param and evaluating for the bot account instead (which would make
+    every check pass as long as the bot itself has access, defeating the
+    point). Confirm this against each target instance the same way this
+    file's other endpoint assumptions were confirmed live (see
+    connector-reference.md's "Verified against a live instance") before
+    relying on this as an actual per-requester gate rather than the
+    role-membership heuristic get_user_roles() already provides."""
+    result = check_user_permission_raw(tag, doctype, perm_type, requested_by, docname)
+    return bool(result.get("message"))
+
+
+def check_user_permission_raw(tag: str, doctype: str, perm_type: str, requested_by: str,
+                               docname: str = None) -> dict:
+    """Raw response from frappe.client.has_permission, for a caller that
+    wants to inspect more than the boolean (e.g. surfacing the raw body
+    in an error message). See check_user_permission()'s docstring for
+    the live-validation caveat this shares."""
+    cfg = get_env_config(tag)
+    params = {"doctype": doctype, "perm_type": perm_type, "user": requested_by}
+    if docname:
+        params["docname"] = docname
+    return _request(cfg, "GET", "/api/method/frappe.client.has_permission", params=params)
+
+
+def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_type: str,
+                              docname: str = None) -> None:
+    """The PROD requester-validation gate: no-op on a non-PROD tag (see
+    _is_prod_tag()); on a PROD tag, and for any doctype not in
+    PROD_GATE_EXEMPT_DOCTYPES, refuses to proceed unless `requested_by`
+    is (1) present — the QKEEE_ERP_<TAG>_REQUESTED_BY env-var default is
+    REFUSED here even if configured, a PROD call must pass an explicit,
+    freshly-validated requester every time, never fall back to a
+    standing default; (2) a real ERPNext User (resource_exists check);
+    and (3) actually holds `perm_type` on `doctype`/`docname` per
+    ERPNext's own permission check (check_user_permission()). Raises
+    UnvalidatedProdRequesterError on any failure — fails closed, never
+    proceeds unverified. Called from query_resource()/get_resource()/
+    run_query_report()/mutate_resource() — every read and write, per
+    the "reads and writes" scope decision (2026-08-24)."""
+    if not _is_prod_tag(tag) or doctype in PROD_GATE_EXEMPT_DOCTYPES:
+        return
+    if not requested_by:
+        raise UnvalidatedProdRequesterError(
+            f"Refusing this call against '{doctype}' on tag '{tag}': it looks like a "
+            f"PRODUCTION environment (tag name matches /prod/i) and no requester was "
+            f"given. A validated, explicit requester is mandatory on PROD — the "
+            f"{_tag_env_var(tag, 'REQUESTED_BY')} env-var default is refused here even "
+            f"if configured. Look the inbound channel identity (e.g. the Google Chat/"
+            f"Teams user's own work email) up as a real ERPNext User first, then pass "
+            f"it explicitly via --requested-by / requested_by= on this call."
+        )
+    if not resource_exists(tag, "User", requested_by):
+        raise UnvalidatedProdRequesterError(
+            f"Refusing this call against '{doctype}' on tag '{tag}': requester "
+            f"'{requested_by}' is not a known ERPNext User. Never proceed with an "
+            f"unvalidated channel identity on PROD — confirm the real ERPNext user "
+            f"id/email before retrying."
+        )
+    allowed = check_user_permission(tag, doctype, perm_type, requested_by, docname)
+    if not allowed:
+        raise UnvalidatedProdRequesterError(
+            f"Refusing this call: requester '{requested_by}' does not have '{perm_type}' "
+            f"permission on '{doctype}'"
+            f"{f' (record {docname!r})' if docname else ''} per ERPNext's own permission "
+            f"check (frappe.client.has_permission). Refusing on PROD tag '{tag}' rather "
+            f"than proceeding on an unauthorized request."
+        )
+
+
+def resolve_requested_by(tag: str, cli_value: str, tag_default: str) -> str:
+    """CLI-level requested_by resolution, called from `_cli()` (every
+    persona's own copy — see that function for why the call site itself
+    still needs a one-line edit per file even though this resolution
+    logic is centralized here).
+
+    `cli_value` (an explicit --requested-by on this call) always wins
+    when present. On a non-PROD tag, `tag_default` (the tag's own
+    QKEEE_ERP_<TAG>_REQUESTED_BY) is used as a fallback when `cli_value`
+    is absent — existing behavior, preserved. On a PROD tag
+    (_is_prod_tag()), that fallback is refused entirely: this returns
+    `cli_value` as-is (possibly empty), NEVER `tag_default` — so a caller
+    with no explicit --requested-by on PROD ends up with an empty
+    requester and _validate_prod_requester() (independently re-checked
+    inside query_resource()/get_resource()/run_query_report()/
+    mutate_resource(), regardless of what the CLI resolved) fails closed
+    with a clear error, rather than the call silently proceeding on a
+    standing env-var default the caller must not rely on for PROD. See
+    connector-reference.md's "PROD requester validation" section."""
+    if cli_value:
+        return cli_value
+    if _is_prod_tag(tag):
+        return ""
+    return tag_default or ""
+
+
+def _luhn_valid(digits: str) -> bool:
+    total = 0
+    for i, ch in enumerate(reversed(digits)):
+        d = int(ch)
+        if i % 2 == 1:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return total % 10 == 0
+
+
+def redact_pii(text: str) -> str:
+    """Best-effort redaction of SSN-shaped and Luhn-valid credit-card-
+    shaped digit runs from free text before it's posted as an ERPNext
+    Comment or stored in an audit-log free-text field (`approval_note`,
+    `channel_metadata`). NOT a substitute for not typing sensitive values
+    into these fields in the first place — every persona SKILL.md
+    instructs against that; this is a defensive backstop for text copied
+    verbatim from chat/email that the calling skill didn't itself catch
+    (a user pasting "here's my SSN 123-45-6789, can you check my leave
+    balance" into a chat channel, for instance). Pattern-based, narrow by
+    design: SSN + credit card only, not general PII/DLP coverage — a
+    business phone/account/PO number that happens to Luhn-validate is an
+    accepted rare false positive, redaction erring toward over-redaction
+    being the safer failure mode here. `None`/empty input passes through
+    unchanged."""
+    if not text:
+        return text
+
+    def _cc_sub(m):
+        digits = re.sub(r"[ -]", "", m.group(0))
+        if 13 <= len(digits) <= 19 and _luhn_valid(digits):
+            return "[REDACTED-CARD]"
+        return m.group(0)
+
+    text = _CC_CANDIDATE_RE.sub(_cc_sub, text)
+    text = _SSN_RE.sub("[REDACTED-SSN]", text)
+    return text
+
+
+def _redact_pii_deep(obj):
+    """Recursive redact_pii() over a JSON-shaped structure (dict/list/str)
+    — used for channel_metadata, which is caller-supplied free-form JSON
+    and may itself contain a pasted SSN/card number in one of its values
+    (e.g. a chat platform's raw message-preview field)."""
+    if isinstance(obj, str):
+        return redact_pii(obj)
+    if isinstance(obj, dict):
+        return {k: _redact_pii_deep(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_redact_pii_deep(x) for x in obj]
+    return obj
 
 
 if __name__ == "__main__":

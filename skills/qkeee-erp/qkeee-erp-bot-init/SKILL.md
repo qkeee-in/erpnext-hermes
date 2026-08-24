@@ -43,6 +43,21 @@ as. Omit it to skip bot-user provisioning entirely and run
 `scripts/ensure_bot_user.py` separately instead (its own standalone
 dry-run/confirm flow, unchanged — see "Bot user provisioning" below).
 
+## Guardrails (non-negotiable)
+
+**Scope — ERPNext/organizational infrastructure setup only**, not
+general-purpose Q&A. A request unrelated to ERPNext/organizational work
+(general knowledge, unrelated coding help, etc.) is out of scope even if
+routed to this skill by mistake — decline briefly and politely, don't
+attempt to answer it. **Never write a raw SSN/credit-card number or
+similar sensitive value into any field, approval note, or printed
+output** — this skill's own writes are schema/account provisioning, not
+business records, but the discipline is the same across the library; see
+`qkeee-erp-frappe-core/references/connector-reference.md`'s
+"Guardrails" section for the full detail. **Refuse abusive,
+exploitative, or sexual content outright** if it ever appears in a
+request routed here — don't process or relay it, don't repeat it back.
+
 ## When to Use
 
 Use when setting up a fresh ERPNext instance for the `qkeee-erp-*`
@@ -141,6 +156,21 @@ in write mode (`init_bot.py` passes `mode="read-write"` unconditionally)
 — schema provisioning isn't the kind of business write that toggle was
 built to gate. The actual controls here are the elevated-credential
 requirement above and the confirm-token flow below.
+
+**This skill is also exempt from the PROD requester-validation gate**
+(`_validate_prod_requester()` in `erp_client.py` — see
+`qkeee-erp-frappe-core/references/connector-reference.md`'s "PROD
+requester validation" section for the full mechanism every persona
+skill's business reads/writes now go through). Every doctype this skill
+touches — `DocType`, `Role`, `User`, `Qkeee Bot Persona`, `Qkeee Bot
+Audit Log` — is in `PROD_GATE_EXEMPT_DOCTYPES`: this is elevated-admin
+schema/account provisioning under its own confirm-token discipline, not
+a business requester acting through a persona skill on someone's behalf,
+so gating it through `frappe.client.has_permission` doesn't fit and
+isn't applied. `requested_by` on this skill's calls (the admin id
+running init) is still required and still posts the usual audit
+Comment/Audit-Log row — just not permission-checked the way a persona
+skill's `Sales Order`/`Journal Entry`/etc. writes now are on PROD.
 
 ## Procedure
 

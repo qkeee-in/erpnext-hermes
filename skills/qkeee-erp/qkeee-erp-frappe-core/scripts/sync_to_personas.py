@@ -93,6 +93,9 @@ SHARED_FUNCTIONS = [
     "_audit_submit", "_log_read", "record_audit_log_start",
     "record_audit_log_finish", "ensure_persona_registered", "mutate_resource",
     "_do_mutate", "list_configured_tags", "discover_harness_http_tool",
+    "_is_prod_tag", "check_user_permission", "check_user_permission_raw",
+    "_validate_prod_requester", "resolve_requested_by",
+    "_luhn_valid", "redact_pii", "_redact_pii_deep",
 ]
 
 CONFIRM_TOKEN_SHARED_FUNCTIONS = ["compute_token", "is_fresh"]

@@ -116,9 +116,16 @@ class TestMutateGates(unittest.TestCase):
 
 
 class TestAuditExemptDoctypes(unittest.TestCase):
-    def test_audit_doctypes_and_comment_are_exempt(self):
-        for dt in ("Qkeee Bot Audit Log", "Qkeee Bot Persona", "Comment"):
+    def test_audit_log_and_comment_are_exempt(self):
+        for dt in ("Qkeee Bot Audit Log", "Comment"):
             self.assertIn(dt, AUDIT_EXEMPT_DOCTYPES)
+
+    def test_persona_is_no_longer_exempt(self):
+        """Qkeee Bot Persona was removed from AUDIT_EXEMPT_DOCTYPES
+        2026-08-23 — persona-registration creates are now audited (via a
+        single-shot _audit_insert() in ensure_persona_registered(), not
+        the two-phase path — see that function's docstring)."""
+        self.assertNotIn("Qkeee Bot Persona", AUDIT_EXEMPT_DOCTYPES)
 
     def test_doctype_and_role_are_not_exempt(self):
         """This skill's own writes (DocType/Role create) are fair game for

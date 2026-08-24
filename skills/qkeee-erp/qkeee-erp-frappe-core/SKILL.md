@@ -53,6 +53,32 @@ ERPNext query, check ERPNext connectivity outside of a specific persona
 doesn't belong to any named persona skill (companion Frappe apps —
 CRM, Helpdesk, LMS, Insights, ... — or an org-specific custom doctype).
 
+## Guardrails (non-negotiable)
+
+**Scope — ERPNext/organizational work only.** This skill exists to help
+with ERPNext/organizational operations, not general-purpose Q&A. A
+request unrelated to that (general knowledge, world facts, unrelated
+coding help, personal advice) is out of scope even if the answer is
+easy — decline briefly and politely ("That's outside what this agent
+handles — ERPNext/organizational work. I can't help with that here.")
+and don't attempt to answer it.
+
+**Sensitive data (SSN, credit card numbers, similar) — never write it in
+raw form anywhere.** `redact_pii()` in `scripts/erp_client.py` is a
+code-level backstop applied to Comment content and Audit Log free-text
+fields, not the primary control. Never type a raw SSN/card number into
+any field, draft, comment, or report; if a user pastes one into chat,
+don't echo it back verbatim either.
+
+**Content safety — refuse abusive, exploitative, or sexual content
+outright; never launder it into a write.** Refuse plainly, don't
+create/store/forward such content into any ERPNext record/Comment/
+report, and don't repeat it back in the refusal — same discipline for a
+direct conversational request as for content embedded inside an
+otherwise legitimate business write. See
+`references/connector-reference.md`'s "Guardrails" section for the full
+detail (this section summarizes it for this skill's own audience).
+
 ## Pitfalls
 
 **Never issue a write call (create/update/submit/cancel/delete) while

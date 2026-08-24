@@ -373,5 +373,200 @@ class QkeeeEnvFileTests(unittest.TestCase):
         self.assertEqual(cfg["api_secret"], "secret")
 
 
+class IsProdTagTests(unittest.TestCase):
+    def test_matches_various_casings_and_positions(self):
+        for tag in ("prod", "PROD", "PROD_ERP", "client-a-prod", "Production"):
+            self.assertTrue(ec._is_prod_tag(tag), tag)
+
+    def test_non_prod_tags_dont_match(self):
+        for tag in ("qa", "default", "staging", "dev", "hrms-demo"):
+            self.assertFalse(ec._is_prod_tag(tag), tag)
+
+
+class ValidateProdRequesterTests(unittest.TestCase):
+    """_validate_prod_requester() is the mandatory PROD gate: no-op off
+    PROD/exempt doctypes; on PROD, requires an explicit requested_by,
+    validated as a real ERPNext User, with actual has_permission on the
+    doctype/action — never falls back to a tag default, never proceeds
+    unverified."""
+
+    def test_noop_on_non_prod_tag(self):
+        with patch.object(ec, "resource_exists") as mocked_exists:
+            ec._validate_prod_requester("qa", None, "Sales Order", "read")
+        mocked_exists.assert_not_called()
+
+    def test_noop_on_exempt_doctype_even_on_prod(self):
+        with patch.object(ec, "resource_exists") as mocked_exists:
+            ec._validate_prod_requester("prod", None, "User", "read")
+        mocked_exists.assert_not_called()
+
+    def test_refuses_missing_requester_on_prod(self):
+        with self.assertRaises(ec.UnvalidatedProdRequesterError) as ctx:
+            ec._validate_prod_requester("prod", None, "Sales Order", "read")
+        self.assertIn("no requester was given", str(ctx.exception))
+
+    def test_refuses_missing_requester_even_if_empty_string(self):
+        with self.assertRaises(ec.UnvalidatedProdRequesterError):
+            ec._validate_prod_requester("prod", "", "Sales Order", "read")
+
+    @patch.object(ec, "resource_exists", return_value=False)
+    def test_refuses_unknown_user(self, mocked_exists):
+        with self.assertRaises(ec.UnvalidatedProdRequesterError) as ctx:
+            ec._validate_prod_requester("prod", "nobody@org.com", "Sales Order", "read")
+        mocked_exists.assert_called_once_with("prod", "User", "nobody@org.com")
+        self.assertIn("not a known ERPNext User", str(ctx.exception))
+
+    @patch.object(ec, "check_user_permission", return_value=False)
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_refuses_when_permission_check_returns_false(self, mocked_exists, mocked_perm):
+        with self.assertRaises(ec.UnvalidatedProdRequesterError) as ctx:
+            ec._validate_prod_requester("prod", "priya@org.com", "Sales Order", "write", docname="SO-0001")
+        mocked_perm.assert_called_once_with("prod", "Sales Order", "write", "priya@org.com", "SO-0001")
+        self.assertIn("does not have 'write' permission", str(ctx.exception))
+
+    @patch.object(ec, "check_user_permission", return_value=True)
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_proceeds_when_validated_and_permitted(self, mocked_exists, mocked_perm):
+        ec._validate_prod_requester("prod", "priya@org.com", "Sales Order", "read")  # no raise
+
+    def test_prod_tag_name_matching_is_substring_based(self):
+        # "client-a-prod" must gate too, not just an exact "prod" tag.
+        with self.assertRaises(ec.UnvalidatedProdRequesterError):
+            ec._validate_prod_requester("client-a-prod", None, "Sales Order", "read")
+
+
+class ResolveRequestedByTests(unittest.TestCase):
+    def test_cli_value_always_wins(self):
+        self.assertEqual(ec.resolve_requested_by("qa", "priya@org.com", "default@org.com"), "priya@org.com")
+        self.assertEqual(ec.resolve_requested_by("prod", "priya@org.com", "default@org.com"), "priya@org.com")
+
+    def test_non_prod_falls_back_to_tag_default(self):
+        self.assertEqual(ec.resolve_requested_by("qa", None, "default@org.com"), "default@org.com")
+        self.assertEqual(ec.resolve_requested_by("qa", "", "default@org.com"), "default@org.com")
+
+    def test_prod_never_falls_back_to_tag_default(self):
+        self.assertEqual(ec.resolve_requested_by("prod", None, "default@org.com"), "")
+        self.assertEqual(ec.resolve_requested_by("PROD_ERP", "", "default@org.com"), "")
+        self.assertEqual(ec.resolve_requested_by("client-a-prod", None, "default@org.com"), "")
+
+
+class RedactPiiTests(unittest.TestCase):
+    def test_redacts_ssn(self):
+        self.assertEqual(ec.redact_pii("my SSN is 123-45-6789 ok"), "my SSN is [REDACTED-SSN] ok")
+
+    def test_redacts_luhn_valid_card(self):
+        # 4111 1111 1111 1111 is a well-known Luhn-valid test card number.
+        self.assertEqual(
+            ec.redact_pii("card 4111 1111 1111 1111 please"),
+            "card [REDACTED-CARD] please",
+        )
+        self.assertEqual(ec.redact_pii("card 4111-1111-1111-1111"), "card [REDACTED-CARD]")
+
+    def test_does_not_redact_non_luhn_digit_runs(self):
+        # 15 consecutive digits that don't pass Luhn should be left alone
+        # (e.g. a PO/invoice number) — narrow by design, not general DLP.
+        text = "PO number 123456789012345 attached"
+        self.assertEqual(ec.redact_pii(text), text)
+
+    def test_passthrough_on_empty_or_none(self):
+        self.assertEqual(ec.redact_pii(""), "")
+        self.assertIsNone(ec.redact_pii(None))
+
+    def test_redact_pii_deep_handles_nested_structures(self):
+        result = ec._redact_pii_deep({
+            "a": "123-45-6789",
+            "b": ["4111 1111 1111 1111", "clean text"],
+            "c": {"d": "123-45-6789"},
+            "e": 42,
+        })
+        self.assertEqual(result["a"], "[REDACTED-SSN]")
+        self.assertEqual(result["b"], ["[REDACTED-CARD]", "clean text"])
+        self.assertEqual(result["c"]["d"], "[REDACTED-SSN]")
+        self.assertEqual(result["e"], 42)
+
+
+class RecordCommentRedactsPiiTests(unittest.TestCase):
+    @patch.object(ec, "_request", return_value={})
+    def test_comment_content_is_redacted_before_posting(self, mocked_request):
+        ec.record_comment({"tag": "qa"}, "Employee", "HR-0001",
+                           "please update, my SSN is 123-45-6789")
+        payload = mocked_request.call_args[1]["payload"]
+        self.assertEqual(payload["content"], "please update, my SSN is [REDACTED-SSN]")
+
+
+class CheckUserPermissionTests(unittest.TestCase):
+    @patch.object(ec, "_request", return_value={"message": True})
+    @patch.object(ec, "get_env_config", return_value={"tag": "prod"})
+    def test_true_response(self, mocked_cfg, mocked_request):
+        result = ec.check_user_permission("prod", "Sales Order", "write", "priya@org.com", "SO-0001")
+        self.assertTrue(result)
+        params = mocked_request.call_args[1]["params"]
+        self.assertEqual(params["doctype"], "Sales Order")
+        self.assertEqual(params["perm_type"], "write")
+        self.assertEqual(params["user"], "priya@org.com")
+        self.assertEqual(params["docname"], "SO-0001")
+
+    @patch.object(ec, "_request", return_value={"message": False})
+    @patch.object(ec, "get_env_config", return_value={"tag": "prod"})
+    def test_false_response(self, mocked_cfg, mocked_request):
+        self.assertFalse(ec.check_user_permission("prod", "Sales Order", "read", "priya@org.com"))
+
+    @patch.object(ec, "_request", return_value={"message": True})
+    @patch.object(ec, "get_env_config", return_value={"tag": "prod"})
+    def test_docname_omitted_when_not_given(self, mocked_cfg, mocked_request):
+        ec.check_user_permission("prod", "Sales Order", "read", "priya@org.com")
+        params = mocked_request.call_args[1]["params"]
+        self.assertNotIn("docname", params)
+
+
+class ProdGateWiringTests(unittest.TestCase):
+    """Confirms the gate is actually called from every read/write entry
+    point, with the right doctype/perm_type/docname — not just that the
+    gate function itself works in isolation."""
+
+    @patch.object(ec, "_validate_prod_requester")
+    @patch.object(ec, "get_env_config", return_value={"tag": "prod"})
+    @patch.object(ec, "_request", return_value={"data": []})
+    def test_query_resource_gates_with_read(self, mocked_request, mocked_cfg, mocked_gate):
+        ec.query_resource("prod", "Sales Order", requested_by="priya@org.com")
+        mocked_gate.assert_called_once_with("prod", "priya@org.com", "Sales Order", "read")
+
+    @patch.object(ec, "_validate_prod_requester")
+    @patch.object(ec, "get_env_config", return_value={"tag": "prod"})
+    @patch.object(ec, "_request", return_value={"data": {"name": "SO-0001"}})
+    def test_get_resource_gates_with_read_and_docname(self, mocked_request, mocked_cfg, mocked_gate):
+        ec.get_resource("prod", "Sales Order", "SO-0001", requested_by="priya@org.com")
+        mocked_gate.assert_called_once_with("prod", "priya@org.com", "Sales Order", "read", docname="SO-0001")
+
+    @patch.object(ec, "_validate_prod_requester")
+    @patch.object(ec, "get_env_config", return_value={"tag": "prod"})
+    @patch.object(ec, "_request", return_value={"message": {"result": []}})
+    def test_run_query_report_gates_against_report_doctype(self, mocked_request, mocked_cfg, mocked_gate):
+        ec.run_query_report("prod", "Sales Analytics", requested_by="priya@org.com")
+        mocked_gate.assert_called_once_with("prod", "priya@org.com", "Report", "read", docname="Sales Analytics")
+
+    @patch.object(ec, "record_audit_log_finish")
+    @patch.object(ec, "record_audit_log_start", return_value="AUDITLOG-0001")
+    @patch.object(ec, "_do_mutate", return_value={"data": {"name": "SO-0001"}})
+    @patch.object(ec, "_validate_prod_requester")
+    @patch.object(ec, "get_env_config", return_value={"tag": "prod"})
+    def test_mutate_resource_gates_with_action_specific_ptype(self, mocked_cfg, mocked_gate,
+                                                                mocked_do_mutate, mocked_start, mocked_finish):
+        ec.mutate_resource("prod", "Sales Order", "submit", name="SO-0001", mode="read-write",
+                            requested_by="priya@org.com")
+        mocked_gate.assert_called_once_with("prod", "priya@org.com", "Sales Order", "submit", docname="SO-0001")
+
+    @patch.object(ec, "_validate_prod_requester", side_effect=ec.UnvalidatedProdRequesterError("nope"))
+    @patch.object(ec, "get_env_config", return_value={"tag": "prod"})
+    def test_mutate_resource_blocks_before_any_write_when_gate_fails(self, mocked_cfg, mocked_gate):
+        with patch.object(ec, "_do_mutate") as mocked_do_mutate, \
+                patch.object(ec, "record_audit_log_start") as mocked_start:
+            with self.assertRaises(ec.UnvalidatedProdRequesterError):
+                ec.mutate_resource("prod", "Sales Order", "create", payload={"customer": "X"},
+                                    mode="read-write", requested_by="priya@org.com")
+            mocked_do_mutate.assert_not_called()
+            mocked_start.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
