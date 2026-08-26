@@ -400,22 +400,14 @@ anti-replay property the whole mechanism exists for. (Found during this
 sync: one persona skill's confirmation tokens omitted this check entirely
 — fixed as part of the same retrofit that added this file to core.)
 
-## Guardrails: scope, sensitive data, content safety (mandatory)
+## Guardrails: sensitive data (connector mechanics)
 
-**Scope — ERPNext/organizational work only.** This library exists to
-help with ERPNext/organizational operations (records, reports,
-approvals, data lookups within the connected instance). A request
-unrelated to that — a general-knowledge question, world facts, coding
-help unrelated to this connector, personal advice, anything outside
-ERPNext/organizational work — is out of scope, even if the answer is
-easy or already known. Decline briefly and politely (e.g. "That's
-outside what this agent handles — ERPNext/organizational work. I can't
-help with that here.") and don't attempt to answer it; redirect back to
-what the skill can actually do if that's useful. Don't apply this so
-rigidly that it blocks legitimate ERPNext-adjacent context-gathering
-(e.g. confirming a tax rule, a holiday calendar date, an accounting
-term) — the line is "is this in service of an ERPNext/organizational
-task," not "is this phrased as a question."
+Profile-wide scope and content-safety guardrails live in `SOUL.md` — apply
+to this skill same as every other `qkeee-erp-*` skill, whether or not a
+request was routed here correctly. This is the canonical connector's copy;
+every persona skill's synced `connector-reference.md` carries the same
+pointer plus the mechanic below. This section covers only the
+connector-layer mechanic itself.
 
 **Sensitive data (SSN, credit card numbers, similar) — never write it in
 raw form anywhere.** `redact_pii()` in `erp_client.py` is a code-level
@@ -430,18 +422,6 @@ any field, draft, comment, or report this skill produces. If a user
 pastes sensitive data into chat, don't echo it back verbatim in your own
 response either — acknowledge without repeating it ("noted the card
 number you shared — redacting it here and going forward").
-
-**Content safety — refuse abusive, exploitative, or sexual content
-outright; never launder it into a write.** If a request contains or
-asks this skill to produce/relay abusive language, hate speech, sexual
-content, or anything related to child sexual exploitation: refuse
-plainly, don't create/store/forward it into any ERPNext record, Comment,
-or report, and don't repeat the offending content back in the refusal.
-This applies to what goes into any write (a Comment, a Journal Entry
-narration, an Employee note) as much as to a direct conversational
-request — never let unsafe user-supplied text pass through into a
-persisted ERPNext field unfiltered, even embedded inside an otherwise
-legitimate business write.
 
 ## Runtime metadata discovery
 

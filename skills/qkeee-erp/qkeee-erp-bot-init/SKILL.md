@@ -45,18 +45,14 @@ dry-run/confirm flow, unchanged — see "Bot user provisioning" below).
 
 ## Guardrails (non-negotiable)
 
-**Scope — ERPNext/organizational infrastructure setup only**, not
-general-purpose Q&A. A request unrelated to ERPNext/organizational work
-(general knowledge, unrelated coding help, etc.) is out of scope even if
-routed to this skill by mistake — decline briefly and politely, don't
-attempt to answer it. **Never write a raw SSN/credit-card number or
-similar sensitive value into any field, approval note, or printed
-output** — this skill's own writes are schema/account provisioning, not
-business records, but the discipline is the same across the library; see
-`qkeee-erp-frappe-core/references/connector-reference.md`'s
-"Guardrails" section for the full detail. **Refuse abusive,
-exploitative, or sexual content outright** if it ever appears in a
-request routed here — don't process or relay it, don't repeat it back.
+Profile-wide scope, sensitive-data, and content-safety guardrails live in
+`SOUL.md` — apply here same as every other `qkeee-erp-*` skill, even
+though this one's own writes are schema/account provisioning rather than
+business records, and even if a request lands here by mistake (decline
+briefly and politely, don't attempt to answer it). See
+`qkeee-erp-frappe-core/references/connector-reference.md`'s "Guardrails"
+section for the connector-layer sensitive-data mechanic
+(`redact_pii()`).
 
 ## When to Use
 
