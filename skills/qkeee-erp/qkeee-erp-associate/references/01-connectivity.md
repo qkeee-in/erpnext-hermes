@@ -1,0 +1,207 @@
+# Connectivity: REST/Frappe, env resolution, discover.py
+
+The mechanics every domain shares — auth, the environment/tag model, env
+var resolution, and metadata discovery. Domain judgment (what counts as a
+valid GST return, whether an offer letter needs a second approval) does
+NOT belong here — that lives in each `references/domains/<slug>.md` file.
+If `qkeee-erp-associate` ever needs to target a different ERP backend,
+this file and `scripts/core/client.py` are what change; the domain files
+and `00-conventions.md` don't (they're written to be ERP-agnostic in
+substance, ERPNext specifics called out as pointers).
+
+## Auth
+
+ERPNext (Frappe framework) REST API, token auth:
+
+```
+Authorization: token <api_key>:<api_secret>
+```
+
+Keys are generated per ERPNext user via **User → API Access → Generate
+Keys** in the ERPNext UI, or via `scripts/init_bot.py`/
+`ensure_bot_user.py`'s provisioning flow (see
+`references/domains/system-admin.md`). **Must be a dedicated bot/
+integration user, never a human's personal login** — see
+`00-conventions.md`'s GRC baseline for why.
+
+## Environment / tag model
+
+Config is tagged, not a fixed dev/test/qa/prod enum. At install time the
+frontmatter declares exactly one literal tag, `DEFAULT`
+(`QKEEE_ERP_DEFAULT_BASE_URL`/`_API_KEY`/`_API_SECRET`). A user who wants a
+different first tag name, or a second/third environment later, sets that
+tag's three vars themselves at runtime — this skill walks them through
+naming and var-setting, it doesn't declare the vars for them:
+
+| Variable | Purpose |
+| --- | --- |
+| `QKEEE_ERP_<TAG>_BASE_URL` | e.g. `https://org.erpnext.com` |
+| `QKEEE_ERP_<TAG>_API_KEY` | API key for that site/user |
+| `QKEEE_ERP_<TAG>_API_SECRET` | API secret for that site/user |
+| `QKEEE_ERP_<TAG>_ALLOW_INSECURE` | OPTIONAL. Set `1` to allow a non-`https://` base URL (local/dev only — `get_env_config()` refuses plaintext by default since credentials go in the clear otherwise) |
+| `QKEEE_ERP_<TAG>_DEBUG` | OPTIONAL, default `false`. Per-tag debug read-logging — see `00-conventions.md`'s GRC baseline |
+| `QKEEE_ERP_<TAG>_REQUESTED_BY` | OPTIONAL, no default. Per-tag requester identity fallback — never used on a PROD-tagged environment, see below |
+
+`<TAG>` is uppercased/sanitized from whatever the user names it (`qa`,
+`client-a-prod`, etc). Adding a second/third environment is a runtime
+action: walk the user through naming a new tag and appending its three
+vars to `qkeee-erp.env` (below), then offer to switch
+`qkeee_erp.active_env`. `qkeee_erp.active_env` and `qkeee_erp.mode` stay
+global `metadata.hermes.config` values — switching environments should
+never silently also change write access, so `mode` requires its own
+explicit confirmation independent of which tag is active.
+
+**PROD tags get a stricter requester rule.** A tag counts as PRODUCTION if
+its name matches `/prod/i` anywhere (`PROD_ERP`, `client-a-prod`,
+`Production` all match — deliberately name-based, there's no separate
+declared config value). On a PROD tag, `QKEEE_ERP_<TAG>_REQUESTED_BY`'s
+env-var default is refused even if configured — a PROD call must pass an
+explicit, freshly-validated `--requested-by` every time. Before any read
+or write on a PROD tag, resolve the inbound channel identity (the user's
+own work email/chat identity) as a real ERPNext user id and pass it
+explicitly; never invent or guess a requester to work around this.
+
+## Env resolution — why `qkeee-erp.env`, not native frontmatter passthrough
+
+**This is a deliberate exception, documented here so it doesn't read as an
+oversight on review** (consolidation plan §6). Hermes' own
+`required_environment_variables`/`required_credential_files` frontmatter
+auto-registers passthrough into `execute_code`/`terminal` sandboxes — but
+those sandboxes strip *all* env vars by default, and only names a skill
+*statically* declares in frontmatter survive the strip. That mechanism
+only covers the single `DEFAULT`-tag case: a user-chosen tag name (`qa`,
+`client-a-prod`, a second/third environment added at runtime) can never be
+declared ahead of time in static frontmatter, so `QKEEE_ERP_<TAG>_*` for
+any tag other than the one named at install time would silently never
+reach the sandbox — even when correctly set in the profile's real `.env`.
+This is not a hypothetical: it caused a real incident (a `DEMO_ERP`-tagged
+run hit `Missing environment variable(s)`, and the only way it recovered
+in the moment was by reading the `.env` file's raw contents into the
+model's own context to reconstruct the values — leaking the API key/
+secret through the LLM prompt).
+
+`qkeee-erp.env` fixes this structurally: `core/client.py`'s
+`_qkeee_env_file_path()` resolves `$HERMES_HOME/qkeee-erp.env` and reads
+it **directly**, bypassing the sandbox's env stripping and Hermes'
+`env_passthrough` allowlist entirely — the script never needs the values
+to have survived sandbox stripping in the first place, because it isn't
+reading `os.environ` for them (it only falls back to `os.environ` if the
+file is absent, for back-compat with a manually-exported shell). One file
+holds every tag's vars at once, and `HERMES_HOME` itself is
+unconditionally forwarded into every sandbox child regardless of skill
+declarations, so it's a reliable anchor even when the tag-specific vars
+themselves aren't.
+
+**Where a script only ever needs the `DEFAULT` tag** (e.g.
+`init_bot.py`'s elevated key, which is admin-invoked and one-time, not a
+per-conversation tag switch), prefer the native frontmatter declaration
+instead of this custom `.env` read — the exception above exists
+specifically for the multi-tag case, not as a blanket preference over the
+native mechanism. Use the `${HERMES_SKILL_DIR}` template token for any
+path a script needs to itself, rather than a hardcoded relative path.
+
+**Never read `qkeee-erp.env`'s contents into your own context to
+"confirm" it, and never compose a command that embeds a raw secret
+value.** If a value needs confirming, ask the user to check the file
+themselves, out-of-band. This file is deliberately **not** the profile's
+main `.env` — keeps credentials physically separate from any LLM-provider
+secret that might live there.
+
+## Discovering a doctype's live shape — `discover.py`
+
+Never propose a field/doctype shape from general ERPNext knowledge alone
+(Non-negotiable 4 in `00-conventions.md`). Resolve it against the live
+instance first:
+
+- `discover.py resolve "<DocType>"` — module + owning app +
+  submittable/custom flags. Run before assuming any doctype is uncovered
+  custom territory.
+- `discover.py meta "<DocType>"` — full live field list, mandatory flags,
+  Link targets. Authoritative over any doc or memory of a prior instance.
+  **Known prerequisite:** both calls hit `GET /api/resource/DocType/<name>`,
+  which requires System Manager–level read access — a correctly
+  least-privileged steady-state bot account can 403 here. Don't present
+  that as a connectivity bug; tell the user their bot account needs read
+  access to `DocType`, or ask them to paste the relevant field list from
+  the Customize Form screen instead.
+- `discover.py modules` — installed-app inventory via a plain `Module Def`
+  list read (confirmed working broadly). `discover.py apps` mirrors the
+  Help → About dialog and includes version numbers `modules` can't derive,
+  but its whitelisted RPC method has been observed blocked
+  (`PermissionError: not whitelisted`) on at least one real instance —
+  treat it as opportunistic, fall back to `modules` silently, and only ask
+  the user to paste Help → About if exact versions matter and both fail.
+  See `02-environment-assessment.md` for the full cataloging procedure
+  this feeds.
+
+## Query cost: list endpoint vs. single-resource GET
+
+`core.client.query_resource()` (the list endpoint, with `filters`/
+`fields`) silently drops Table-type (child-table) fields even when named
+in `fields` — confirmed live, not a bug to work around, a structural
+Frappe behavior. `core.client.get_resource()` (single-resource GET)
+ignores `fields` entirely and always returns the full doc, including
+child tables — the only path that returns them, needed whenever a review
+step checks child-table Link validity (line items, roles, permission
+rows). Use `query_resource()` with explicit `fields` whenever child-table
+data isn't needed — routinely 20-25x cheaper (a few hundred bytes vs.
+several thousand, confirmed live on more than one doctype). `get_resource()`
+noise-strips audit/system metadata and presentation-only HTML fields by
+default (`strip_noise=True`) — never strips Link fields or child tables.
+
+Always check `has_more` on a `query_resource()` response before treating a
+result set as complete — a truncated pull is the easiest way to produce a
+report or review that looks right but doesn't reconcile.
+
+## Built-in reports vs. hand-aggregated queries
+
+Prefer `core.client.run_query_report()` (wraps
+`frappe.desk.query_report.run`) over hand-aggregating raw rows whenever a
+built-in ERPNext report already covers the need — it already implements
+dimension filters, Finance Book gates, and currency conversion correctly;
+a hand-rolled aggregation risks silently missing one of those. `filters`
+is a plain dict of report-specific values; field names vary per report —
+confirm the exact filter keys a given report expects by opening it in the
+ERPNext UI once, since this generic endpoint doesn't self-document
+per-report filter schemas.
+
+## Working scratch (rare)
+
+Any file this skill's tooling needs to write that isn't the final
+deliverable — a staged artifact genuinely too large to hold in the
+conversation — goes under `<profile>/workspace/qkeee-erp/<env-tag>/`,
+plain file I/O, never `/tmp`. **Not `terminal.cwd`:** an earlier revision
+of this convention used `terminal.cwd`, but the local CLI backend (this
+skill's primary usage path) deliberately ignores that config key and
+always uses the launch directory — only gateway- and cron-driven sessions
+bridge it into a fixed path. `<profile>/workspace/` is the one directory
+that's stable regardless of which backend or invocation mode is running,
+provisioned at profile creation alongside `memories/`, `skills/`, etc. —
+see `00-conventions.md`'s naming table and the consolidation plan §8 for
+the full reasoning behind this revision. Most tasks need none of this:
+Hermes' own session transcript already retains the working conversation,
+so reach for scratch only when something is genuinely too bulky to keep
+in context. Clean scratch files up once the task no longer needs them —
+disposable, never assumed present next session.
+
+## Harness capability discovery
+
+If the host harness exposes a way to enumerate installed tools/skills and
+one already does authenticated HTTP well, prefer it over shelling out to
+`core/client.py`. `core.client.discover_harness_http_tool()` is a stub
+that reports "nothing pre-discovered" — this skill's own bundled
+connector is always the fallback, never assume discovery itself is
+supported; degrade gracefully if it isn't.
+
+## CLI usage
+
+`core/client.py` and each `domains/<slug>.py` module are runnable
+directly for manual/ad hoc use — `python core/client.py --tag <tag>
+health`, `python core/client.py --tag <tag> --mode read-write mutate
+<DocType> create --domain <slug> --payload '{...}' --requested-by
+<id>`. See `core/client.py`'s own `_cli()` for the full subcommand list
+(`health`, `list-envs`, `query`, `get`, `report`, `roles`, `mutate`,
+`gated-mutate`, `register-persona`). Every invocation is relative to this
+skill's own `scripts/` directory under the active Hermes profile root —
+`cd` there first, or prefix every command with the full path; don't guess
+a shorter path.
