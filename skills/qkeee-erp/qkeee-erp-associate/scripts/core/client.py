@@ -343,11 +343,23 @@ def check_user_permission_raw(tag: str, doctype: str, perm_type: str, requested_
                                docname: str = None) -> dict:
     """Raw response from frappe.client.has_permission, for a caller that
     wants to inspect more than the boolean. See check_user_permission()'s
-    docstring for the live-validation caveat this shares."""
+    docstring for the live-validation caveat this shares.
+
+    Live-confirmed (Phase 7 smoke pass, demo.qkeee.in): this Frappe
+    build's `frappe.client.has_permission` has NO default for `docname` —
+    omitting the query param entirely (the previous behavior here, via
+    `if docname: params["docname"] = docname`) 500s with `TypeError:
+    has_permission() missing 1 required positional argument: 'docname'`
+    for every doctype-level check (every `create`, and any `query_resource`
+    list read). Sending `docname=""` satisfies the positional requirement
+    and correctly falls back to a doctype-level check (confirmed live:
+    returns the same `has_permission` result as a record-level check,
+    doesn't 404 the way a non-empty placeholder like `docname=None`-the-
+    literal-string does). Always send the param now, empty string when no
+    real docname exists yet."""
     cfg = get_env_config(tag)
-    params = {"doctype": doctype, "perm_type": perm_type, "user": requested_by}
-    if docname:
-        params["docname"] = docname
+    params = {"doctype": doctype, "perm_type": perm_type, "user": requested_by,
+              "docname": docname or ""}
     return _request(cfg, "GET", "/api/method/frappe.client.has_permission", params=params)
 
 
@@ -855,6 +867,14 @@ def _audit_submit(cfg: dict, log_name: str) -> bool:
     Failure here leaves the row as a readable draft rather than blocking
     anything — the row's content is what matters for the audit trail;
     submission is a tamper-evidence nicety on top."""
+    if not log_name:
+        # Live-observed (Phase 7 smoke pass): the insert this depends on
+        # already failed and warned (returns None), most commonly a 403 on
+        # Qkeee Bot Audit Log for a requester lacking the Qkeee Bot role.
+        # Without this guard, urllib.parse.quote(None) raises a confusing
+        # second warning ("quote_from_bytes() expected bytes") that masks
+        # the real, already-reported cause.
+        return False
     try:
         path = f"/api/resource/{urllib.parse.quote(AUDIT_LOG_DOCTYPE)}/{urllib.parse.quote(log_name)}"
         existing = _request(cfg, "GET", path)

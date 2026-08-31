@@ -1,5 +1,139 @@
 # Changelog
 
+## Phase 7 (test & validate) — 2026-08-31
+
+Per the consolidation plan §11 item 4 ("run an end-to-end smoke pass per
+domain against the demo instance"). Live pass against `https://demo.qkeee.in`
+using tag `demo` (`QKEEE_ERP_DEMO_*`, `requested_by=demo.admin@qkeee.in`,
+`mode=read-write`). `scripts/core/test_client.py` +
+`scripts/core/test_memory_promote.py` re-run after the live poking: still
+76 tests + 20 subtests passing, unaffected.
+
+### Read round-trip: PASS for all 8 domains
+
+`get_resource()` against a doctype central to each domain, with
+`requested_by` set, succeeded end-to-end (RBAC pre-check + connector) for
+all 7 writer domains plus `mis`: `accounts`→Journal Entry
+`ACC-JV-2026-00001`, `fixed_assets`→`Asset` (empty list, connector still
+round-trips cleanly — no Asset exists on this instance), `hr_payroll`→
+Employee `HR-EMP-00001`, `inventory`→Item `SKU001`, `procurement`→Purchase
+Order `PUR-ORD-2026-00001`, `sales`→Sales Order `SAL-ORD-2026-00001`,
+`system_admin`→Role `System Manager`, `mis`→Company `Antigra Systems Pvt
+Ltd` plus a `run_query_report()` "Trial Balance" run (fiscal year
+`2026-2027`, see finding below) — both succeeded.
+
+### Write round-trip: BLOCKED for all 7 writer domains — a live connector/instance incompatibility, not a domain-specific failure
+
+Every `domain.mutate(..., action="create", requested_by=...)` attempt (one
+per writer domain: Journal Entry, Asset, Employee, Material Request,
+Supplier, Customer, Webhook) failed identically, **before any HTTP write
+reached ERPNext and before any Qkeee Bot Audit Log row was written** —
+confirmed via `resource_exists()` on every attempted test-record name
+afterward (all `False`) and via re-listing the audit log (no new rows).
+Root cause, reproduced directly: `mutate_resource()`'s RBAC pre-check
+(`_validate_prod_requester()` → `check_user_permission()` →
+`GET /api/method/frappe.client.has_permission`) omits `docname` from the
+query string whenever the caller has no record name yet — true for every
+`create` action (no name exists pre-insert) and also for `query_resource()`
+list-level reads (no single record in question). This instance's Frappe
+build's `frappe.client.has_permission` has no default for its `docname`
+parameter, so the omission 500s with `TypeError: has_permission() missing 1
+required positional argument: 'docname'` — a generic, doctype-independent
+failure, confirmed identical across all 7 create attempts and against a
+plain `query_resource(..., requested_by=...)` list call. `get_resource()`
+and `run_query_report()` are unaffected because they always pass a
+concrete `docname`/`report_name`. **Net effect: as currently coded, no
+domain can create a new record, and no caller can list-query anything, once
+a `requested_by` is supplied against this instance** — this is new since
+Phase 5 (the RBAC pre-check didn't run universally before that). Pre-Phase-5
+`Qkeee Bot Audit Log` rows on this instance (tag `demo-erp`, a different,
+older environment tag) show real `Create`/`Update` attempts reaching
+ERPNext's own validation errors, confirming this 500 is a regression
+introduced by the pre-check, not a pre-existing instance limitation.
+
+No test records were created and none needed cleanup — the pre-check
+failure means every write attempt aborted before any ERPNext side effect.
+
+### Follow-up: root cause fixed, write round-trip re-confirmed PASS
+
+`check_user_permission_raw()` now always sends `docname` (empty string
+when no record exists yet) instead of omitting the param when falsy.
+Reproduced the 500 directly via `curl` against `frappe.client.has_permission`
+first to confirm the exact fix shape before changing code: omitting
+`docname` 500s (`TypeError: has_permission() missing 1 required positional
+argument: 'docname'`); `docname=""` returns a correct doctype-level
+`{"message": {"has_permission": true}}`; `docname=None`-the-literal-string
+incorrectly 404s (`"Sales Order None not found"`) — confirming empty string,
+not `None`-as-text, is the right shape for this Frappe build. Fixed in
+`scripts/core/client.py`; `scripts/core/test_client.py`'s stale test
+(`test_docname_omitted_when_not_given`, which asserted the now-wrong
+omit-when-falsy behavior) updated to assert `docname=""` instead.
+
+Re-ran the write round-trip live against `demo` after the fix:
+`procurement.mutate("demo", "Supplier", "create", payload={"supplier_name":
+"QKEEE-SMOKE-TEST-Supplier", ...}, mode="read-write",
+requested_by="demo.admin@qkeee.in")` succeeded end-to-end — record created
+(`QKEEE-SMOKE-TEST-Supplier`), then `procurement.mutate(..., "delete", ...)`
+cleaned it up immediately after. **Nothing left behind.** Confirms the fix
+resolves the create-path blocker for all 7 writer domains (same code path,
+`Supplier` chosen because a never-referenced Supplier deletes cleanly per
+prior live findings — see `qkeee-erp-demo-instance.md`). The
+Qkeee-Bot-Audit-Log 403 (below) is unaffected by this fix — a separate,
+already-understood limitation of this session's non-bot credentials.
+
+Also live-observed and fixed in the same pass: `_audit_submit(log_name)`
+was being called even when the preceding insert already failed and
+returned `None` (the 403 case below) — `urllib.parse.quote(None)` then
+raised a second, confusing `"quote_from_bytes() expected bytes"` warning
+that masked the real, already-reported cause. Added an early `if not
+log_name: return False` guard, plus a regression test
+(`AuditSubmitSkipsWhenInsertFailedTests`).
+
+Full suite re-run after both fixes: 77 tests + 20 subtests passing.
+
+### MIS refusal: PASS
+
+`mis.mutate(tag, "Customer", "create", ...)` raised
+`DoctypeNotAllowedError` immediately (`ALLOWED_WRITE_DOCTYPES` gate runs
+before the RBAC pre-check in `mutate_resource()`, so it's unaffected by the
+bug above) — confirms the empty-allowlist refusal is real and unconditional
+against a live instance, no write attempted.
+
+### Qkeee Bot Audit Log: provisioned, but this session's bot account can't write to it
+
+`Qkeee Bot Audit Log` doctype exists on this instance (confirmed via
+`DocType` resource GET) and has real historical rows (tag `demo-erp`,
+pre-Phase-5). Under tag `demo`'s credentials, every audit-log insert this
+session attempted 403'd: `"User demo.admin@qkeee.in does not have doctype
+access via role permission for document Qkeee Bot Audit Log"`. The
+historical `demo-erp` rows recorded `requested_by: demo.admin@qkeee.in`
+too, but on those the *authenticating* API identity was presumably a
+proper dedicated bot account (`hermes-bot@qkeee.in` exists as a separate
+User on this instance) — this session's `QKEEE_ERP_DEMO_API_KEY` instead
+authenticates directly as `demo.admin@qkeee.in`, a human account without
+the `Qkeee Bot` role, so it can request writes but can't self-audit them.
+Best-effort logging degraded silently as designed (no write was blocked by
+this), but it means this session produced zero new Audit Log rows,
+successful or failed.
+
+### Other live findings
+
+- **This instance was reset/reseeded since the 2026-08-16 memory note.**
+  Companies are no longer "Enfasco Inc." / "Qkeee LLP" — now **Antigra
+  Systems Pvt Ltd** (ASPL), **Mapro Industries Pvt Ltd** (MIPL), **Mapro
+  Industries Pvt Ltd (Demo)** (MIPLD), and **Sharad HUF**, all INR. Real
+  transactional data (Journal Entries, Purchase/Sales Orders, Employees,
+  Items `SKU001`-`SKUxxx`) exists under these new companies.
+  `frappe.auth.get_logged_user` health-check still returns
+  `demo.admin@qkeee.in` as before.
+- Fiscal Year on this instance is named `2026-2027` (Apr–Mar), not a plain
+  `2026` — a query-report filter using the calendar year as fiscal_year
+  fails with `ValidationError: Fiscal Year 2026 does not exist`.
+- `hermes-bot@qkeee.in` exists as a distinct `System User` from
+  `demo.admin@qkeee.in` — likely the intended dedicated bot account per
+  this connector's own bot-account design note in `client.py`'s module
+  docstring; this session's demo credentials are not that account.
+
 ## Phase 6 (delete old skills) — 2026-08-31
 
 Per the consolidation plan §11 item 6 ("Delete the old skills"). `git rm -r`

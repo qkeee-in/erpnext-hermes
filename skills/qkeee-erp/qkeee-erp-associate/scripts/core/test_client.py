@@ -104,6 +104,20 @@ class AuditInsertFailureVisibilityTests(unittest.TestCase):
         self.assertTrue(mock_stderr.write.called)
 
 
+class AuditSubmitSkipsWhenInsertFailedTests(unittest.TestCase):
+    """Phase 7 live finding (demo.qkeee.in): _audit_submit(None) — reached
+    whenever the preceding insert already failed and warned — used to raise
+    a second, confusing warning (urllib.parse.quote(None) ->
+    "quote_from_bytes() expected bytes") that masked the real cause. Guard
+    added: log_name falsy short-circuits to False before any request."""
+
+    def test_returns_false_without_a_request_when_log_name_is_none(self):
+        with patch.object(ec, "_request") as mocked_request:
+            result = ec._audit_submit({"tag": "default"}, None)
+        self.assertFalse(result)
+        mocked_request.assert_not_called()
+
+
 class PersonaDoctypeRemovedTests(unittest.TestCase):
     """Phase 3 (doctype migration, consolidation plan §7): `Qkeee Bot
     Persona` is removed — `ensure_persona_registered()`, `PERSONA_DOCTYPE`,
@@ -560,10 +574,14 @@ class CheckUserPermissionTests(unittest.TestCase):
 
     @patch.object(ec, "_request", return_value={"message": True})
     @patch.object(ec, "get_env_config", return_value={"tag": "prod"})
-    def test_docname_omitted_when_not_given(self, mocked_cfg, mocked_request):
+    def test_docname_sent_as_empty_string_when_not_given(self, mocked_cfg, mocked_request):
+        # Phase 7 live finding (demo.qkeee.in): this Frappe build's
+        # frappe.client.has_permission has no default for docname — omitting
+        # the param entirely 500s. docname="" is the live-confirmed working
+        # doctype-level-only shape; see check_user_permission_raw()'s docstring.
         ec.check_user_permission("prod", "Sales Order", "read", "priya@org.com")
         params = mocked_request.call_args[1]["params"]
-        self.assertNotIn("docname", params)
+        self.assertEqual(params["docname"], "")
 
 
 class ProdGateWiringTests(unittest.TestCase):
