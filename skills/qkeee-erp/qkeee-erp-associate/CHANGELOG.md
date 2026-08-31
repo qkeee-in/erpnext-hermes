@@ -1,5 +1,31 @@
 # Changelog
 
+## Phase 6 (delete old skills) — 2026-08-31
+
+Per the consolidation plan §11 item 6 ("Delete the old skills"). `git rm -r`
+against the 10 superseded skill directories: `qkeee-erp-accounts-executive`,
+`qkeee-erp-bot-init`, `qkeee-erp-doc-extraction`,
+`qkeee-erp-fixed-asset-manager`, `qkeee-erp-frappe-core`,
+`qkeee-erp-hr-associate`, `qkeee-erp-inventory`, `qkeee-erp-mis-analyst`,
+`qkeee-erp-procurement`, `qkeee-erp-sales`, `qkeee-erp-system-admin`.
+`sync_to_personas.py` (lived in `qkeee-erp-frappe-core/scripts/`) and the
+stray HR-test JSON artifacts (lived in `qkeee-erp-procurement/scripts/`)
+went with their parent directories — nothing separate to target. Untracked
+`__pycache__`/`.pytest_cache` leftovers under those 10 dirs were removed
+directly (`rm -rf`), not through git, since they were never tracked.
+
+Also removed the top-level `skills/qkeee-erp/qkeee-erp.env.example` — not
+named in the plan's Phase 6 bullet, but orphaned by the same consolidation:
+§4 already renamed it into
+`qkeee-erp-associate/qkeee-erp-associate.env.example`, and nothing
+referenced the old top-level copy after the 10 consumer skills were gone.
+
+Nothing here touched a live ERPNext instance. `qkeee-erp-associate`'s own
+test suite (`scripts/core/test_client.py` + `test_memory_promote.py`) was
+re-run after the deletion and still passes (71 tests + 2 subtests) —
+confirms the associate skill was never importing anything from a sibling
+directory.
+
 ## Phase 5 (GRC hardening) — 2026-08-31
 
 Per the consolidation plan §9 ("GRC & compliance hardening") and §11 item 5
