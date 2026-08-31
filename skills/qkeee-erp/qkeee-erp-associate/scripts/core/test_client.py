@@ -90,7 +90,7 @@ class SessionFallbackTests(unittest.TestCase):
     def test_log_read_never_sends_empty_session(self, mock_insert):
         ec._log_read(
             {"tag": "default"}, "Sales Order", "SO-0001",
-            requested_by="user@example.com", session_id=None, persona_code=None,
+            requested_by="user@example.com", session_id=None, domain_code=None,
         )
         sent_fields = mock_insert.call_args[0][1]
         self.assertTrue(sent_fields["session"])
@@ -114,73 +114,64 @@ class AuditInsertFailureVisibilityTests(unittest.TestCase):
         self.assertTrue(mock_stderr.write.called)
 
 
-class EnsurePersonaRegisteredTests(unittest.TestCase):
-    """ensure_persona_registered() is unconditional master-data upsert —
-    never a log, never gated on debug. Covers the three real outcomes: the
-    persona row already exists (no-op), it doesn't and gets created, and the
-    target instance hasn't provisioned Qkeee Bot Persona at all (swallowed
-    failure, never raises)."""
+class PersonaDoctypeRemovedTests(unittest.TestCase):
+    """Phase 3 (doctype migration, consolidation plan §7): `Qkeee Bot
+    Persona` is removed — `ensure_persona_registered()`, `PERSONA_DOCTYPE`,
+    and the `register-persona` CLI subcommand no longer exist in
+    core/client.py. These are guard tests, not coverage of a removed
+    capability: they fail loudly if a future edit accidentally
+    reintroduces persona-registration code without a deliberate decision
+    to reverse the Phase 3 removal (see ../../CHANGELOG.md for the
+    exported schema/manifest this replaces)."""
 
-    @patch.object(ec, "resource_exists", return_value=True)
-    @patch.object(ec, "get_env_config", return_value={"tag": "default"})
-    @patch.object(ec, "_request")
-    def test_noop_when_already_registered(self, mock_request, mock_get_env_config, mock_resource_exists):
-        result = ec.ensure_persona_registered(
-            "default", persona_code="qkeee-erp-sales", persona_label="Sales",
-        )
-        mock_resource_exists.assert_called_once_with("default", ec.PERSONA_DOCTYPE, "qkeee-erp-sales")
-        mock_request.assert_not_called()
-        self.assertEqual(result, "already_registered")
+    def test_ensure_persona_registered_does_not_exist(self):
+        self.assertFalse(hasattr(ec, "ensure_persona_registered"))
 
-    @patch.object(ec, "_audit_insert")
-    @patch.object(ec, "resource_exists", return_value=False)
-    @patch.object(ec, "get_env_config", return_value={"tag": "default"})
-    @patch.object(ec, "_request")
-    def test_creates_when_not_registered(self, mock_request, mock_get_env_config, mock_resource_exists,
-                                          mock_audit_insert):
-        mock_request.return_value = {"data": {"name": "qkeee-erp-sales"}}
-        result = ec.ensure_persona_registered(
-            "default", persona_code="qkeee-erp-sales", persona_label="Sales",
-            default_mode="read-write", non_negotiables="never bulk-delete",
-        )
-        mock_request.assert_called_once()
-        self.assertEqual(result, "created")
-        cfg_arg, method, path = mock_request.call_args[0][:3]
-        self.assertEqual(cfg_arg, {"tag": "default"})
-        self.assertEqual(method, "POST")
-        self.assertIn(ec.PERSONA_DOCTYPE.replace(" ", "%20"), path)
-        payload = mock_request.call_args[1]["payload"]
-        self.assertEqual(payload["doctype"], ec.PERSONA_DOCTYPE)
-        self.assertEqual(payload["persona_code"], "qkeee-erp-sales")
-        self.assertEqual(payload["persona_label"], "Sales")
-        self.assertEqual(payload["default_mode"], "Read Write")
-        self.assertEqual(payload["non_negotiables"], "never bulk-delete")
-        # PERSONA_DOCTYPE is no longer AUDIT_EXEMPT — the create is audited
-        # via a single-shot _audit_insert() (not the two-phase write-path
-        # helpers, which are excluded from read-only personas' own copy).
-        mock_audit_insert.assert_called_once()
-        audit_fields = mock_audit_insert.call_args[0][1]
-        self.assertEqual(audit_fields["action"], "Create")
-        self.assertEqual(audit_fields["reference_doctype"], ec.PERSONA_DOCTYPE)
-        self.assertEqual(audit_fields["reference_name"], "qkeee-erp-sales")
-        self.assertEqual(audit_fields["status"], "Success")
+    def test_persona_doctype_constant_does_not_exist(self):
+        self.assertFalse(hasattr(ec, "PERSONA_DOCTYPE"))
+
+    def test_register_persona_not_a_cli_subcommand(self):
+        # argparse raises SystemExit(2) for an unrecognized subcommand —
+        # confirm "register-persona" is one, not just that it errors for
+        # some other reason (e.g. a missing required flag).
+        with patch("sys.argv", ["client.py", "--tag", "default", "register-persona",
+                                 "--domain-code", "x"]), \
+                patch("sys.stderr", new_callable=__import__("io").StringIO) as mock_stderr:
+            with self.assertRaises(SystemExit):
+                ec._cli()
+        self.assertIn("invalid choice", mock_stderr.getvalue())
+        self.assertIn("register-persona", mock_stderr.getvalue())
+
+
+class AuditLogDomainCodeTests(unittest.TestCase):
+    """Qkeee Bot Audit Log's former `persona_code` field is repointed to
+    `domain_code` (Phase 3) — same denormalized-string convention, now
+    naming the active qkeee-erp-associate domain reference (e.g.
+    'qkeee-erp-associate/hr-payroll') rather than a separate installed
+    persona skill. Confirms the write payload key actually changed, not
+    just the parameter name."""
 
     @patch.object(ec, "_audit_insert")
-    @patch.object(ec, "resource_exists", return_value=False)
-    @patch.object(ec, "get_env_config", return_value={"tag": "default"})
-    @patch.object(ec, "_request", side_effect=ec.ConnectorError("Persona doctype not provisioned"))
-    def test_swallows_failure_when_doctype_not_provisioned(self, mock_request, mock_get_env_config,
-                                                             mock_resource_exists, mock_audit_insert):
-        with patch("sys.stderr") as mock_stderr:
-            result = ec.ensure_persona_registered(
-                "default", persona_code="qkeee-erp-sales", persona_label="Sales",
-            )
-        self.assertEqual(result, "failed")
-        self.assertTrue(mock_stderr.write.called)
-        mock_audit_insert.assert_called_once()
-        audit_fields = mock_audit_insert.call_args[0][1]
-        self.assertEqual(audit_fields["status"], "Failure")
-        self.assertEqual(audit_fields["error_detail"], "Persona doctype not provisioned")
+    def test_log_read_writes_domain_code_field(self, mock_insert):
+        ec._log_read(
+            {"tag": "default"}, "Sales Order", "SO-0001",
+            requested_by="user@example.com", session_id="s1",
+            domain_code="qkeee-erp-associate/sales",
+        )
+        sent_fields = mock_insert.call_args[0][1]
+        self.assertEqual(sent_fields["domain_code"], "qkeee-erp-associate/sales")
+        self.assertNotIn("persona_code", sent_fields)
+
+    @patch.object(ec, "_audit_insert")
+    def test_record_audit_log_start_writes_domain_code_field(self, mock_insert):
+        ec.record_audit_log_start(
+            {"tag": "default"}, action="Create", doctype="Sales Order", name=None,
+            requested_by="user@example.com", session_id="s1",
+            domain_code="qkeee-erp-associate/sales",
+        )
+        sent_fields = mock_insert.call_args[0][1]
+        self.assertEqual(sent_fields["domain_code"], "qkeee-erp-associate/sales")
+        self.assertNotIn("persona_code", sent_fields)
 
 
 class RunQueryReportTests(unittest.TestCase):

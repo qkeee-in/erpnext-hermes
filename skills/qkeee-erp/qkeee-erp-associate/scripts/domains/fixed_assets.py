@@ -111,7 +111,7 @@ def mutate_resource_with_concurrency(tag: str, doctype: str, action: str, payloa
                                       name: str = None, mode: str = "read-only",
                                       expected_modified: str = None, requested_by: str = None,
                                       skip_comment: bool = False,
-                                      *, session_id: str = None, persona_code: str = None,
+                                      *, session_id: str = None, domain_code: str = None,
                                       user_approved: bool = False, approval_note: str = None) -> dict:
     """TOCTOU-checked wrapper around the shared core.client.mutate_resource()
     — this domain's own extension for the submit-time concurrency check
@@ -143,7 +143,7 @@ def mutate_resource_with_concurrency(tag: str, doctype: str, action: str, payloa
             )
     return mutate_resource(tag, doctype, action, payload, name, mode, requested_by,
                             skip_comment=skip_comment, domain=DOMAIN_NAME,
-                            session_id=session_id, persona_code=persona_code,
+                            session_id=session_id, domain_code=domain_code,
                             user_approved=user_approved, approval_note=approval_note)
 
 
@@ -163,7 +163,7 @@ TOKEN_REQUIRED_METHODS = {"make_depreciation_entry", "scrap_asset", "make_sales_
 def call_whitelisted_method(tag: str, method: str, body: dict, mode: str = "read-only",
                              confirmation_token: str = None, token_facts: dict = None,
                              requested_by: str = None, *, session_id: str = None,
-                             persona_code: str = None) -> dict:
+                             domain_code: str = None) -> dict:
     """Call one of the four domain-specific whitelisted RPC methods.
 
     `body` is sent to ERPNext verbatim as the RPC's actual arguments —
@@ -236,7 +236,7 @@ def call_whitelisted_method(tag: str, method: str, body: dict, mode: str = "read
     asset_name = (body or {}).get("asset_name")
     audit_log_name = record_audit_log_start(
         cfg, action=method, doctype="Asset", name=asset_name, requested_by=requested_by,
-        session_id=session_id, persona_code=persona_code,
+        session_id=session_id, domain_code=domain_code,
         user_approved=method in TOKEN_REQUIRED_METHODS,
         approval_note=f"call_whitelisted_method: {method}",
     )

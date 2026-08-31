@@ -259,7 +259,7 @@ def call_permission_manager(tag: str, action: str, doctype: str, role: str, perm
                              ptype: str = None, value=None, mode: str = "read-only",
                              confirmation_token: str = None, issued_at: int = None,
                              requested_by: str = None, *, session_id: str = None,
-                             persona_code: str = None) -> dict:
+                             domain_code: str = None) -> dict:
     """Call the Role Permission Manager's add/update/remove/reset
     whitelisted methods.
 
@@ -338,7 +338,7 @@ def call_permission_manager(tag: str, action: str, doctype: str, role: str, perm
     reference_name = f"{role or ''}@permlevel{permlevel}"
     audit_log_name = record_audit_log_start(
         cfg, action=f"Permission {action.capitalize()}", doctype=doctype, name=reference_name,
-        requested_by=requested_by, session_id=session_id, persona_code=persona_code,
+        requested_by=requested_by, session_id=session_id, domain_code=domain_code,
         user_approved=True, approval_note="call_permission_manager: double-confirm token verified",
     )
     try:

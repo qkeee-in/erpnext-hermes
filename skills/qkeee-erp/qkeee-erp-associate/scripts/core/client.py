@@ -107,12 +107,20 @@ except ImportError:
 # label is supplied — see mutate_resource()'s `domain`/`skill_label` params.
 SKILL_LABEL = "qkeee-erp-associate"
 
-# Qkeee Bot audit-trail doctypes (see qkeee-erp-bot-init). A target
-# instance may not have these provisioned yet — every call into them
-# below is best-effort and never blocks or fails the caller's actual
-# ERPNext read/write.
+# Qkeee Bot audit-trail doctype (see qkeee-erp-bot-init / this skill's own
+# scripts/init_bot.py). A target instance may not have it provisioned yet
+# — every call into it below is best-effort and never blocks or fails the
+# caller's actual ERPNext read/write.
+#
+# Phase 3 (doctype migration, consolidation plan §7): `Qkeee Bot Persona`
+# — formerly `PERSONA_DOCTYPE` here, plus `ensure_persona_registered()`
+# and the `register-persona` CLI subcommand — is REMOVED as of this
+# module. Every skill only ever wrote it and nothing read it back for a
+# functional decision; see ../CHANGELOG.md for the exported schema/
+# manifest kept for manual-audit reference. Don't re-add a persona
+# doctype reference here without a deliberate decision reversing that
+# removal.
 AUDIT_LOG_DOCTYPE = "Qkeee Bot Audit Log"
-PERSONA_DOCTYPE = "Qkeee Bot Persona"
 
 # Doctypes exempt from audit-wrapping. Mandatory, not optional: without
 # this, logging a write to Qkeee Bot Audit Log would itself be logged,
@@ -135,12 +143,12 @@ AUDIT_EXEMPT_DOCTYPES = {
 # read/written by qkeee-erp-bot-init and the system-admin domain under
 # their own elevated-credential/confirm-token controls, not by a business
 # requester acting through a domain module — gating them through this
-# business-permission check doesn't fit and isn't needed. PERSONA_DOCTYPE/
-# AUDIT_LOG_DOCTYPE/Comment are this connector's own bookkeeping, same
-# rationale as AUDIT_EXEMPT_DOCTYPES.
+# business-permission check doesn't fit and isn't needed. AUDIT_LOG_DOCTYPE/
+# Comment are this connector's own bookkeeping, same rationale as
+# AUDIT_EXEMPT_DOCTYPES.
 PROD_GATE_EXEMPT_DOCTYPES = {
     "User", "DocType", "Role",
-    AUDIT_LOG_DOCTYPE, PERSONA_DOCTYPE, "Comment",
+    AUDIT_LOG_DOCTYPE, "Comment",
 }
 
 # mutate_resource()'s action -> frappe.client.has_permission's perm_type.
@@ -550,7 +558,7 @@ def health_check(tag: str = "default") -> dict:
 
 
 def query_resource(tag: str, doctype: str, filters: list = None, fields: list = None, limit: int = 20,
-                    *, debug: bool = False, session_id: str = None, persona_code: str = None,
+                    *, debug: bool = False, session_id: str = None, domain_code: str = None,
                     requested_by: str = None, channel: str = None, channel_metadata: dict = None) -> dict:
     """Generic resource query — read any DocType with filters/fields.
 
@@ -578,7 +586,7 @@ def query_resource(tag: str, doctype: str, filters: list = None, fields: list = 
     has_more = len(rows) > limit
 
     if debug:
-        _log_read(cfg, doctype, None, requested_by, session_id, persona_code, channel, channel_metadata)
+        _log_read(cfg, doctype, None, requested_by, session_id, domain_code, channel, channel_metadata)
 
     return {"data": rows[:limit], "has_more": has_more, "limit": limit}
 
@@ -606,7 +614,7 @@ def _strip_noise(obj):
 
 
 def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
-                  *, debug: bool = False, session_id: str = None, persona_code: str = None,
+                  *, debug: bool = False, session_id: str = None, domain_code: str = None,
                   requested_by: str = None, channel: str = None, channel_metadata: dict = None) -> dict:
     """Single-resource full-doc GET — the only way to get child-table rows.
 
@@ -634,7 +642,7 @@ def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
         data = _strip_noise(data)
 
     if debug:
-        _log_read(cfg, doctype, name, requested_by, session_id, persona_code, channel, channel_metadata)
+        _log_read(cfg, doctype, name, requested_by, session_id, domain_code, channel, channel_metadata)
 
     return {"data": data}
 
@@ -651,7 +659,7 @@ def resource_exists(tag: str, doctype: str, name: str) -> bool:
 
 
 def run_query_report(tag: str, report_name: str, filters: dict = None,
-                      *, debug: bool = False, session_id: str = None, persona_code: str = None,
+                      *, debug: bool = False, session_id: str = None, domain_code: str = None,
                       requested_by: str = None, channel: str = None, channel_metadata: dict = None) -> dict:
     """Run one of ERPNext's own built-in reports server-side (Query Report
     or Script Report) via frappe.desk.query_report.run, instead of hand-
@@ -679,7 +687,7 @@ def run_query_report(tag: str, report_name: str, filters: dict = None,
     message = result.get("message", {})
 
     if debug:
-        _log_read(cfg, "Report", report_name, requested_by, session_id, persona_code, channel, channel_metadata)
+        _log_read(cfg, "Report", report_name, requested_by, session_id, domain_code, channel, channel_metadata)
 
     return {
         "report_name": report_name,
@@ -842,7 +850,7 @@ def _audit_submit(cfg: dict, log_name: str) -> bool:
         return False
 
 
-def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id: str, persona_code: str,
+def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id: str, domain_code: str,
               channel: str = None, channel_metadata: dict = None) -> None:
     """Best-effort insert+submit Audit Log row for a debug-mode read.
     Insert/update are collapsed into one status ("Success") since a read
@@ -853,7 +861,7 @@ def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id:
         return
     log_name = _audit_insert(cfg, {
         "session": _session_or_fallback(session_id),
-        "persona_code": persona_code or "",
+        "domain_code": domain_code or "",
         "environment_tag": cfg.get("tag", ""),
         "channel": channel or "",
         "channel_metadata": json.dumps(_redact_pii_deep(channel_metadata)) if channel_metadata else None,
@@ -870,7 +878,7 @@ def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id:
 
 # qkeee-erp:write-path
 def record_audit_log_start(cfg: dict, *, action: str, doctype: str, name: str, requested_by: str,
-                            session_id: str = None, persona_code: str = None,
+                            session_id: str = None, domain_code: str = None,
                             channel: str = None, channel_metadata: dict = None,
                             payload_before: dict = None, user_approved: bool = False,
                             approval_note: str = None) -> str:
@@ -886,7 +894,7 @@ def record_audit_log_start(cfg: dict, *, action: str, doctype: str, name: str, r
         return None
     return _audit_insert(cfg, {
         "session": _session_or_fallback(session_id),
-        "persona_code": persona_code or "",
+        "domain_code": domain_code or "",
         "environment_tag": cfg.get("tag", ""),
         "channel": channel or "",
         "channel_metadata": json.dumps(_redact_pii_deep(channel_metadata)) if channel_metadata else None,
@@ -929,71 +937,6 @@ def record_audit_log_finish(cfg: dict, log_name: str, *, status: str, reference_
         _audit_submit(cfg, log_name)
 
 
-def ensure_persona_registered(tag: str, *, persona_code: str, persona_label: str,
-                               default_mode: str = "read-only", non_negotiables: str = None,
-                               requested_by: str = None, session_id: str = None) -> str:
-    """Best-effort idempotent upsert of this persona's Qkeee Bot Persona row.
-    Unconditional — NOT debug-gated, not a log (master data). Never raises,
-    never blocks the caller — but unlike the pure-logging helpers above,
-    this returns a status string instead of swallowing the outcome
-    entirely.
-
-    NOTE (Phase 1 carry-over, see consolidation plan section 7): the
-    Qkeee Bot Persona doctype itself is slated for removal in a later
-    migration phase (nothing reads these rows back for a functional
-    decision). This function is kept working, unchanged, for Phase 1 —
-    doctype/schema cleanup is explicitly out of this phase's scope.
-
-    Returns "already_registered" | "created" | "failed". A caller that
-    gets "failed" should treat it as worth proactively surfacing and
-    suggesting qkeee-erp-bot-init, not silently ignoring."""
-    cfg = get_env_config(tag)
-    if resource_exists(tag, PERSONA_DOCTYPE, persona_code):
-        return "already_registered"
-    effective_requested_by = requested_by or cfg.get("requested_by_default") or ""
-    try:
-        result = _request(cfg, "POST", f"/api/resource/{urllib.parse.quote(PERSONA_DOCTYPE)}", payload={
-            "doctype": PERSONA_DOCTYPE,
-            "persona_code": persona_code,
-            "persona_label": persona_label,
-            "default_mode": "Read Write" if default_mode == "read-write" else "Read Only",
-            "non_negotiables": non_negotiables or "",
-        })
-        created_name = (result.get("data") or {}).get("name") or persona_code
-        _audit_insert(cfg, {
-            "session": _session_or_fallback(session_id),
-            "persona_code": persona_code,
-            "environment_tag": cfg.get("tag", ""),
-            "action": "Create",
-            "reference_doctype": PERSONA_DOCTYPE,
-            "reference_name": created_name,
-            "requested_by": effective_requested_by,
-            "timestamp": _now_iso(),
-            "status": "Success",
-            "payload_after": json.dumps(result.get("data")) if result.get("data") else None,
-            "user_approved": "Approved",
-            "approval_note": "persona master-data registration, unconditional",
-        })
-        return "created"
-    except ConnectorError as e:
-        _audit_insert(cfg, {
-            "session": _session_or_fallback(session_id),
-            "persona_code": persona_code,
-            "environment_tag": cfg.get("tag", ""),
-            "action": "Create",
-            "reference_doctype": PERSONA_DOCTYPE,
-            "reference_name": "",
-            "requested_by": effective_requested_by,
-            "timestamp": _now_iso(),
-            "status": "Failure",
-            "error_detail": str(e)[:1900],
-            "user_approved": "Approved",
-            "approval_note": "persona master-data registration, unconditional",
-        })
-        print(f"WARN: persona registration failed (non-fatal): {e}", file=sys.stderr)
-        return "failed"
-
-
 # --------------------------------------------------------------------------
 # Writes
 # --------------------------------------------------------------------------
@@ -1003,7 +946,7 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
                      name: str = None, mode: str = "read-only", requested_by: str = None,
                      skip_comment: bool = False,
                      *, domain: str = None, skill_label: str = None,
-                     session_id: str = None, persona_code: str = None,
+                     session_id: str = None, domain_code: str = None,
                      channel: str = None, channel_metadata: dict = None,
                      user_approved: bool = False, approval_note: str = None) -> dict:
     """Generic resource mutate — create/update/submit/cancel/delete a
@@ -1111,7 +1054,7 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
 
     audit_log_name = record_audit_log_start(
         cfg, action=action.capitalize(), doctype=doctype, name=name, requested_by=requested_by,
-        session_id=session_id, persona_code=persona_code, channel=channel, channel_metadata=channel_metadata,
+        session_id=session_id, domain_code=domain_code, channel=channel, channel_metadata=channel_metadata,
         payload_before=payload_before,
         user_approved=user_approved, approval_note=approval_note,
     )
@@ -1148,7 +1091,7 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
 def gated_mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
                            name: str = None, mode: str = "read-only", requested_by: str = None,
                            *, confirmation_token: str = None, issued_at: int = None,
-                           session_id: str = None, persona_code: str = None,
+                           session_id: str = None, domain_code: str = None,
                            channel: str = None, channel_metadata: dict = None,
                            approval_note: str = None) -> dict:
     """The associate's own write entry point for whatever doesn't fit a
@@ -1189,7 +1132,7 @@ def gated_mutate_resource(tag: str, doctype: str, action: str, payload: dict = N
 
     return mutate_resource(
         tag, doctype, action, payload=payload, name=name, mode=mode, requested_by=requested_by,
-        session_id=session_id, persona_code=persona_code, channel=channel, channel_metadata=channel_metadata,
+        session_id=session_id, domain_code=domain_code, channel=channel, channel_metadata=channel_metadata,
         user_approved=True, approval_note=approval_note or "gated_mutate_resource: advisory draft confirmed",
     )
 
@@ -1344,7 +1287,7 @@ def _cli():
     p.add_argument("--debug", action="store_true",
                    help="force debug logging on for THIS call only")
     p.add_argument("--session-id", help="plain string correlator threaded into Qkeee Bot Audit Log rows")
-    p.add_argument("--persona-code", help="e.g. qkeee-erp-associate — threaded into audit rows")
+    p.add_argument("--domain-code", help="e.g. qkeee-erp-associate — threaded into audit rows")
     p.add_argument("--channel", help="conversation surface, e.g. Discord/Telegram/WhatsApp/Email/Web/Slack/CLI/API/Other")
     p.add_argument("--channel-metadata", help='JSON object of channel-specific tracing detail')
     p.add_argument("--approval-note", help="free text of what was confirmed (mutate only)")
@@ -1390,16 +1333,10 @@ def _cli():
     gm.add_argument("--confirmation-token", required=True)
     gm.add_argument("--issued-at", type=int, required=True)
 
-    rp = sub.add_parser("register-persona", help="Idempotent upsert of this persona's Qkeee Bot Persona row")
-    rp.add_argument("--persona-code", required=True)
-    rp.add_argument("--persona-label", required=True)
-    rp.add_argument("--default-mode", choices=["read-only", "read-write"], default="read-only")
-    rp.add_argument("--non-negotiables", help="free text, informational only")
-
     args = p.parse_args()
 
-    if args.command in ("health", "query", "get", "report", "roles", "mutate", "gated-mutate",
-                         "register-persona") and not args.tag:
+    if args.command in ("health", "query", "get", "report", "roles", "mutate",
+                         "gated-mutate") and not args.tag:
         p.error(f"--tag is required for '{args.command}'")
     if args.command in ("mutate", "gated-mutate") and not args.mode:
         p.error(f"--mode is required for '{args.command}'")
@@ -1407,9 +1344,9 @@ def _cli():
         args.session_id = _session_or_fallback(None)
 
     # Bugfix vs. the pre-consolidation copies (all ten crashed identically
-    # on `list-envs`/`health`/`register-persona`, which never set --tag):
-    # effective_requested_by is now only resolved for commands that
-    # actually need a tag, instead of unconditionally calling
+    # on `list-envs`/`health`, which never set --tag): effective_requested_by
+    # is now only resolved for commands that actually need a tag, instead
+    # of unconditionally calling
     # resolve_requested_by(args.tag, ...) -> _is_prod_tag(None) -> a
     # TypeError from re.search(pattern, None). Every other command's
     # behavior is unchanged.
@@ -1449,20 +1386,20 @@ def _cli():
             fields = _parse_json_arg("--fields", args.fields, list)
             print(json.dumps(query_resource(args.tag, args.doctype, filters, fields, args.limit,
                                              debug=effective_debug, session_id=args.session_id,
-                                             persona_code=args.persona_code,
+                                             domain_code=args.domain_code,
                                              requested_by=effective_requested_by,
                                              channel=args.channel, channel_metadata=channel_metadata), indent=2))
         elif args.command == "get":
             print(json.dumps(get_resource(args.tag, args.doctype, args.name, not args.no_strip,
                                            debug=effective_debug, session_id=args.session_id,
-                                           persona_code=args.persona_code,
+                                           domain_code=args.domain_code,
                                            requested_by=effective_requested_by,
                                            channel=args.channel, channel_metadata=channel_metadata), indent=2))
         elif args.command == "report":
             filters = _parse_json_arg("--filters", args.filters, dict)
             print(json.dumps(run_query_report(args.tag, args.report_name, filters,
                                                debug=effective_debug, session_id=args.session_id,
-                                               persona_code=args.persona_code,
+                                               domain_code=args.domain_code,
                                                requested_by=effective_requested_by,
                                                channel=args.channel, channel_metadata=channel_metadata), indent=2))
         elif args.command == "roles":
@@ -1472,7 +1409,7 @@ def _cli():
             print(json.dumps(
                 mutate_resource(args.tag, args.doctype, args.action, payload, args.name,
                                  args.mode, effective_requested_by, domain=args.domain,
-                                 session_id=args.session_id, persona_code=args.persona_code,
+                                 session_id=args.session_id, domain_code=args.domain_code,
                                  channel=args.channel, channel_metadata=channel_metadata,
                                  user_approved=False, approval_note=args.approval_note),
                 indent=2,
@@ -1484,17 +1421,11 @@ def _cli():
                                        args.mode, effective_requested_by,
                                        confirmation_token=args.confirmation_token,
                                        issued_at=args.issued_at,
-                                       session_id=args.session_id, persona_code=args.persona_code,
+                                       session_id=args.session_id, domain_code=args.domain_code,
                                        channel=args.channel, channel_metadata=channel_metadata,
                                        approval_note=args.approval_note),
                 indent=2,
             ))
-        elif args.command == "register-persona":
-            status = ensure_persona_registered(args.tag, persona_code=args.persona_code,
-                                                persona_label=args.persona_label,
-                                                default_mode=args.default_mode,
-                                                non_negotiables=args.non_negotiables)
-            print(json.dumps({"ok": True, "status": status}, indent=2))
     except ConnectorError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
