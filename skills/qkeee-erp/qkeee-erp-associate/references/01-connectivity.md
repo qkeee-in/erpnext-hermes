@@ -39,8 +39,12 @@ naming and var-setting, it doesn't declare the vars for them:
 | `QKEEE_ERP_<TAG>_API_KEY` | API key for that site/user |
 | `QKEEE_ERP_<TAG>_API_SECRET` | API secret for that site/user |
 | `QKEEE_ERP_<TAG>_ALLOW_INSECURE` | OPTIONAL. Set `1` to allow a non-`https://` base URL (local/dev only — `get_env_config()` refuses plaintext by default since credentials go in the clear otherwise) |
-| `QKEEE_ERP_<TAG>_DEBUG` | OPTIONAL, default `false`. Per-tag debug read-logging — see `00-conventions.md`'s GRC baseline |
 | `QKEEE_ERP_<TAG>_REQUESTED_BY` | OPTIONAL, no default. Per-tag requester identity fallback — never used on a PROD-tagged environment, see below |
+
+There is no `_DEBUG` var — Phase 5 GRC hardening made read audit logging
+unconditional (every read logs to `Qkeee Bot Audit Log`, no per-tag
+opt-in), so the flag was removed rather than left as a no-op. See
+`00-conventions.md`'s GRC baseline.
 
 `<TAG>` is uppercased/sanitized from whatever the user names it (`qa`,
 `client-a-prod`, etc). Adding a second/third environment is a runtime

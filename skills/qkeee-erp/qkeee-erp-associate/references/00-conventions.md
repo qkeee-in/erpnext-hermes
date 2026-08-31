@@ -132,25 +132,23 @@ shipped, so read those two bullets as "now universal," not "invented."
 - **RBAC pre-check, every environment (expanded).** Previously
   `_validate_prod_requester()` ran only on PROD-tagged environments
   (`_is_prod_tag()` — a tag whose name matches `/prod/i`, e.g. `PROD_ERP`,
-  `client-a-prod`). The associate runs the same requester-permission check
-  — resolve the requester as a real ERPNext `User`, then confirm via
-  ERPNext's own `frappe.client.has_permission` that they actually hold the
-  permission the call needs — on every environment, every fetch or write,
-  not PROD only. This is a Phase 5 GRC-hardening code change per the
-  consolidation plan; this document states the target policy now so every
-  domain file is written against it, even though `core/client.py` as of
-  Phase 1 still gates PROD-only (`PROD_GATE_EXEMPT_DOCTYPES`/
-  `_validate_prod_requester()`) — don't claim the universal check is live
-  in code until Phase 5 lands it.
+  `client-a-prod`). Landed in Phase 5: the associate now runs the same
+  requester-permission check — resolve the requester as a real ERPNext
+  `User`, then confirm via ERPNext's own `frappe.client.has_permission`
+  that they actually hold the permission the call needs — on every
+  environment, every fetch or write, not PROD only. Presence of
+  `requested_by` stays mandatory on PROD only (unchanged); whenever one
+  IS supplied, on any tag, it's validated. Function/constant names
+  (`_validate_prod_requester()`, `PROD_GATE_EXEMPT_DOCTYPES`) are kept
+  from their PROD-only origin — don't read the name as scope.
 - **Read audit logging, always on (expanded).** Previously reads were
   logged to `Qkeee Bot Audit Log` only when `debug=True` for the active
   tag (`QKEEE_ERP_<TAG>_DEBUG`, default `false`) — deliberately gated
   because a read-heavy domain (MIS in particular) could otherwise make
-  Read rows the single biggest volume source in the audit trail. The
-  target policy is an audit row on every access, reads included,
-  unconditionally. Same Phase 5 status as above: `core/client.py` as of
-  Phase 1 still debug-gates reads; state the target, don't claim it's
-  live.
+  Read rows the single biggest volume source in the audit trail. Landed
+  in Phase 5: every access now gets an audit row, reads included,
+  unconditionally — the `debug`/`_DEBUG` flag no longer exists anywhere
+  in `core/client.py` (removed rather than left as a no-op).
 - **PII/GDPR redaction, single source.** `core.client.redact_pii()` is
   the one place sensitive fields get scrubbed before display, storage, or
   logging — this one IS live as of Phase 1 (ported verbatim from
@@ -207,10 +205,18 @@ shipped, so read those two bullets as "now universal," not "invented."
 - **Non-ERPNext systems** — see `references/non-erpnext-adapter.md`:
   explicitly request API docs, a user guide, or a URL before attempting
   any action against a system that isn't ERPNext.
-- **Shipped skill is protected from autonomous drift (Phase 4+).** Once
-  memory wiring lands, `qkeee-erp-associate` itself is marked
-  externally-owned/pinned so Hermes' background-review pass never
-  autonomously rewrites its audit/RBAC/redaction logic — only the
-  `qkeee-erp-learned/*` satellite skills stay open to that evolution. Not
-  yet wired as of Phase 2; stated here so every domain file is written
-  with that eventual protection in mind.
+- **Shipped skill is protected from autonomous drift.** `qkeee-erp-associate`
+  itself must stay outside Hermes' autonomous background-review lifecycle
+  maintenance so it never silently rewrites its own audit/RBAC/redaction
+  logic — only the `qkeee-erp-learned/*` satellite skills stay open to
+  that evolution (§8). Mechanically this is a Hermes profile config
+  decision, not something set in this skill's own frontmatter: per
+  `agent/skill_utils.py`'s `is_external_skill_path()`, a skill directory
+  under `skills.external_dirs`, or a trusted project-local skills dir
+  (`get_project_skills_dirs()`), is treated as externally-owned —
+  discoverable and still editable by a foreground, user-directed tool
+  call, but read-only to the autonomous curator/background-review pass.
+  Whoever owns the target Hermes profile's `config.yaml` needs to confirm
+  this skill's install path resolves under one of those two — this is an
+  operator action, not something `qkeee-erp-associate`'s own code can
+  enforce on itself.

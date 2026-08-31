@@ -19,18 +19,17 @@ Env/credential model (tagged, not fixed dev/test/qa/prod):
   QKEEE_ERP_<TAG>_BASE_URL
   QKEEE_ERP_<TAG>_API_KEY
   QKEEE_ERP_<TAG>_API_SECRET
-  QKEEE_ERP_<TAG>_DEBUG          (optional, default false)
   QKEEE_ERP_<TAG>_REQUESTED_BY   (optional, no default — mutate errors
                                    without it unless overridden per call)
 
 <TAG> defaults to "DEFAULT" if the user didn't name one at install.
-DEBUG/REQUESTED_BY are per-tag deliberately — a profile juggling
-`hrms-demo` and `prod` can debug-log one and not the other, and
-attribute writes to a different requester per environment, without one
-global toggle bleeding across both. Active tag + read-only/read-write mode
-stay non-secret and live in metadata.hermes.config (qkeee_erp.active_env,
-qkeee_erp.mode) — those two are deliberately still global: an environment
-switch should never silently also change write access.
+REQUESTED_BY is per-tag deliberately — a profile juggling `hrms-demo` and
+`prod` can attribute writes to a different requester per environment,
+without one global default bleeding across both. Active tag + read-only/
+read-write mode stay non-secret and live in metadata.hermes.config
+(qkeee_erp.active_env, qkeee_erp.mode) — those two are deliberately still
+global: an environment switch should never silently also change write
+access.
 
 Non-negotiable: never issue a write call while mode == "read-only". This is
 enforced in mutate_resource() below, not just in the calling domain's
@@ -46,10 +45,19 @@ record_comment()/mutate_resource() below.
 
 Every write is additionally logged to the `Qkeee Bot Audit Log` doctype
 (two-phase: an `Attempted` row inserted before the real write, updated to
-`Success`/`Failure` after), and every read is logged there too when
-`debug=True` is passed. Audit Log's `session` field is a plain string
-correlator, with no doctype of its own behind it. All of this is
-best-effort — see "Audit logging is best-effort, not a gate" below.
+`Success`/`Failure` after), and every read is logged there too, always
+(Phase 5 GRC hardening, consolidation plan §9 — reads were previously
+debug-gated; there is no debug flag left, logging is unconditional).
+Audit Log's `session` field is a plain string correlator, with no doctype
+of its own behind it. All of this is best-effort — see "Audit logging is
+best-effort, not a gate" below.
+
+RBAC pre-check (Phase 5 GRC hardening, consolidation plan §9): every read
+and write with a `requested_by` resolves that identity as a real ERPNext
+`User` and confirms via ERPNext's own `frappe.client.has_permission` that
+they actually hold the permission the call needs — on every environment
+tag, not PROD only. See `_validate_prod_requester()` below (name kept
+from its Phase 1 PROD-only origin; behavior is now universal).
 
 Write-allowlist gate (Phase 1, new — see consolidation plan section 6):
 domain modules under `scripts/domains/*.py` each declare an
@@ -133,10 +141,12 @@ AUDIT_EXEMPT_DOCTYPES = {
     "Comment",
 }
 
-# Doctypes exempt from the PROD requester-validation gate below (see
-# _validate_prod_requester()). Mandatory, not optional, for the same
-# recursion reason AUDIT_EXEMPT_DOCTYPES exists: _validate_prod_requester()
-# itself calls resource_exists(tag, "User", requested_by), which calls
+# Doctypes exempt from the requester-validation gate below (see
+# _validate_prod_requester() — name kept from its Phase 1 PROD-only
+# origin; the gate itself now runs on every environment tag, per Phase 5
+# GRC hardening). Mandatory, not optional, for the same recursion reason
+# AUDIT_EXEMPT_DOCTYPES exists: _validate_prod_requester() itself calls
+# resource_exists(tag, "User", requested_by), which calls
 # get_resource(tag, "User", ...) — without "User" here, validating a
 # requester would recurse into validating the requester's own existence
 # check forever. "DocType"/"Role" are exempt for a related reason: they're
@@ -213,10 +223,6 @@ class DoctypeNotAllowedError(ConnectorError):
 def _tag_env_var(tag: str, suffix: str) -> str:
     sanitized = "".join(c if c.isalnum() else "_" for c in tag.upper()) or "DEFAULT"
     return f"QKEEE_ERP_{sanitized}_{suffix}"
-
-
-def _parse_bool_env(raw: str) -> bool:
-    return (raw or "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _is_prod_tag(tag: str) -> bool:
@@ -347,21 +353,38 @@ def check_user_permission_raw(tag: str, doctype: str, perm_type: str, requested_
 
 def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_type: str,
                               docname: str = None) -> None:
-    """The PROD requester-validation gate: no-op on a non-PROD tag (see
-    _is_prod_tag()); on a PROD tag, and for any doctype not in
-    PROD_GATE_EXEMPT_DOCTYPES, refuses to proceed unless `requested_by`
-    is (1) present — the QKEEE_ERP_<TAG>_REQUESTED_BY env-var default is
-    REFUSED here even if configured, a PROD call must pass an explicit,
-    freshly-validated requester every time, never fall back to a
-    standing default; (2) a real ERPNext User (resource_exists check);
-    and (3) actually holds `perm_type` on `doctype`/`docname` per
-    ERPNext's own permission check (check_user_permission()). Raises
-    UnvalidatedProdRequesterError on any failure — fails closed, never
-    proceeds unverified. Called from query_resource()/get_resource()/
+    """The requester-validation gate (Phase 5 GRC hardening, consolidation
+    plan §9 — "RBAC pre-check, every environment"; name kept from its
+    Phase 1 PROD-only origin, behavior is now universal).
+
+    No-op for any doctype in PROD_GATE_EXEMPT_DOCTYPES, on every tag.
+    Otherwise:
+
+    - Presence of `requested_by` is mandatory ONLY on a PROD tag (see
+      _is_prod_tag()) — same as Phase 1: the QKEEE_ERP_<TAG>_REQUESTED_BY
+      env-var default is REFUSED here even if configured, a PROD call
+      must pass an explicit, freshly-validated requester every time,
+      never fall back to a standing default. On a non-PROD tag a missing
+      `requested_by` is still a no-op — presence stays optional there
+      (e.g. a core-level/admin call with no business requester), matching
+      existing non-PROD behavior.
+    - Whenever `requested_by` IS present — on ANY tag, PROD or not — it is
+      validated: (1) a real ERPNext User (resource_exists check), and (2)
+      actually holds `perm_type` on `doctype`/`docname` per ERPNext's own
+      permission check (check_user_permission()). This is the universal
+      part: previously this validation only ran on PROD tags at all; now
+      supplying a requester on any tag gets it checked, closing the gap
+      where a bogus/unauthorized requester was silently accepted outside
+      PROD.
+
+    Raises UnvalidatedProdRequesterError on any failure — fails closed,
+    never proceeds unverified. Called from query_resource()/get_resource()/
     run_query_report()/mutate_resource() — every read and write."""
-    if not _is_prod_tag(tag) or doctype in PROD_GATE_EXEMPT_DOCTYPES:
+    if doctype in PROD_GATE_EXEMPT_DOCTYPES:
         return
     if not requested_by:
+        if not _is_prod_tag(tag):
+            return
         raise UnvalidatedProdRequesterError(
             f"Refusing this call against '{doctype}' on tag '{tag}': it looks like a "
             f"PRODUCTION environment (tag name matches /prod/i) and no requester was "
@@ -375,17 +398,17 @@ def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_typ
         raise UnvalidatedProdRequesterError(
             f"Refusing this call against '{doctype}' on tag '{tag}': requester "
             f"'{requested_by}' is not a known ERPNext User. Never proceed with an "
-            f"unvalidated channel identity on PROD — confirm the real ERPNext user "
-            f"id/email before retrying."
+            f"unvalidated channel identity — confirm the real ERPNext user id/email "
+            f"before retrying."
         )
     allowed = check_user_permission(tag, doctype, perm_type, requested_by, docname)
     if not allowed:
         raise UnvalidatedProdRequesterError(
-            f"Refusing this call: requester '{requested_by}' does not have '{perm_type}' "
-            f"permission on '{doctype}'"
+            f"Refusing this call on tag '{tag}': requester '{requested_by}' does not "
+            f"have '{perm_type}' permission on '{doctype}'"
             f"{f' (record {docname!r})' if docname else ''} per ERPNext's own permission "
-            f"check (frappe.client.has_permission). Refusing on PROD tag '{tag}' rather "
-            f"than proceeding on an unauthorized request."
+            f"check (frappe.client.has_permission). Refusing rather than proceeding on "
+            f"an unauthorized request."
         )
 
 
@@ -466,10 +489,10 @@ def get_env_config(tag: str = "default") -> dict:
     wire in the clear. Set QKEEE_ERP_<TAG>_ALLOW_INSECURE=1 to override
     for a genuine local/dev http instance.
 
-    Also resolves two OPTIONAL per-tag values — QKEEE_ERP_<TAG>_DEBUG and
-    QKEEE_ERP_<TAG>_REQUESTED_BY — as `debug_default`/`requested_by_default`
-    on the returned dict. Unlike BASE_URL/API_KEY/API_SECRET these are
-    never required and never raise if absent (default False / "").
+    Also resolves an OPTIONAL per-tag value — QKEEE_ERP_<TAG>_REQUESTED_BY
+    — as `requested_by_default` on the returned dict. Unlike BASE_URL/
+    API_KEY/API_SECRET this is never required and never raises if absent
+    (default "").
     """
     env = _qkeee_env()
     base_url = env.get(_tag_env_var(tag, "BASE_URL"))
@@ -506,7 +529,6 @@ def get_env_config(tag: str = "default") -> dict:
         "base_url": base_url,
         "api_key": api_key,
         "api_secret": api_secret,
-        "debug_default": _parse_bool_env(env.get(_tag_env_var(tag, "DEBUG"))),
         "requested_by_default": env.get(_tag_env_var(tag, "REQUESTED_BY"), ""),
     }
 
@@ -558,7 +580,7 @@ def health_check(tag: str = "default") -> dict:
 
 
 def query_resource(tag: str, doctype: str, filters: list = None, fields: list = None, limit: int = 20,
-                    *, debug: bool = False, session_id: str = None, domain_code: str = None,
+                    *, session_id: str = None, domain_code: str = None,
                     requested_by: str = None, channel: str = None, channel_metadata: dict = None) -> dict:
     """Generic resource query — read any DocType with filters/fields.
 
@@ -566,12 +588,12 @@ def query_resource(tag: str, doctype: str, filters: list = None, fields: list = 
     back to `limit` — callers get an explicit `has_more` flag instead of a
     result set that's silently incomplete.
 
-    `debug=True` additionally logs this read to Qkeee Bot Audit Log (best-
-    effort). Read logging is debug-gated, not unconditional like writes —
-    a read-heavy domain (e.g. MIS) can generate far more Read calls than
-    any other action type, so logging every read unconditionally would
-    have made Audit Log itself the volume/bloat problem the debug gate
-    exists to avoid.
+    Every read is logged to Qkeee Bot Audit Log (best-effort), unconditionally
+    — Phase 5 GRC hardening, consolidation plan §9: read logging was
+    previously debug-gated to avoid a read-heavy domain (e.g. MIS) making
+    Read rows the biggest volume source in the audit trail; the target
+    policy accepts that volume in exchange for an audit row on every
+    access, no exceptions.
     """
     _validate_prod_requester(tag, requested_by, doctype, "read")
     cfg = get_env_config(tag)
@@ -585,8 +607,7 @@ def query_resource(tag: str, doctype: str, filters: list = None, fields: list = 
     rows = result.get("data", [])
     has_more = len(rows) > limit
 
-    if debug:
-        _log_read(cfg, doctype, None, requested_by, session_id, domain_code, channel, channel_metadata)
+    _log_read(cfg, doctype, None, requested_by, session_id, domain_code, channel, channel_metadata)
 
     return {"data": rows[:limit], "has_more": has_more, "limit": limit}
 
@@ -614,7 +635,7 @@ def _strip_noise(obj):
 
 
 def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
-                  *, debug: bool = False, session_id: str = None, domain_code: str = None,
+                  *, session_id: str = None, domain_code: str = None,
                   requested_by: str = None, channel: str = None, channel_metadata: dict = None) -> dict:
     """Single-resource full-doc GET — the only way to get child-table rows.
 
@@ -629,9 +650,8 @@ def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
     strip_noise=True (default) drops audit/system metadata and
     presentation-only HTML fields before returning — see _NOISE_FIELDS.
 
-    `debug=True` logs this read to Qkeee Bot Audit Log, same as
-    query_resource() — see that function's docstring for why this is
-    debug-gated rather than unconditional.
+    Every read is logged to Qkeee Bot Audit Log, unconditionally — same as
+    query_resource(), see that function's docstring.
     """
     _validate_prod_requester(tag, requested_by, doctype, "read", docname=name)
     cfg = get_env_config(tag)
@@ -641,8 +661,7 @@ def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
     if strip_noise and data is not None:
         data = _strip_noise(data)
 
-    if debug:
-        _log_read(cfg, doctype, name, requested_by, session_id, domain_code, channel, channel_metadata)
+    _log_read(cfg, doctype, name, requested_by, session_id, domain_code, channel, channel_metadata)
 
     return {"data": data}
 
@@ -659,7 +678,7 @@ def resource_exists(tag: str, doctype: str, name: str) -> bool:
 
 
 def run_query_report(tag: str, report_name: str, filters: dict = None,
-                      *, debug: bool = False, session_id: str = None, domain_code: str = None,
+                      *, session_id: str = None, domain_code: str = None,
                       requested_by: str = None, channel: str = None, channel_metadata: dict = None) -> dict:
     """Run one of ERPNext's own built-in reports server-side (Query Report
     or Script Report) via frappe.desk.query_report.run, instead of hand-
@@ -674,7 +693,7 @@ def run_query_report(tag: str, report_name: str, filters: dict = None,
     since this generic endpoint doesn't self-document per-report filter
     schemas.
 
-    `debug=True` logs this read to Qkeee Bot Audit Log, against
+    Every read is logged to Qkeee Bot Audit Log, unconditionally, against
     reference_doctype "Report" with reference_name=report_name, since a
     query report isn't itself a DocType record being read.
     """
@@ -686,8 +705,7 @@ def run_query_report(tag: str, report_name: str, filters: dict = None,
     result = _request(cfg, "GET", "/api/method/frappe.desk.query_report.run", params=params)
     message = result.get("message", {})
 
-    if debug:
-        _log_read(cfg, "Report", report_name, requested_by, session_id, domain_code, channel, channel_metadata)
+    _log_read(cfg, "Report", report_name, requested_by, session_id, domain_code, channel, channel_metadata)
 
     return {
         "report_name": report_name,
@@ -852,8 +870,10 @@ def _audit_submit(cfg: dict, log_name: str) -> bool:
 
 def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id: str, domain_code: str,
               channel: str = None, channel_metadata: dict = None) -> None:
-    """Best-effort insert+submit Audit Log row for a debug-mode read.
-    Insert/update are collapsed into one status ("Success") since a read
+    """Best-effort insert+submit Audit Log row for a read — called
+    unconditionally by query_resource()/get_resource()/run_query_report(),
+    Phase 5 GRC hardening (consolidation plan §9). Insert/update are
+    collapsed into one status ("Success") since a read
     has no in-flight state to crash into, but submit still runs so the
     row doesn't sit as an unsubmitted Draft like two-phase write rows
     would if left unfinished."""
@@ -1284,8 +1304,6 @@ def _cli():
     p.add_argument("--requested-by",
                    help="ERPNext user id/email of the human requesting the change, for THIS call "
                         "only — overrides QKEEE_ERP_<TAG>_REQUESTED_BY, doesn't replace it")
-    p.add_argument("--debug", action="store_true",
-                   help="force debug logging on for THIS call only")
     p.add_argument("--session-id", help="plain string correlator threaded into Qkeee Bot Audit Log rows")
     p.add_argument("--domain-code", help="e.g. qkeee-erp-associate — threaded into audit rows")
     p.add_argument("--channel", help="conversation surface, e.g. Discord/Telegram/WhatsApp/Email/Web/Slack/CLI/API/Other")
@@ -1350,16 +1368,14 @@ def _cli():
     # resolve_requested_by(args.tag, ...) -> _is_prod_tag(None) -> a
     # TypeError from re.search(pattern, None). Every other command's
     # behavior is unchanged.
-    tag_debug_default, tag_requested_by_default = False, ""
-    effective_debug, effective_requested_by = False, ""
+    tag_requested_by_default = ""
+    effective_requested_by = ""
     if args.command in ("query", "get", "report", "mutate", "gated-mutate"):
         try:
             _tag_cfg = get_env_config(args.tag)
-            tag_debug_default = _tag_cfg["debug_default"]
             tag_requested_by_default = _tag_cfg["requested_by_default"]
         except ConnectorError:
             pass
-        effective_debug = args.debug or tag_debug_default
         effective_requested_by = resolve_requested_by(args.tag, args.requested_by, tag_requested_by_default)
 
     if (args.command in ("query", "get", "report", "mutate", "gated-mutate") and _is_prod_tag(args.tag)
@@ -1385,20 +1401,20 @@ def _cli():
             filters = _parse_json_arg("--filters", args.filters, list)
             fields = _parse_json_arg("--fields", args.fields, list)
             print(json.dumps(query_resource(args.tag, args.doctype, filters, fields, args.limit,
-                                             debug=effective_debug, session_id=args.session_id,
+                                             session_id=args.session_id,
                                              domain_code=args.domain_code,
                                              requested_by=effective_requested_by,
                                              channel=args.channel, channel_metadata=channel_metadata), indent=2))
         elif args.command == "get":
             print(json.dumps(get_resource(args.tag, args.doctype, args.name, not args.no_strip,
-                                           debug=effective_debug, session_id=args.session_id,
+                                           session_id=args.session_id,
                                            domain_code=args.domain_code,
                                            requested_by=effective_requested_by,
                                            channel=args.channel, channel_metadata=channel_metadata), indent=2))
         elif args.command == "report":
             filters = _parse_json_arg("--filters", args.filters, dict)
             print(json.dumps(run_query_report(args.tag, args.report_name, filters,
-                                               debug=effective_debug, session_id=args.session_id,
+                                               session_id=args.session_id,
                                                domain_code=args.domain_code,
                                                requested_by=effective_requested_by,
                                                channel=args.channel, channel_metadata=channel_metadata), indent=2))

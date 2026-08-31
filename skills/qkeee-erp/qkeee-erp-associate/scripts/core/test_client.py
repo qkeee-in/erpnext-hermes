@@ -26,9 +26,13 @@ import client as ec
 from confirm_token import advisory_write_token
 
 
-class GetEnvConfigDebugRequestedByTests(unittest.TestCase):
-    """QKEEE_ERP_<TAG>_DEBUG / _REQUESTED_BY are optional, per-tag, and
-    must never block connection like BASE_URL/API_KEY/API_SECRET do."""
+class GetEnvConfigRequestedByTests(unittest.TestCase):
+    """QKEEE_ERP_<TAG>_REQUESTED_BY is optional, per-tag, and must never
+    block connection like BASE_URL/API_KEY/API_SECRET do.
+
+    QKEEE_ERP_<TAG>_DEBUG / `debug_default` were removed in Phase 5 (GRC
+    hardening, consolidation plan §9): read audit logging is now always
+    on, so there is no debug flag left to resolve."""
 
     ENV_BASE = {
         "QKEEE_ERP_DEFAULT_BASE_URL": "https://org.erpnext.com",
@@ -39,39 +43,25 @@ class GetEnvConfigDebugRequestedByTests(unittest.TestCase):
     def test_defaults_when_absent(self):
         with patch.dict("os.environ", self.ENV_BASE, clear=True):
             cfg = ec.get_env_config("default")
-        self.assertEqual(cfg["debug_default"], False)
         self.assertEqual(cfg["requested_by_default"], "")
+        self.assertNotIn("debug_default", cfg)
 
     def test_resolves_per_tag_values(self):
-        env = dict(self.ENV_BASE, QKEEE_ERP_DEFAULT_DEBUG="true",
-                   QKEEE_ERP_DEFAULT_REQUESTED_BY="priya@org.com")
+        env = dict(self.ENV_BASE, QKEEE_ERP_DEFAULT_REQUESTED_BY="priya@org.com")
         with patch.dict("os.environ", env, clear=True):
             cfg = ec.get_env_config("default")
-        self.assertEqual(cfg["debug_default"], True)
         self.assertEqual(cfg["requested_by_default"], "priya@org.com")
-
-    def test_debug_env_truthy_variants(self):
-        for raw, expected in (("1", True), ("true", True), ("True", True),
-                               ("yes", True), ("on", True), ("0", False),
-                               ("false", False), ("", False), ("nope", False)):
-            env = dict(self.ENV_BASE, QKEEE_ERP_DEFAULT_DEBUG=raw)
-            with patch.dict("os.environ", env, clear=True):
-                cfg = ec.get_env_config("default")
-            self.assertEqual(cfg["debug_default"], expected, f"raw={raw!r}")
 
     def test_different_tags_are_independent(self):
         env = dict(self.ENV_BASE,
                     QKEEE_ERP_QA_BASE_URL="https://qa.erpnext.com",
                     QKEEE_ERP_QA_API_KEY="qa-key",
                     QKEEE_ERP_QA_API_SECRET="qa-secret",
-                    QKEEE_ERP_QA_DEBUG="true",
                     QKEEE_ERP_QA_REQUESTED_BY="qa-user@org.com")
         with patch.dict("os.environ", env, clear=True):
             default_cfg = ec.get_env_config("default")
             qa_cfg = ec.get_env_config("qa")
-        self.assertEqual(default_cfg["debug_default"], False)
         self.assertEqual(default_cfg["requested_by_default"], "")
-        self.assertEqual(qa_cfg["debug_default"], True)
         self.assertEqual(qa_cfg["requested_by_default"], "qa-user@org.com")
 
 
@@ -195,13 +185,18 @@ class RunQueryReportTests(unittest.TestCase):
         self.assertEqual(mock_request.call_args[1]["params"]["report_name"], "Sales Order Analysis")
         self.assertEqual(result["report_name"], "Sales Order Analysis")
         self.assertEqual(result["result"], [{"customer": "Acme"}])
-        mock_log_read.assert_not_called()
+        # Phase 5 GRC hardening (consolidation plan §9): read logging is
+        # unconditional now, not debug-gated — every read logs.
+        mock_log_read.assert_called_once()
 
+    @unittest.mock.patch.object(erp_client, "check_user_permission", return_value=True)
+    @unittest.mock.patch.object(erp_client, "resource_exists", return_value=True)
     @unittest.mock.patch.object(erp_client, "_log_read")
     @unittest.mock.patch.object(erp_client, "_request", return_value={"message": {}})
     @unittest.mock.patch.object(erp_client, "get_env_config", return_value={"tag": "default"})
-    def test_debug_true_logs_against_report_doctype(self, mock_get_env_config, mock_request, mock_log_read):
-        erp_client.run_query_report("default", "Trial Balance", debug=True, requested_by="user@example.com")
+    def test_read_logs_against_report_doctype(self, mock_get_env_config, mock_request, mock_log_read,
+                                               mock_resource_exists, mock_check_perm):
+        erp_client.run_query_report("default", "Trial Balance", requested_by="user@example.com")
         mock_log_read.assert_called_once()
         self.assertEqual(mock_log_read.call_args[0][1], "Report")
         self.assertEqual(mock_log_read.call_args[0][2], "Trial Balance")
@@ -280,6 +275,11 @@ class TestGatedMutateResource(unittest.TestCase):
             mocked_request.assert_not_called()
 
     def test_succeeds_with_matching_fresh_token(self):
+        # Phase 5 GRC hardening (consolidation plan §9): the requester-
+        # permission check now runs on every tag, not PROD only — a
+        # write on non-PROD 'qa' with a requested_by present still gets
+        # validated as a real User with has_permission, so those two
+        # need mocking here even though 'qa' isn't PROD.
         issued_at = int(time.time())
         payload = {"lead_name": "Acme"}
         token = advisory_write_token("create", "CRM Lead", None, payload, "priya@org.com", issued_at)
@@ -287,6 +287,8 @@ class TestGatedMutateResource(unittest.TestCase):
                 patch.object(ec, "_audit_insert", return_value=None), \
                 patch.object(ec, "_audit_update", return_value=False), \
                 patch.object(ec, "_audit_submit", return_value=False), \
+                patch.object(ec, "resource_exists", return_value=True), \
+                patch.object(ec, "check_user_permission", return_value=True), \
                 patch.dict("os.environ", self.QA_ENV, clear=True), \
                 patch.object(ec, "_request", return_value={"data": {"name": "CRM-LEAD-0001"}}) as mocked:
             result = ec.gated_mutate_resource("qa", "CRM Lead", "create", payload, mode="read-write",
@@ -387,11 +389,14 @@ class IsProdTagTests(unittest.TestCase):
 
 
 class ValidateProdRequesterTests(unittest.TestCase):
-    """_validate_prod_requester() is the mandatory PROD gate: no-op off
-    PROD/exempt doctypes; on PROD, requires an explicit requested_by,
-    validated as a real ERPNext User, with actual has_permission on the
-    doctype/action — never falls back to a tag default, never proceeds
-    unverified."""
+    """_validate_prod_requester(): presence of requested_by stays
+    mandatory on PROD only (no-op with a missing requester off PROD/on
+    exempt doctypes). But per Phase 5 GRC hardening (consolidation plan
+    §9), whenever a requested_by IS present it is validated — as a real
+    ERPNext User, with actual has_permission on the doctype/action — on
+    EVERY tag, not PROD only. Never falls back to a tag default, never
+    proceeds unverified. See UniversalRequesterValidationTests below for
+    the non-PROD-with-a-requester cases this Phase 5 change adds."""
 
     def test_noop_on_non_prod_tag(self):
         with patch.object(ec, "resource_exists") as mocked_exists:
@@ -436,6 +441,45 @@ class ValidateProdRequesterTests(unittest.TestCase):
         # "client-a-prod" must gate too, not just an exact "prod" tag.
         with self.assertRaises(ec.UnvalidatedProdRequesterError):
             ec._validate_prod_requester("client-a-prod", None, "Sales Order", "read")
+
+
+class UniversalRequesterValidationTests(unittest.TestCase):
+    """Phase 5 GRC hardening (consolidation plan §9, "RBAC pre-check,
+    every environment"): supplying a requested_by on a NON-PROD tag now
+    gets the same real-User + has_permission validation PROD always got —
+    closing the prior gap where a bogus requester was silently accepted
+    off PROD."""
+
+    def test_noop_on_non_prod_with_no_requester(self):
+        # Presence stays optional off PROD — unchanged from Phase 1.
+        with patch.object(ec, "resource_exists") as mocked_exists:
+            ec._validate_prod_requester("qa", None, "Sales Order", "read")
+        mocked_exists.assert_not_called()
+
+    @patch.object(ec, "resource_exists", return_value=False)
+    def test_non_prod_refuses_unknown_user(self, mocked_exists):
+        with self.assertRaises(ec.UnvalidatedProdRequesterError) as ctx:
+            ec._validate_prod_requester("qa", "nobody@org.com", "Sales Order", "read")
+        mocked_exists.assert_called_once_with("qa", "User", "nobody@org.com")
+        self.assertIn("not a known ERPNext User", str(ctx.exception))
+
+    @patch.object(ec, "check_user_permission", return_value=False)
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_non_prod_refuses_when_permission_check_returns_false(self, mocked_exists, mocked_perm):
+        with self.assertRaises(ec.UnvalidatedProdRequesterError) as ctx:
+            ec._validate_prod_requester("qa", "priya@org.com", "Sales Order", "write", docname="SO-0001")
+        mocked_perm.assert_called_once_with("qa", "Sales Order", "write", "priya@org.com", "SO-0001")
+        self.assertIn("does not have 'write' permission", str(ctx.exception))
+
+    @patch.object(ec, "check_user_permission", return_value=True)
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_non_prod_proceeds_when_validated_and_permitted(self, mocked_exists, mocked_perm):
+        ec._validate_prod_requester("qa", "priya@org.com", "Sales Order", "read")  # no raise
+
+    def test_noop_on_exempt_doctype_on_non_prod_too(self):
+        with patch.object(ec, "resource_exists") as mocked_exists:
+            ec._validate_prod_requester("qa", "priya@org.com", "User", "read")
+        mocked_exists.assert_not_called()
 
 
 class ResolveRequestedByTests(unittest.TestCase):

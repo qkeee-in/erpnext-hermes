@@ -1,5 +1,57 @@
 # Changelog
 
+## Phase 5 (GRC hardening) — 2026-08-31
+
+Per the consolidation plan §9 ("GRC & compliance hardening") and §11 item 5
+("Harden GRC"). **Code-only** — no live ERPNext instance was touched;
+`scripts/core/client.py`'s unit tests (`scripts/core/test_client.py`) were
+run locally and pass (58 tests + 2 subtests → 71 across the module with
+`test_memory_promote.py`), nothing here was exercised against
+`demo.qkeee.in` or any other target.
+
+### `_validate_prod_requester()` — RBAC pre-check now runs on every tag
+
+Previously the requester-permission check (resolve `requested_by` as a
+real ERPNext `User`, then confirm `frappe.client.has_permission` via
+`check_user_permission()`) only ran when `_is_prod_tag(tag)` was true.
+Now: whenever a `requested_by` is present — on ANY tag — it gets that same
+validation. Presence of `requested_by` stays mandatory on PROD only
+(unchanged from Phase 1: the `QKEEE_ERP_<TAG>_REQUESTED_BY` env-var
+default is still refused on PROD, a PROD call must still pass an explicit
+requester). Function/exception/constant names
+(`_validate_prod_requester()`, `UnvalidatedProdRequesterError`,
+`PROD_GATE_EXEMPT_DOCTYPES`) are kept as-is from their Phase 1 PROD-only
+origin, per `references/00-conventions.md`'s GRC baseline, which already
+specced this landing under these same names — don't read the name as
+scope. This closes the prior gap where a bogus or unauthorized
+`requested_by` was silently accepted on any non-PROD tag.
+
+### Read audit logging — unconditional, `debug`/`_DEBUG` removed
+
+`query_resource()`, `get_resource()`, and `run_query_report()` now call
+`_log_read()` unconditionally. The `debug` keyword-only parameter on all
+three, `get_env_config()`'s `debug_default` field, the
+`QKEEE_ERP_<TAG>_DEBUG` env var, the CLI's `--debug` flag, and
+`_parse_bool_env()` (now dead once nothing else used it) are all removed
+— left as a no-op flag rather than a real toggle would have been more
+confusing than deleting it outright. No call site outside
+`scripts/core/client.py`/its own CLI passed `debug=`, so this needed no
+changes in `scripts/domains/*.py`.
+
+### Not touched this phase
+
+- `redact_pii()` — plan §9 confirms this was already single-source as of
+  Phase 1; no code change needed.
+- `non-erpnext-adapter.md` — already shipped (Phase 2).
+- Marking `qkeee-erp-associate` externally-owned/pinned against Hermes'
+  autonomous background-review pass — this is a target Hermes profile's
+  `config.yaml` decision (`skills.external_dirs` / trusted project-local
+  skill dirs, see `agent/skill_utils.py`'s `is_external_skill_path()`),
+  not something this skill's own code or frontmatter can set on itself.
+  Documented as an operator action item in `references/00-conventions.md`;
+  whoever owns the deployment's Hermes profile config needs to confirm
+  this skill's install path resolves under one of those two.
+
 ## Phase 3 (doctype migration) — 2026-08-31
 
 Per the consolidation plan §7 ("Doctype cleanup") and §11 item 3
