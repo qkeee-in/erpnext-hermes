@@ -1,5 +1,53 @@
 # Changelog
 
+## Phase 8 (handoff) — 2026-08-31
+
+Per the consolidation plan §11 item 8 ("update the repo index/README, single
+changelog entry noting the 11→1 consolidation and the doctype removal").
+This is that entry — a summary for anyone landing on this file without the
+plan doc in hand; the phase-by-phase detail below (Phases 7 down to 3)
+remains the record of *how* each step was done.
+
+**What changed, end to end:** the `qkeee-erp` skill family — 11 separate
+directories (`qkeee-erp-frappe-core`, `-bot-init`, `-accounts-executive`,
+`-hr-associate`, `-inventory`, `-procurement`, `-sales`,
+`-fixed-asset-manager`, `-mis-analyst`, `-system-admin`,
+`-doc-extraction`), each a synced-by-script near-copy of the same
+connector — is now one skill, `qkeee-erp-associate`: one `client.py`
+(RBAC pre-check + write-allowlist gate + PII redaction + audit logging,
+all unconditional on every tag, not just PROD/debug), one persona voice,
+and per-domain procedure/logic split into `references/domains/*.md` +
+`scripts/domains/*.py` (`hr_payroll`, `accounts`, `mis`, `sales`,
+`procurement`, `inventory`, `fixed_assets`, `system_admin`, plus new
+`manufacturing` coverage and `doc-extraction`, neither of which existed
+as a working write path before). `sync_to_personas.py` and the 10
+superseded directories are gone (Phase 6); CI's `sync-check` job (which
+called it) is removed. CI's `tests` job was also silently broken since
+Phase 6 — the `unittest discover -p "test_*.py"` command it invoked from
+`scripts/` never matched anything, because the associate's suites live
+one level down in `scripts/core/`/`scripts/domains/` and use bare local
+imports (`import client`, not `from core import client`) that only
+resolve via `conftest.py`'s sys.path bootstrap — a pytest-only mechanism,
+per that file's own docstring (Phase 7). Fixed by switching the job to
+`python -m pytest scripts` (run from the skill root, matching the
+documented invocation), confirmed locally: 77 tests + 20 subtests pass.
+
+**Doctype removal:** `Qkeee Bot Persona` (write-only, never read back,
+never foreign-keyed to Audit Log) is gone — schema + `PERSONA_MANIFEST`
+dropped, existing-row schema exported to Phase 3's entry below for manual
+audit reference. The debug-only `Qkeee Bot Session`/`Qkeee Bot Message`
+doctypes went with the `_DEBUG` flag they depended on (Phase 5 — read
+audit logging is now unconditional, so there's no verbose/quiet mode left
+to gate them). `Qkeee Bot Audit Log` is the sole surviving audit doctype;
+its `persona_code` field is repointed to `domain_code`.
+
+**Repo-level docs updated to match:** top-level `README.md` (directory
+layout, skill/domain table, credentials section, audit-trail doctype
+table, safety/governance section — all previously describing the 11-skill
+layout), `distribution.yaml`'s description, and `.github/workflows/ci.yml`
+(dropped the dead sync-check job, fixed the tests job's test-discovery
+guard). No live ERPNext instance touched by this phase.
+
 ## Phase 7 (test & validate) — 2026-08-31
 
 Per the consolidation plan §11 item 4 ("run an end-to-end smoke pass per

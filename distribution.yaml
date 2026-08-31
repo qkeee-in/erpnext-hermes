@@ -1,6 +1,6 @@
 name: ERPNext Hermes Agent
 version: 0.1.0
-description: "Hermes Agent to manage one or more ERPNext instances. Consists of a mix of various function/department level skills like HR, Accounts, Taxation, Procurement, Sales executives including an MIS analyst and overall erp system admin."
+description: "Hermes Agent to manage one or more ERPNext instances. Runs a single consolidated qkeee-erp-associate skill covering HR/Payroll, Accounts, Taxation, Procurement, Sales, Inventory, Fixed Assets, MIS reporting, Manufacturing, Doc Extraction, and overall ERP system admin."
 hermes_requires: ""
 author: "Qkeee"
 license: "MIT"
