@@ -1,0 +1,1 @@
+qkeee-erp env example-env: Frappe 15.4/ERPNext 15.2 (illustrative example), custom app: crm — full notes: skill qkeee-erp-learned/example-env

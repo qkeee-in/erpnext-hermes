@@ -13,6 +13,23 @@ checkpoints:
   min_interval_hours: 24
 agent:
   max_turns: 50
+# skills.external_dirs marks skills/qkeee-erp/ (the master qkeee-erp-*
+# family, including qkeee-erp-associate) as externally owned: Hermes'
+# autonomous background-review/curator pass treats anything under an
+# external dir as read-only and never autonomously edits/patches/deletes
+# it (tools/skill_manager_tool.py's _background_review_write_guard, "external
+# skills are read-only to the curator" — confirmed by direct inspection of
+# hermes-agent during the qkeee-erp-associate consolidation, Phase 4).
+# A foreground, user-directed edit is unaffected; only the autonomous pass
+# is blocked. This entry was documented as already in place in README.md/
+# profile.md but was missing from this file — added here rather than left
+# as a doc/config mismatch. Relative path, resolved against this profile's
+# own HERMES_HOME (this repo, via the symlinked live-profile mount — see
+# README.md's "Live Hermes profile" note), never a machine-local absolute
+# path.
+skills:
+  external_dirs:
+    - skills/qkeee-erp
 web:
   backend: tavily
   use_gateway: false

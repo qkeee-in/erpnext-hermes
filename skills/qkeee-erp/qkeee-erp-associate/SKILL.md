@@ -60,10 +60,20 @@ action:
    for this tag (Hermes' own skill discovery surfaces it if so). If
    present, latch it like any other reference — it carries this
    environment's cataloged Frappe/ERPNext/app versions and custom-doctype
-   notes from a prior session. If absent, run the environment-assessment
-   procedure (`references/02-environment-assessment.md`) before anything
-   substantive, and note that its findings aren't durable yet until
-   Phase 4's memory wiring lands (see that file for the current state).
+   notes from a prior session. If absent (or stale — see
+   `02-environment-assessment.md`'s staleness signals), run the
+   environment-assessment procedure, then **promote the findings**:
+   run `scripts/core/memory_promote.py` (or call its
+   `build_promotion_plan()` directly) with the raw findings — it redacts
+   PII, formats the `SKILL.md`/`references/*.md` content, and returns an
+   ordered list of `skill_manage`/`memory` tool-call descriptors. Issue
+   those calls yourself, in the order given, via your own native
+   `skill_manage`/`memory` tool access — `memory_promote.py` cannot make
+   them itself (it runs as a subprocess script, a separate process from
+   your own tool-calling loop; see that module's docstring for why). Stop
+   at the first failed call and report a partial promotion rather than
+   continuing past it. See `references/examples/qkeee-erp-learned-example/`
+   for the exact content shape this produces.
 3. **Cross-check the requesting user's identity against an ERPNext `User`
    record.** Resolve the inbound chat/email identity to a real ERPNext
    user id/email — refuse to proceed on a requester this skill cannot
@@ -130,23 +140,69 @@ all** (a third-party tool, an internal API) follows
   eleven — `mis` registers an empty allowlist, `doc-extraction` has no
   connector, `manufacturing` has no module yet).
 - `scripts/init_bot.py` — admin-invoked, one-time provisioning helper
-  (not part of this associate's normal conversational flow).
+  (not part of this associate's normal conversational flow); provisions
+  the `Qkeee Bot` Role and `Qkeee Bot Audit Log` doctype only as of
+  Phase 3 (no persona manifest, no bot-user path — see `CHANGELOG.md`).
+- `scripts/doctype_defs.py` — the Role/Audit-Log create payloads
+  `init_bot.py` provisions from.
+- `scripts/core/memory_promote.py` — Phase 4: redacts + formats findings
+  into `qkeee-erp-learned/<env-tag>` content and a `skill_manage`/`memory`
+  tool-call plan (see activation step 2 above). Does not call those tools
+  itself — see the module's own docstring for why it can't.
+- `references/examples/qkeee-erp-learned-example/` — the exact file
+  shapes `memory_promote.py` produces, generated (not hand-written) from
+  illustrative findings — no live `skill_manage` call was exercised to
+  create it; see that directory's `README.md`.
+- `CHANGELOG.md` — doctype migration history (Phase 3: `Qkeee Bot Persona`
+  removal, `persona_code`→`domain_code` rename), kept for manual-audit
+  reference.
 - `qkeee-erp-associate.env.example` — template for `$HERMES_HOME/qkeee-erp.env`.
+
+## Governance: this skill is externally-owned, not curator-managed
+
+Per the consolidation plan §8's governance split and §9's last bullet:
+this shipped skill must stay closed to Hermes' autonomous background-
+review pass (which may otherwise "improve" its audit/RBAC/redaction
+logic unsupervised), while the `qkeee-erp-learned/*` satellite skills
+stay open to that same evolution — that's the whole point of the split.
+Confirmed by direct inspection of `hermes-agent`'s
+`tools/skill_manager_tool.py`: the mechanism is `skills.external_dirs` in
+`config.yaml` (**a config entry, not a frontmatter flag** — skill_usage.py
+deliberately keeps this kind of policy out of user-authored SKILL.md
+content), which the background-review write guard
+(`_background_review_write_guard`) checks first and refuses ANY
+autonomous `edit`/`patch`/`delete`/`write_file`/`remove_file` against,
+unconditionally — "external skills are read-only to the curator." This
+repo's own `config.yaml` now lists `skills/qkeee-erp` under
+`skills.external_dirs`, which covers this skill (a subdirectory of it)
+the same way it already covered the ten superseded skills — see the
+Phase 4 report for the drift found (this entry was documented in
+`README.md`/`profile.md` as already in place but was actually missing
+from `config.yaml` until this pass). A foreground, user-directed edit
+(the normal way this skill evolves through Phases 3-8 and beyond) is
+unaffected — the guard only blocks the *autonomous* curator pass.
+Complementary belt-and-suspenders option for whoever operates the live
+profile: `hermes curator pin qkeee-erp-associate` additionally blocks
+`skill_manage(action="delete")` itself, not just autonomous writes — not
+applied here since it requires a live profile/CLI, not a repo-side config
+change; the `external_dirs` entry above is the one this pass could
+actually apply from the repo.
 
 ## Status note (read this before assuming a capability is fully live)
 
-This skill is mid-migration (consolidation plan, Phase 2 of 8 complete as
-of this file). `scripts/core/client.py` and the nine domain modules with a
+This skill is mid-migration (consolidation plan, Phase 4 of 8 complete as
+of this file). `scripts/core/client.py` and the domain modules with a
 write path are real, tested code (Phase 1). The domain reference files
-above are ported/authored (Phase 2, this pass) but several of their
-underlying `render_*.py` draft-staging scripts — the actual enforcement
-mechanism for "never write without an advisory-first draft" — are **not
-yet ported into this skill's `scripts/` directory**; they still only exist
-in the ten superseded skill directories this one will eventually replace.
+are ported/authored (Phase 2). Doctypes are migrated (Phase 3: `Qkeee Bot
+Persona` removed, `persona_code`→`domain_code`). Memory promotion exists
+as a redact+format+plan step (Phase 4, this pass) — but several
+`render_*.py` draft-staging scripts, the actual enforcement mechanism for
+"never write without an advisory-first draft," are **still not ported
+into this skill's `scripts/` directory**; they still only exist in the
+ten superseded skill directories this one will eventually replace.
 Universal RBAC-every-environment and always-on read audit logging are
 target-state GRC policy (see `00-conventions.md`), not yet wired into
-`core/client.py` (Phase 5). Doctype migration (dropping `Qkeee Bot
-Persona`) and Hermes-native memory wiring are Phases 3 and 4. Don't claim
-a capability is fully enforced in code until its owning phase has actually
-landed — say what's live vs. planned plainly, the same discipline
-`references/domains/grc-audit.md` asks of any GRC-framed conversation.
+`core/client.py` (Phase 5). Don't claim a capability is fully enforced in
+code until its owning phase has actually landed — say what's live vs.
+planned plainly, the same discipline `references/domains/grc-audit.md`
+asks of any GRC-framed conversation.
