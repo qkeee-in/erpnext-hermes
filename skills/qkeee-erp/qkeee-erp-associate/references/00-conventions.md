@@ -157,18 +157,30 @@ for the exact mechanism.
   detection field for later scanning (did every write really get
   confirmed), not a second gate; omitting it logs `"Not Confirmed"` rather
   than blocking the write.
-- **Bot account — mandatory, dedicated service identity.** The API
-  key/secret every domain authenticates with must be generated against a
-  dedicated ERPNext integration/bot user (e.g. `qkeee-erp-bot@<org>`),
-  never an individual's personal login — otherwise every write attributes
-  to that person regardless of who actually requested it, defeating
-  requester attribution. Check this proactively: if a `health` check's
-  `logged_in_as` looks like a real staff member, or the user is
-  configuring credentials for the first time without mentioning a
-  dedicated bot user, or a write behaves oddly around `Qkeee Bot Audit
-  Log` (a sign bot-init hasn't run on this target) — say so and suggest
-  `init_bot.py` (see `references/domains/system-admin.md` and
-  `scripts/init_bot.py`). A recommendation, not a blocker.
+- **Bot account — mandatory, dedicated service identity, and never
+  privileged.** The API key/secret every domain authenticates with must
+  be generated against a dedicated ERPNext integration/bot user (e.g.
+  `qkeee-erp-bot@<org>`), never an individual's personal login — otherwise
+  every write attributes to that person regardless of who actually
+  requested it, defeating requester attribution. **That bot user must also
+  never be `Administrator` and must never hold `System Manager`** (or any
+  other role granting a blanket Desk permission bypass) — live-confirmed:
+  under a privileged identity, ERPNext's `frappe.client.has_permission`
+  doesn't reliably discriminate by the `user=` param it's given, which
+  makes the RBAC pre-check below a no-op that silently rubber-stamps any
+  `requested_by`. `core/client.py` enforces this in code: a live probe
+  (`verify_rbac_precheck_reliable()`) runs per tag and, if the bot
+  identity is privileged or the probe shows the check doesn't
+  discriminate, every write is refused with `PrivilegedBotAccountError`
+  until the bot account is fixed — this is a blocker, not a courtesy, and
+  is a **different** failure mode than the "not a personal login" check
+  below, which is only a recommendation. Check both proactively: if a
+  `health` check's `logged_in_as` looks like a real staff member, or its
+  `rbac_precheck_reliable` field is `false`, or the user is configuring
+  credentials for the first time without mentioning a dedicated bot user,
+  or a write behaves oddly around `Qkeee Bot Audit Log` (a sign bot-init
+  hasn't run on this target) — say so and suggest `init_bot.py` (see
+  `references/domains/system-admin.md` and `scripts/init_bot.py`).
 - **A "success" from a best-effort write is not proof it landed** — every
   best-effort call into the `Qkeee Bot *` doctypes swallows its own
   `ConnectorError` by design (a target instance that hasn't run bot-init

@@ -22,6 +22,22 @@ Requires an ELEVATED (System Manager/Administrator) API key for the
 target tag — creating a DocType/Role record needs permission the shared
 qkeee-erp-bot@<org> steady-state service account should not hold.
 
+**The steady-state bot account this provisions FOR must itself never be
+Administrator or hold System Manager once it's created and switched to.**
+Live-confirmed: under a privileged bot identity, ERPNext's
+frappe.client.has_permission doesn't reliably discriminate by the `user=`
+param it's given, which makes core.client's RBAC pre-check
+(_validate_prod_requester()) a no-op — see core/client.py's
+verify_rbac_precheck_reliable() / PrivilegedBotAccountError. This script
+runs under a DIFFERENT (elevated) identity than that steady-state account
+and has no way to provision or verify the steady-state account's own key
+directly (no --bot-email path exists here yet). Once that account's
+credentials are configured in qkeee-erp.env, run `health` under THEM (not
+under this script's elevated key) and confirm the output's
+`rbac_precheck_reliable` is `true` before treating the environment as
+ready for real writes — see run_real()'s final step below for the exact
+reminder printed.
+
 Usage:
     python init_bot.py --tag qa --requested-by admin@org.com --dry-run
     python init_bot.py --tag qa --requested-by admin@org.com \\
@@ -232,6 +248,20 @@ def run_real(tag: str, requested_by: str, confirm_token: str, issued_at: int) ->
         "qkeee_env_file_created": env_created,
     }
     print(json.dumps(summary, indent=2))
+
+    _step("Before going live — steady-state bot account check")
+    print(
+        "This run provisioned the Role/DocType under THIS script's own elevated "
+        "credentials, not the steady-state bot account. Before treating this "
+        "environment as ready for real writes:\n"
+        "  1. Confirm the steady-state QKEEE_ERP_<TAG>_API_KEY/SECRET in "
+        "qkeee-erp.env belong to a dedicated bot user that is NOT Administrator "
+        "and does NOT hold System Manager.\n"
+        "  2. Run `python core/client.py --tag " + tag + " health` under THOSE "
+        "credentials and confirm the output's rbac_precheck_reliable is true. "
+        "If it's false, every write on this tag will be refused "
+        "(PrivilegedBotAccountError) until the bot account's roles are fixed."
+    )
     return summary
 
 

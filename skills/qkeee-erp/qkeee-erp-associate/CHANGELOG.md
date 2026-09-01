@@ -1,5 +1,44 @@
 # Changelog
 
+## RBAC pre-check reliability guard — 2026-09-01
+
+Fix for a gap flagged and live-confirmed against a real ERPNext instance
+(see the consolidation plan's §12): under a privileged (Administrator or
+System-Manager-holding) bot identity, ERPNext's `frappe.client.has_permission`
+does not reliably discriminate by the `user=` param it's given — it can
+return `true` for a deliberately nonexistent user against a
+System-Manager-only doctype. That makes `_validate_prod_requester()`'s RBAC
+pre-check a no-op under such an identity: it silently rubber-stamps any
+`requested_by` rather than actually checking it.
+
+**`core/client.py`:** added `verify_rbac_precheck_reliable()`, combining a
+static identity check (the connector's own bot account isn't `Administrator`
+and doesn't hold `System Manager`) with a live per-tag probe
+(`_probe_rbac_precheck_discriminates()` — asks `has_permission` about a
+guaranteed-bogus user against `Role`/`write`, expects `false`). Wired into
+`_validate_prod_requester()`: an unreliable pre-check now fails closed on
+every write (`PrivilegedBotAccountError`) and warns once per tag on reads,
+rather than silently trusting a result that's been shown not to discriminate.
+`health_check()` surfaces the same check as `rbac_precheck_reliable` +
+`rbac_precheck_warning`. Both underlying checks are cached per tag per
+process — one extra round trip per tag, not per call.
+
+**`init_bot.py`:** module docstring and `run_real()`'s final step now spell
+out that this script's own elevated credentials are not the steady-state
+bot account, and that whoever configures that account's real credentials
+must run `health` under them and confirm `rbac_precheck_reliable: true`
+before treating the environment as ready for real writes.
+
+**`00-conventions.md`:** the bot-account bullet now states explicitly that
+the bot user must never be `Administrator` or hold `System Manager` — a
+code-enforced blocker via the guard above, not just a recommendation like
+the existing "not a personal login" check.
+
+13 new regression tests in `test_client.py` (`RbacPrecheckReliabilityTests`)
+cover the probe, the identity check, both combined, and the guard's
+wiring into `_validate_prod_requester()`/`mutate_resource()`/`health_check()`.
+Full suite: 90 tests + 20 subtests passing.
+
 ## Phase 8 (handoff) — 2026-08-31
 
 Per the consolidation plan §11 item 8 ("update the repo index/README, single

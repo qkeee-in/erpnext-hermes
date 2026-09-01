@@ -186,13 +186,14 @@ class RunQueryReportTests(unittest.TestCase):
         # Read logging is unconditional, not debug-gated — every read logs.
         mock_log_read.assert_called_once()
 
+    @unittest.mock.patch.object(erp_client, "verify_rbac_precheck_reliable", return_value={"reliable": True})
     @unittest.mock.patch.object(erp_client, "check_user_permission", return_value=True)
     @unittest.mock.patch.object(erp_client, "resource_exists", return_value=True)
     @unittest.mock.patch.object(erp_client, "_log_read")
     @unittest.mock.patch.object(erp_client, "_request", return_value={"message": {}})
     @unittest.mock.patch.object(erp_client, "get_env_config", return_value={"tag": "default"})
     def test_read_logs_against_report_doctype(self, mock_get_env_config, mock_request, mock_log_read,
-                                               mock_resource_exists, mock_check_perm):
+                                               mock_resource_exists, mock_check_perm, mock_trust):
         erp_client.run_query_report("default", "Trial Balance", requested_by="user@example.com")
         mock_log_read.assert_called_once()
         self.assertEqual(mock_log_read.call_args[0][1], "Report")
@@ -285,6 +286,7 @@ class TestGatedMutateResource(unittest.TestCase):
                 patch.object(ec, "_audit_submit", return_value=False), \
                 patch.object(ec, "resource_exists", return_value=True), \
                 patch.object(ec, "check_user_permission", return_value=True), \
+                patch.object(ec, "verify_rbac_precheck_reliable", return_value={"reliable": True}), \
                 patch.dict("os.environ", self.QA_ENV, clear=True), \
                 patch.object(ec, "_request", return_value={"data": {"name": "CRM-LEAD-0001"}}) as mocked:
             result = ec.gated_mutate_resource("qa", "CRM Lead", "create", payload, mode="read-write",
@@ -419,17 +421,19 @@ class ValidateProdRequesterTests(unittest.TestCase):
         mocked_exists.assert_called_once_with("prod", "User", "nobody@org.com")
         self.assertIn("not a known ERPNext User", str(ctx.exception))
 
+    @patch.object(ec, "verify_rbac_precheck_reliable", return_value={"reliable": True})
     @patch.object(ec, "check_user_permission", return_value=False)
     @patch.object(ec, "resource_exists", return_value=True)
-    def test_refuses_when_permission_check_returns_false(self, mocked_exists, mocked_perm):
+    def test_refuses_when_permission_check_returns_false(self, mocked_exists, mocked_perm, mocked_trust):
         with self.assertRaises(ec.UnvalidatedProdRequesterError) as ctx:
             ec._validate_prod_requester("prod", "priya@org.com", "Sales Order", "write", docname="SO-0001")
         mocked_perm.assert_called_once_with("prod", "Sales Order", "write", "priya@org.com", "SO-0001")
         self.assertIn("does not have 'write' permission", str(ctx.exception))
 
+    @patch.object(ec, "verify_rbac_precheck_reliable", return_value={"reliable": True})
     @patch.object(ec, "check_user_permission", return_value=True)
     @patch.object(ec, "resource_exists", return_value=True)
-    def test_proceeds_when_validated_and_permitted(self, mocked_exists, mocked_perm):
+    def test_proceeds_when_validated_and_permitted(self, mocked_exists, mocked_perm, mocked_trust):
         ec._validate_prod_requester("prod", "priya@org.com", "Sales Order", "read")  # no raise
 
     def test_prod_tag_name_matching_is_substring_based(self):
@@ -457,17 +461,19 @@ class UniversalRequesterValidationTests(unittest.TestCase):
         mocked_exists.assert_called_once_with("qa", "User", "nobody@org.com")
         self.assertIn("not a known ERPNext User", str(ctx.exception))
 
+    @patch.object(ec, "verify_rbac_precheck_reliable", return_value={"reliable": True})
     @patch.object(ec, "check_user_permission", return_value=False)
     @patch.object(ec, "resource_exists", return_value=True)
-    def test_non_prod_refuses_when_permission_check_returns_false(self, mocked_exists, mocked_perm):
+    def test_non_prod_refuses_when_permission_check_returns_false(self, mocked_exists, mocked_perm, mocked_trust):
         with self.assertRaises(ec.UnvalidatedProdRequesterError) as ctx:
             ec._validate_prod_requester("qa", "priya@org.com", "Sales Order", "write", docname="SO-0001")
         mocked_perm.assert_called_once_with("qa", "Sales Order", "write", "priya@org.com", "SO-0001")
         self.assertIn("does not have 'write' permission", str(ctx.exception))
 
+    @patch.object(ec, "verify_rbac_precheck_reliable", return_value={"reliable": True})
     @patch.object(ec, "check_user_permission", return_value=True)
     @patch.object(ec, "resource_exists", return_value=True)
-    def test_non_prod_proceeds_when_validated_and_permitted(self, mocked_exists, mocked_perm):
+    def test_non_prod_proceeds_when_validated_and_permitted(self, mocked_exists, mocked_perm, mocked_trust):
         ec._validate_prod_requester("qa", "priya@org.com", "Sales Order", "read")  # no raise
 
     def test_noop_on_exempt_doctype_on_non_prod_too(self):
@@ -555,13 +561,147 @@ class CheckUserPermissionTests(unittest.TestCase):
     @patch.object(ec, "_request", return_value={"message": True})
     @patch.object(ec, "get_env_config", return_value={"tag": "prod"})
     def test_docname_sent_as_empty_string_when_not_given(self, mocked_cfg, mocked_request):
-        # Live-confirmed against demo.qkeee.in: this Frappe build's
-        # frappe.client.has_permission has no default for docname — omitting
+        # Live-confirmed against a real ERPNext instance: some Frappe builds'
+        # frappe.client.has_permission have no default for docname — omitting
         # the param entirely 500s. docname="" is the live-confirmed working
         # doctype-level-only shape; see check_user_permission_raw()'s docstring.
         ec.check_user_permission("prod", "Sales Order", "read", "priya@org.com")
         params = mocked_request.call_args[1]["params"]
         self.assertEqual(params["docname"], "")
+
+
+class RbacPrecheckReliabilityTests(unittest.TestCase):
+    """verify_rbac_precheck_reliable() / _validate_prod_requester()'s
+    PrivilegedBotAccountError guard — see client.py's module docstring and
+    00-conventions.md's bot-account bullet. Live-confirmed root cause:
+    under a privileged (Administrator/System-Manager) bot identity, some
+    Frappe builds' frappe.client.has_permission returns true for ANY
+    user= value, including a nonexistent one — the pre-check silently
+    rubber-stamps every requested_by rather than checking it."""
+
+    def setUp(self):
+        # Per-tag caches are module-global by design (see client.py) — clear
+        # them before/after every test so one test's tag can't leak a
+        # cached result into another.
+        ec._BOT_IDENTITY_CACHE.clear()
+        ec._RBAC_PRECHECK_TRUST_CACHE.clear()
+        ec._PRECHECK_WARNED_TAGS.clear()
+        self.addCleanup(ec._BOT_IDENTITY_CACHE.clear)
+        self.addCleanup(ec._RBAC_PRECHECK_TRUST_CACHE.clear)
+        self.addCleanup(ec._PRECHECK_WARNED_TAGS.clear)
+
+    @patch.object(ec, "check_user_permission", return_value=True)
+    def test_probe_flags_broken_precheck_when_bogus_user_is_allowed(self, mocked_perm):
+        # Root-cause reproduction: has_permission says "true" for a
+        # deliberately nonexistent user — the exact live-observed failure.
+        self.assertFalse(ec._probe_rbac_precheck_discriminates("tag-a"))
+        mocked_perm.assert_called_once_with("tag-a", "Role", "write", ec._RBAC_PROBE_BOGUS_USER)
+
+    @patch.object(ec, "check_user_permission", return_value=False)
+    def test_probe_confirms_working_precheck_when_bogus_user_is_denied(self, mocked_perm):
+        self.assertTrue(ec._probe_rbac_precheck_discriminates("tag-b"))
+
+    @patch.object(ec, "check_user_permission", side_effect=ec.ConnectorError("unreachable"))
+    def test_probe_fails_closed_when_unreachable(self, mocked_perm):
+        self.assertFalse(ec._probe_rbac_precheck_discriminates("tag-c"))
+
+    def test_probe_result_is_cached_per_tag(self):
+        with patch.object(ec, "check_user_permission", return_value=False) as mocked_perm:
+            ec._probe_rbac_precheck_discriminates("tag-d")
+            ec._probe_rbac_precheck_discriminates("tag-d")
+        mocked_perm.assert_called_once()
+
+    @patch.object(ec, "get_user_roles", return_value={"user": "Administrator", "roles": []})
+    def test_identity_administrator_is_privileged(self, mocked_roles):
+        with patch.object(ec, "check_user_permission", return_value=False):
+            trust = ec.verify_rbac_precheck_reliable("tag-e")
+        self.assertTrue(trust["privileged_identity"])
+        self.assertFalse(trust["reliable"])
+
+    @patch.object(ec, "get_user_roles",
+                   return_value={"user": "qkeee-erp-bot@org.com", "roles": ["Accounts User", "System Manager"]})
+    def test_identity_holding_system_manager_is_privileged(self, mocked_roles):
+        with patch.object(ec, "check_user_permission", return_value=False):
+            trust = ec.verify_rbac_precheck_reliable("tag-f")
+        self.assertTrue(trust["privileged_identity"])
+        self.assertFalse(trust["reliable"])
+
+    @patch.object(ec, "get_user_roles",
+                   return_value={"user": "qkeee-erp-bot@org.com", "roles": ["Accounts User"]})
+    def test_narrow_role_identity_plus_discriminating_probe_is_reliable(self, mocked_roles):
+        with patch.object(ec, "check_user_permission", return_value=False):
+            trust = ec.verify_rbac_precheck_reliable("tag-g")
+        self.assertFalse(trust["privileged_identity"])
+        self.assertTrue(trust["precheck_discriminates"])
+        self.assertTrue(trust["reliable"])
+
+    @patch.object(ec, "get_user_roles",
+                   return_value={"user": "qkeee-erp-bot@org.com", "roles": ["Accounts User"]})
+    def test_narrow_role_identity_but_broken_probe_is_unreliable(self, mocked_roles):
+        # A non-privileged identity doesn't save you if the instance's own
+        # has_permission still doesn't discriminate.
+        with patch.object(ec, "check_user_permission", return_value=True):
+            trust = ec.verify_rbac_precheck_reliable("tag-h")
+        self.assertFalse(trust["privileged_identity"])
+        self.assertFalse(trust["precheck_discriminates"])
+        self.assertFalse(trust["reliable"])
+
+    @patch.object(ec, "verify_rbac_precheck_reliable",
+                   return_value={"reliable": False, "bot_user": "Administrator",
+                                  "bot_roles": [], "privileged_identity": True,
+                                  "precheck_discriminates": True})
+    @patch.object(ec, "check_user_permission")
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_write_refused_when_precheck_unreliable(self, mocked_exists, mocked_perm, mocked_trust):
+        with self.assertRaises(ec.PrivilegedBotAccountError) as ctx:
+            ec._validate_prod_requester("tag-i", "priya@org.com", "Sales Order", "write", docname="SO-0001")
+        self.assertIn("Administrator", str(ctx.exception))
+        mocked_perm.assert_not_called()  # never trust a permission answer we know is meaningless
+
+    @patch.object(ec, "verify_rbac_precheck_reliable",
+                   return_value={"reliable": False, "bot_user": "Administrator",
+                                  "bot_roles": [], "privileged_identity": True,
+                                  "precheck_discriminates": True})
+    @patch.object(ec, "check_user_permission")
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_read_warns_but_does_not_raise_when_precheck_unreliable(self, mocked_exists, mocked_perm, mocked_trust):
+        ec._validate_prod_requester("tag-j", "priya@org.com", "Sales Order", "read")  # no raise
+        mocked_perm.assert_not_called()
+
+    @patch.object(ec, "verify_rbac_precheck_reliable",
+                   return_value={"reliable": False, "bot_user": "Administrator",
+                                  "bot_roles": [], "privileged_identity": True,
+                                  "precheck_discriminates": True})
+    @patch.object(ec, "check_user_permission")
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_mutate_resource_refuses_write_when_precheck_unreliable(self, mocked_exists, mocked_perm, mocked_trust):
+        with patch.dict("os.environ", {
+            "QKEEE_ERP_TAGK_BASE_URL": "https://example.com",
+            "QKEEE_ERP_TAGK_API_KEY": "key",
+            "QKEEE_ERP_TAGK_API_SECRET": "secret",
+        }, clear=True):
+            with self.assertRaises(ec.PrivilegedBotAccountError):
+                ec.mutate_resource("tagk", "Sales Order", "create", payload={"x": 1},
+                                    mode="read-write", requested_by="priya@org.com")
+
+    @patch.object(ec, "get_user_roles",
+                   return_value={"user": "qkeee-erp-bot@org.com", "roles": ["Accounts User"]})
+    def test_health_check_surfaces_reliability(self, mocked_roles):
+        with patch.object(ec, "check_user_permission", return_value=False), \
+                patch.object(ec, "get_env_config", return_value={"tag": "tag-l", "base_url": "https://example.com"}), \
+                patch.object(ec, "_request", return_value={"message": "qkeee-erp-bot@org.com"}):
+            result = ec.health_check("tag-l")
+        self.assertTrue(result["rbac_precheck_reliable"])
+        self.assertNotIn("rbac_precheck_warning", result)
+
+    @patch.object(ec, "get_user_roles", return_value={"user": "Administrator", "roles": []})
+    def test_health_check_warns_when_unreliable(self, mocked_roles):
+        with patch.object(ec, "check_user_permission", return_value=False), \
+                patch.object(ec, "get_env_config", return_value={"tag": "tag-m", "base_url": "https://example.com"}), \
+                patch.object(ec, "_request", return_value={"message": "Administrator"}):
+            result = ec.health_check("tag-m")
+        self.assertFalse(result["rbac_precheck_reliable"])
+        self.assertIn("rbac_precheck_warning", result)
 
 
 class ProdGateWiringTests(unittest.TestCase):

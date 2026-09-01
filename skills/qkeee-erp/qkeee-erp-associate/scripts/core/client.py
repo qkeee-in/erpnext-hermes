@@ -140,6 +140,15 @@ PROD_GATE_EXEMPT_DOCTYPES = {
     AUDIT_LOG_DOCTYPE, "Comment",
 }
 
+# Identities the connector's OWN bot account must never hold — see
+# verify_rbac_precheck_reliable() / PrivilegedBotAccountError. Live-
+# confirmed: under one of these, frappe.client.has_permission doesn't
+# reliably discriminate by the `user=` param it's given, so the RBAC
+# pre-check becomes a no-op that always says "allowed" regardless of who
+# requested_by actually names. "Administrator" is checked by literal
+# username (case-insensitive), independent of role membership.
+_BOT_FORBIDDEN_ROLES = {"System Manager"}
+
 # mutate_resource()'s action -> frappe.client.has_permission's perm_type.
 _MUTATE_ACTION_TO_PTYPE = {
     "create": "create", "update": "write", "submit": "submit",
@@ -196,6 +205,18 @@ class DoctypeNotAllowedError(ConnectorError):
     """Raised when mutate_resource(domain=...) targets a doctype outside
     that domain's registered ALLOWED_WRITE_DOCTYPES (or the domain itself
     is unknown/unregistered) — see the write-allowlist gate section above."""
+
+
+class PrivilegedBotAccountError(ConnectorError):
+    """Raised when a write is attempted while this connector's OWN
+    authenticated bot identity (not requested_by) is Administrator or holds
+    a role in _BOT_FORBIDDEN_ROLES, or when a live probe shows ERPNext's
+    frappe.client.has_permission doesn't actually discriminate by the
+    `user=` param on this instance. Either way, _validate_prod_requester()'s
+    RBAC pre-check would silently rubber-stamp any requested_by rather than
+    checking it — see verify_rbac_precheck_reliable() below. Provision a
+    genuinely narrow-role dedicated bot account instead (see init_bot.py /
+    00-conventions.md's bot-account requirement)."""
 
 
 def _tag_env_var(tag: str, suffix: str) -> str:
@@ -323,8 +344,8 @@ def check_user_permission_raw(tag: str, doctype: str, perm_type: str, requested_
     wants to inspect more than the boolean. See check_user_permission()'s
     docstring for the live-validation caveat this shares.
 
-    Live-confirmed against demo.qkeee.in: this Frappe
-    build's `frappe.client.has_permission` has NO default for `docname` —
+    Live-confirmed against a real ERPNext instance: some Frappe builds'
+    `frappe.client.has_permission` has NO default for `docname` —
     omitting the query param entirely (the previous behavior here, via
     `if docname: params["docname"] = docname`) 500s with `TypeError:
     has_permission() missing 1 required positional argument: 'docname'`
@@ -334,11 +355,94 @@ def check_user_permission_raw(tag: str, doctype: str, perm_type: str, requested_
     returns the same `has_permission` result as a record-level check,
     doesn't 404 the way a non-empty placeholder like `docname=None`-the-
     literal-string does). Always send the param now, empty string when no
-    real docname exists yet."""
+    real docname exists yet.
+
+    KNOWN GAP, live-confirmed as a real live gap, not just a theoretical
+    one: at least one tested Frappe build's `has_permission` returns
+    `true` for every `user=` value under a privileged (Administrator or
+    System-Manager-holding) caller identity, including a deliberately
+    nonexistent user, against a System-Manager-only doctype. See
+    `verify_rbac_precheck_reliable()` below — it live-probes this exact
+    failure mode per target instance and `_validate_prod_requester()`
+    refuses to trust this function's result when the probe says the
+    check doesn't discriminate."""
     cfg = get_env_config(tag)
     params = {"doctype": doctype, "perm_type": perm_type, "user": requested_by,
               "docname": docname or ""}
     return _request(cfg, "GET", "/api/method/frappe.client.has_permission", params=params)
+
+
+# Per-tag caches for verify_rbac_precheck_reliable() — the bot's own
+# identity and the live discrimination probe don't change mid-process, so
+# each is resolved once per tag rather than on every read/write.
+_BOT_IDENTITY_CACHE: dict = {}
+_RBAC_PRECHECK_TRUST_CACHE: dict = {}
+_PRECHECK_WARNED_TAGS: set = set()
+
+# Deliberately never a real user — the probe's whole point is asking about
+# an identity ERPNext cannot possibly grant real permissions to.
+_RBAC_PROBE_BOGUS_USER = "qkeee-erp-rbac-probe-nonexistent-user@invalid.example"
+
+
+def _bot_identity(tag: str) -> dict:
+    """Resolve + cache the CONNECTOR'S OWN authenticated identity for this
+    tag (username + roles) — not requested_by. One extra HTTP round trip
+    per tag per process. A lookup failure is cached as an unknown identity
+    (empty user, empty roles) rather than retried every call — treated as
+    privileged/untrusted by verify_rbac_precheck_reliable() below, since an
+    identity this connector can't even resolve can't be confirmed safe."""
+    if tag not in _BOT_IDENTITY_CACHE:
+        try:
+            _BOT_IDENTITY_CACHE[tag] = get_user_roles(tag)
+        except ConnectorError:
+            _BOT_IDENTITY_CACHE[tag] = {"user": "", "roles": []}
+    return _BOT_IDENTITY_CACHE[tag]
+
+
+def _probe_rbac_precheck_discriminates(tag: str) -> bool:
+    """Live, per-tag probe (cached after first call): asks
+    frappe.client.has_permission whether a deliberately bogus,
+    guaranteed-nonexistent user holds 'write' on 'Role' (a System-Manager-
+    only doctype in stock ERPNext). A trustworthy pre-check must answer
+    False. Catches the failure mode live, per target instance, rather than
+    trusting the static identity check alone — a future Frappe patch, or
+    an instance-specific customization, could change this behavior in
+    either direction, and the identity check alone can't see that.
+    Anything that keeps this from getting a clean answer (a ConnectorError
+    reaching the endpoint) is treated as "does not discriminate" — fail
+    closed, never assume the pre-check works when it couldn't be probed."""
+    if tag not in _RBAC_PRECHECK_TRUST_CACHE:
+        try:
+            bogus_allowed = check_user_permission(tag, "Role", "write", _RBAC_PROBE_BOGUS_USER)
+        except ConnectorError:
+            _RBAC_PRECHECK_TRUST_CACHE[tag] = False
+        else:
+            _RBAC_PRECHECK_TRUST_CACHE[tag] = not bogus_allowed
+    return _RBAC_PRECHECK_TRUST_CACHE[tag]
+
+
+def verify_rbac_precheck_reliable(tag: str) -> dict:
+    """Whether this tag's RBAC pre-check (_validate_prod_requester() /
+    check_user_permission()) can actually be trusted right now — combines
+    the static identity check (bot account isn't Administrator or
+    System Manager) with the live discrimination probe above. Never raises
+    on its own; callers decide what to do with an unreliable result
+    (_validate_prod_requester() fails closed on writes, health_check()
+    just surfaces it as a warning). Called from `hermes qkeee-erp health`
+    and internally before every write — safe to call repeatedly, both
+    underlying checks are cached per tag."""
+    identity = _bot_identity(tag)
+    bot_user = (identity.get("user") or "").strip()
+    bot_roles = set(identity.get("roles") or [])
+    privileged_identity = (not bot_user) or bot_user.lower() == "administrator" or bool(bot_roles & _BOT_FORBIDDEN_ROLES)
+    precheck_discriminates = _probe_rbac_precheck_discriminates(tag)
+    return {
+        "reliable": (not privileged_identity) and precheck_discriminates,
+        "bot_user": bot_user,
+        "bot_roles": sorted(bot_roles),
+        "privileged_identity": privileged_identity,
+        "precheck_discriminates": precheck_discriminates,
+    }
 
 
 def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_type: str,
@@ -389,6 +493,34 @@ def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_typ
             f"unvalidated channel identity — confirm the real ERPNext user id/email "
             f"before retrying."
         )
+    trust = verify_rbac_precheck_reliable(tag)
+    if not trust["reliable"]:
+        if tag not in _PRECHECK_WARNED_TAGS:
+            _PRECHECK_WARNED_TAGS.add(tag)
+            print(
+                f"WARN: RBAC pre-check is NOT reliable on tag '{tag}' — bot identity "
+                f"{trust['bot_user']!r} is privileged ({trust['privileged_identity']}) "
+                f"and/or the live has_permission probe didn't discriminate a bogus user "
+                f"({not trust['precheck_discriminates']}). Every requester-permission "
+                f"check on this tag is being skipped rather than trusted; writes are "
+                f"refused outright. Provision a narrow-role dedicated bot account and "
+                f"re-run health() to clear this.",
+                file=sys.stderr,
+            )
+        if perm_type != "read":
+            raise PrivilegedBotAccountError(
+                f"Refusing {perm_type} on '{doctype}' for tag '{tag}': this connector's "
+                f"own bot identity ({trust['bot_user']!r}) is privileged, or ERPNext's "
+                f"has_permission RPC doesn't discriminate by user= on this instance — "
+                f"either way requester '{requested_by}''s permission for this write can't "
+                f"be verified. Provision a narrow-role dedicated bot account (see "
+                f"init_bot.py / 00-conventions.md), confirm health() reports "
+                f"rbac_precheck_reliable=true, then retry."
+            )
+        # Read: warned above, proceed without a permission gate that's
+        # already been proven not to discriminate — a meaningless "allowed"
+        # here would be worse than no check at all.
+        return
     allowed = check_user_permission(tag, doctype, perm_type, requested_by, docname)
     if not allowed:
         raise UnvalidatedProdRequesterError(
@@ -561,10 +693,31 @@ def health_check(tag: str = "default") -> dict:
     may health-check fine yet still 403 on a later read/write against a
     doctype it lacks access to). Report a later permission error as its
     own distinct failure mode, not folded into "connectivity is broken".
+
+    Also runs verify_rbac_precheck_reliable() (cached after the first call
+    per tag) and surfaces it as `rbac_precheck_reliable` — never fails this
+    health check on its own; a caller should read the reliability flag and
+    warn/act on it, matching how a doctype-specific permission gap is its
+    own distinct failure mode rather than a reason to fail connectivity.
     """
     cfg = get_env_config(tag)
     result = _request(cfg, "GET", "/api/method/frappe.auth.get_logged_user")
-    return {"tag": tag, "base_url": cfg["base_url"], "status": "ok", "logged_in_as": result.get("message")}
+    trust = verify_rbac_precheck_reliable(tag)
+    out = {
+        "tag": tag, "base_url": cfg["base_url"], "status": "ok",
+        "logged_in_as": result.get("message"),
+        "rbac_precheck_reliable": trust["reliable"],
+    }
+    if not trust["reliable"]:
+        out["rbac_precheck_warning"] = (
+            f"This tag's RBAC pre-check cannot be trusted: bot identity "
+            f"{trust['bot_user']!r} is privileged={trust['privileged_identity']} "
+            f"and the live has_permission probe discriminates="
+            f"{trust['precheck_discriminates']}. Every write on this tag will be "
+            f"refused until a narrow-role dedicated bot account is provisioned — "
+            f"see init_bot.py / 00-conventions.md."
+        )
+    return out
 
 
 def query_resource(tag: str, doctype: str, filters: list = None, fields: list = None, limit: int = 20,
