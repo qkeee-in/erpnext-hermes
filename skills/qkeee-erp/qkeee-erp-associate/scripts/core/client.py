@@ -56,17 +56,20 @@ Known limitation, confirmed live and structural (not instance-specific —
 `frappe.client.has_permission` has no `user=` parameter in stock Frappe at
 all; it always answers for the calling session, never a named other user):
 per-requester permission can't actually be verified this way. When
-`verify_rbac_precheck_reliable()` detects this, an UNSCOPED write (no
-`domain=`, e.g. gated_mutate_resource()'s remit) is still refused outright
-— it has no other reviewed safety net. A domain-scoped write (`domain=`
-set on mutate_resource(), doctype already reviewed into that domain's
-ALLOWED_WRITE_DOCTYPES, +confirmation-token where registered) proceeds
-with a warning instead of hard-blocking, on the theory that the allowlist +
-token-gate + mandatory human review-before-submit are themselves a
-sufficient design-time-reviewed safety net, even when this specific
-per-requester check can't run. This does not verify the requester actually
-holds the permission — only that the call sits inside a reviewed
-capability boundary.
+`verify_rbac_precheck_reliable()` detects this, a write proceeds anyway
+(on a warning, not silently) if it has EITHER of two design-time-reviewed
+controls ahead of it: a `domain=` allowlist (doctype already reviewed into
+that domain's ALLOWED_WRITE_DOCTYPES, +confirmation-token where
+registered), or a verified advisory-draft token
+(`advisory_token_verified=True`, set only by gated_mutate_resource() after
+its own unconditional confirmation_token check already passed — covers a
+doctype no domain owns, e.g. Company). Either way the theory is the same:
+the allowlist/token-gate/draft-confirm flow + mandatory human
+review-before-submit are themselves a sufficient reviewed safety net, even
+when this specific per-requester check can't run. A write with NEITHER
+control is still refused outright (`PrivilegedBotAccountError`) — this
+does not verify the requester actually holds the permission in either
+case, only that the call sits inside a reviewed capability boundary.
 
 Write-allowlist gate: domain modules under `scripts/domains/*.py` each
 declare an ALLOWED_WRITE_DOCTYPES tuple and register it via
@@ -547,17 +550,28 @@ def verify_rbac_precheck_reliable(tag: str) -> dict:
 
 
 def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_type: str,
-                              docname: str = None, *, domain: str = None) -> None:
+                              docname: str = None, *, domain: str = None,
+                              advisory_token_verified: bool = False) -> None:
     """The requester-validation gate — RBAC pre-check, every environment.
     (Name reflects a narrower PROD-only origin; the check itself is
     universal.)
 
-    `domain`: the calling domain module's name (as passed to
-    mutate_resource(..., domain=...)), or None for a read call or for
-    gated_mutate_resource()'s deliberately-unreviewed write path. Only
-    consulted when the RBAC pre-check is unreliable (see below) — decides
-    whether an un-verifiable write still has *some* design-time-reviewed
-    safety net to fall back on.
+    `domain`/`advisory_token_verified`: only consulted when the RBAC
+    pre-check is unreliable (see below) — together they decide whether an
+    un-verifiable write still has *some* design-time-reviewed safety net
+    to fall back on. `domain` is the calling domain module's name (as
+    passed to mutate_resource(..., domain=...)) — None for a read call or
+    for gated_mutate_resource()'s domain-less path.
+    `advisory_token_verified` is True only when mutate_resource() is being
+    called from INSIDE gated_mutate_resource(), after that function's own
+    unconditional confirmation_token/issued_at verification already
+    passed — never a caller-settable flag otherwise (not exposed on any
+    domain mutate() wrapper or the CLI). Covers a write on a doctype no
+    domain owns (e.g. Company, a cross-cutting master no single domain's
+    ALLOWED_WRITE_DOCTYPES claims) that still went through the mandatory
+    advisory-first draft-then-confirm flow — that flow IS the
+    design-time-reviewed control for exactly this "doctype not known in
+    advance" case, same spirit as a domain's allowlist.
 
     No-op for any doctype in PROD_GATE_EXEMPT_DOCTYPES, on every tag.
     Otherwise:
@@ -611,39 +625,42 @@ def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_typ
                 f"and/or the live has_permission probe didn't discriminate a bogus user "
                 f"({not trust['precheck_discriminates']}). Per-requester permission "
                 f"can no longer be individually verified on this tag. A domain-scoped "
-                f"write (allowlisted doctype, +confirmation-token where registered) is "
-                f"allowed to proceed on its allowlist/token-gate + mandatory review-"
-                f"before-submit as the safety net instead; an unscoped write (no "
-                f"`domain`, e.g. gated_mutate_resource()'s remit) has no such fallback "
-                f"and is still refused outright. Provision a narrow-role dedicated bot "
-                f"account and re-run health() to clear this properly.",
+                f"write (allowlisted doctype, +confirmation-token where registered) or "
+                f"a gated_mutate_resource() write (confirmation_token verified against a "
+                f"rendered advisory draft) is allowed to proceed on that reviewed control "
+                f"+ mandatory review-before-submit as the safety net instead; a write with "
+                f"NEITHER a `domain` allowlist NOR a verified advisory token has no such "
+                f"fallback and is still refused outright. Provision a narrow-role dedicated "
+                f"bot account and re-run health() to clear this properly.",
                 file=sys.stderr,
             )
         if perm_type != "read":
-            if domain is None:
+            if domain is None and not advisory_token_verified:
                 raise PrivilegedBotAccountError(
                     f"Refusing {perm_type} on '{doctype}' for tag '{tag}': this connector's "
                     f"own bot identity ({trust['bot_user']!r}) is privileged, or ERPNext's "
                     f"has_permission RPC doesn't discriminate by user= on this instance — "
                     f"either way requester '{requested_by}''s permission for this write can't "
-                    f"be verified, and this call has no `domain` allowlist to fall back on "
-                    f"(unscoped/unreviewed write path). Provision a narrow-role dedicated bot "
-                    f"account (see init_bot.py / 00-conventions.md), confirm health() reports "
-                    f"rbac_precheck_reliable=true, then retry."
+                    f"be verified, and this call has neither a `domain` allowlist nor a "
+                    f"verified advisory-draft token to fall back on (unreviewed write path — "
+                    f"route it through a domain module's mutate() or through "
+                    f"gated_mutate_resource() with a real rendered draft instead). Provision a "
+                    f"narrow-role dedicated bot account (see init_bot.py / 00-conventions.md), "
+                    f"confirm health() reports rbac_precheck_reliable=true, then retry."
                 )
-            # Domain-scoped write: mutate_resource() has already enforced
-            # DOMAIN_WRITE_ALLOWLISTS[domain] (doctype was reviewed at
-            # design time to belong to this domain's remit) and, for any
-            # action registered via register_domain_token_gate(), the
-            # confirmation-token advisory-first gate — both ahead of this
-            # call. Per-requester permission specifically can't be
-            # verified, but the write itself isn't unscoped/unreviewed, so
-            # it proceeds rather than hard-blocking every write on this
-            # tag. This does NOT verify requester 'requested_by' actually
-            # holds 'perm_type' in ERPNext — only that the call is inside
-            # a reviewed capability boundary. See profile.md's mandatory
-            # review-before-submit step for the remaining human check on
-            # anything docstatus-bearing.
+            # Either domain-scoped (mutate_resource() already enforced
+            # DOMAIN_WRITE_ALLOWLISTS[domain] and, where registered via
+            # register_domain_token_gate(), the confirmation-token gate)
+            # or advisory-token-verified (gated_mutate_resource() already
+            # verified a fresh confirmation_token against a rendered
+            # draft, unconditionally, before ever calling here) — either
+            # way this call has a design-time-reviewed control ahead of
+            # it, so it proceeds rather than hard-blocking every write on
+            # this tag. This does NOT verify requester 'requested_by'
+            # actually holds 'perm_type' in ERPNext — only that the call
+            # is inside a reviewed capability boundary. See profile.md's
+            # mandatory review-before-submit step for the remaining human
+            # check on anything docstatus-bearing.
             return
         # Read: warned above, proceed without a permission gate that's
         # already been proven not to discriminate — a meaningless "allowed"
@@ -842,10 +859,11 @@ def health_check(tag: str = "default") -> dict:
             f"{trust['bot_user']!r} is privileged={trust['privileged_identity']} "
             f"and the live has_permission probe discriminates="
             f"{trust['precheck_discriminates']}. Per-requester permission can't be "
-            f"verified on this tag: an unscoped write (no `domain` allowlist, e.g. "
-            f"gated_mutate_resource()) is refused outright; a domain-scoped write "
-            f"proceeds on its allowlist/token-gate + mandatory review-before-submit "
-            f"instead. Provision a narrow-role dedicated bot account to restore real "
+            f"verified on this tag: a domain-scoped write (allowlisted doctype) or a "
+            f"gated_mutate_resource() write with a verified advisory-draft token still "
+            f"proceeds, on that reviewed control + mandatory review-before-submit as the "
+            f"safety net; a write with neither (no `domain`, no verified token) is refused "
+            f"outright. Provision a narrow-role dedicated bot account to restore real "
             f"per-requester verification — see init_bot.py / 00-conventions.md."
         )
     return out
@@ -1271,7 +1289,8 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
                      session_id: str = None, domain_code: str = None,
                      channel: str = None, channel_metadata: dict = None,
                      user_approved: bool = False, approval_note: str = None,
-                     confirmation_token: str = None, issued_at: int = None) -> dict:
+                     confirmation_token: str = None, issued_at: int = None,
+                     advisory_token_verified: bool = False) -> dict:
     """Generic resource mutate — create/update/submit/cancel/delete a
     DocType record. The one shared write entry point every domain module's
     own `mutate()` wrapper calls into (see scripts/domains/*.py).
@@ -1325,6 +1344,18 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
     action combination that hasn't opted in — either because that domain
     carries its own bespoke, stricter token scheme instead (fixed_assets,
     system_admin) or because nothing about it warrants one.
+
+    `advisory_token_verified`: INTERNAL — set True only by
+    gated_mutate_resource() calling into this function, after ITS OWN
+    unconditional confirmation_token/issued_at verification against a
+    rendered advisory draft already passed. Not exposed on any domain
+    module's mutate() wrapper or the CLI; a caller asserting this
+    directly would be lying about a verification that never happened, so
+    nothing outside this file should ever pass it. Feeds
+    _validate_prod_requester()'s RBAC-pre-check-unreliable fallback: a
+    write on a doctype no domain owns (e.g. Company) still gets credited
+    with a reviewed safety net if it went through the mandatory
+    draft-then-confirm flow, same as a domain-scoped write's allowlist.
     """
     _VALID_ACTIONS = {"create", "update", "submit", "cancel", "delete"}
     if action not in _VALID_ACTIONS:
@@ -1371,7 +1402,8 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
         _require_advisory_token(action, doctype, name, payload, requested_by,
                                  confirmation_token, issued_at)
     _validate_prod_requester(tag, requested_by, doctype, _MUTATE_ACTION_TO_PTYPE[action],
-                              docname=name, domain=domain)
+                              docname=name, domain=domain,
+                              advisory_token_verified=advisory_token_verified)
 
     cfg = get_env_config(tag)
     effective_skill_label = skill_label or (f"qkeee-erp-associate/{domain}" if domain else SKILL_LABEL)
@@ -1468,6 +1500,7 @@ def gated_mutate_resource(tag: str, doctype: str, action: str, payload: dict = N
         tag, doctype, action, payload=payload, name=name, mode=mode, requested_by=requested_by,
         session_id=session_id, domain_code=domain_code, channel=channel, channel_metadata=channel_metadata,
         user_approved=True, approval_note=approval_note or "gated_mutate_resource: advisory draft confirmed",
+        advisory_token_verified=True,
     )
 
 

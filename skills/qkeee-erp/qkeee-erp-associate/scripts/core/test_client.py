@@ -294,6 +294,35 @@ class TestGatedMutateResource(unittest.TestCase):
         self.assertEqual(result["data"]["name"], "CRM-LEAD-0001")
         mocked.assert_called_once()
 
+    def test_succeeds_despite_unreliable_precheck_via_verified_token(self):
+        # Company (or any doctype no domain owns) has no ALLOWED_WRITE_DOCTYPES
+        # to fall back on — but a real, freshly-rendered advisory token IS
+        # itself a design-time-reviewed control (see Option D follow-up:
+        # `advisory_token_verified` in client.py), so this must still
+        # proceed even when the RBAC precheck can't be trusted, the same
+        # way a domain-scoped write does.
+        issued_at = int(time.time())
+        payload = {"company_name": "DVSISTEMS"}
+        token = advisory_write_token("create", "Company", None, payload, "priya@org.com", issued_at)
+        with patch.object(ec, "record_comment"), \
+                patch.object(ec, "_audit_insert", return_value=None), \
+                patch.object(ec, "_audit_update", return_value=False), \
+                patch.object(ec, "_audit_submit", return_value=False), \
+                patch.object(ec, "resource_exists", return_value=True), \
+                patch.object(ec, "check_user_permission") as mocked_perm, \
+                patch.object(ec, "verify_rbac_precheck_reliable",
+                              return_value={"reliable": False, "bot_user": "Administrator",
+                                            "bot_roles": [], "privileged_identity": True,
+                                            "precheck_discriminates": True}), \
+                patch.dict("os.environ", self.QA_ENV, clear=True), \
+                patch.object(ec, "_request", return_value={"data": {"name": "DVSISTEMS"}}) as mocked:
+            result = ec.gated_mutate_resource("qa", "Company", "create", payload, mode="read-write",
+                                               requested_by="priya@org.com",
+                                               confirmation_token=token, issued_at=issued_at)
+        self.assertEqual(result["data"]["name"], "DVSISTEMS")
+        mocked.assert_called_once()
+        mocked_perm.assert_not_called()  # never trust a permission answer we know is meaningless
+
     def test_still_refuses_read_only_even_with_valid_token(self):
         """The token gate is additive, not a replacement for the
         mode/requested_by gate mutate_resource() already enforces."""
@@ -679,6 +708,37 @@ class RbacPrecheckReliabilityTests(unittest.TestCase):
                                   "precheck_discriminates": True})
     @patch.object(ec, "check_user_permission")
     @patch.object(ec, "resource_exists", return_value=True)
+    def test_advisory_token_verified_write_proceeds_when_precheck_unreliable(
+            self, mocked_exists, mocked_perm, mocked_trust):
+        # No `domain` at all (e.g. Company — a doctype no domain's
+        # ALLOWED_WRITE_DOCTYPES claims) but advisory_token_verified=True
+        # (only ever set by gated_mutate_resource() after its own
+        # confirmation_token check already passed) — still a
+        # design-time-reviewed control, so this proceeds too.
+        ec._validate_prod_requester("tag-i3", "priya@org.com", "Company", "write",
+                                     advisory_token_verified=True)  # no raise
+        mocked_perm.assert_not_called()
+
+    @patch.object(ec, "verify_rbac_precheck_reliable",
+                   return_value={"reliable": False, "bot_user": "Administrator",
+                                  "bot_roles": [], "privileged_identity": True,
+                                  "precheck_discriminates": True})
+    @patch.object(ec, "check_user_permission")
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_neither_domain_nor_advisory_token_still_refused(self, mocked_exists, mocked_perm, mocked_trust):
+        # Belt-and-suspenders: explicit domain=None, advisory_token_verified=False
+        # (the true "nothing reviewed this" case) is still a hard block.
+        with self.assertRaises(ec.PrivilegedBotAccountError):
+            ec._validate_prod_requester("tag-i4", "priya@org.com", "Company", "write",
+                                         domain=None, advisory_token_verified=False)
+        mocked_perm.assert_not_called()
+
+    @patch.object(ec, "verify_rbac_precheck_reliable",
+                   return_value={"reliable": False, "bot_user": "Administrator",
+                                  "bot_roles": [], "privileged_identity": True,
+                                  "precheck_discriminates": True})
+    @patch.object(ec, "check_user_permission")
+    @patch.object(ec, "resource_exists", return_value=True)
     def test_read_warns_but_does_not_raise_when_precheck_unreliable(self, mocked_exists, mocked_perm, mocked_trust):
         ec._validate_prod_requester("tag-j", "priya@org.com", "Sales Order", "read")  # no raise
         mocked_perm.assert_not_called()
@@ -785,7 +845,7 @@ class ProdGateWiringTests(unittest.TestCase):
         ec.mutate_resource("prod", "Sales Order", "submit", name="SO-0001", mode="read-write",
                             requested_by="priya@org.com")
         mocked_gate.assert_called_once_with("prod", "priya@org.com", "Sales Order", "submit",
-                                             docname="SO-0001", domain=None)
+                                             docname="SO-0001", domain=None, advisory_token_verified=False)
 
     @patch.object(ec, "_validate_prod_requester", side_effect=ec.UnvalidatedProdRequesterError("nope"))
     @patch.object(ec, "get_env_config", return_value={"tag": "prod"})

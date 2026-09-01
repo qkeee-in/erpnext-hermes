@@ -199,18 +199,20 @@ for the exact mechanism.
   ever answers for the calling session. `core/client.py` enforces the
   consequence in code: a live probe (`verify_rbac_precheck_reliable()`)
   runs per tag and, when the bot identity is privileged or the probe
-  shows the check doesn't discriminate, an **unscoped write** (no
-  `domain=` — `gated_mutate_resource()`'s remit, nothing reviewed into an
-  allowlist ahead of time) is refused with `PrivilegedBotAccountError`
-  until the bot account is fixed. A **domain-scoped write** (`domain=`
-  set, doctype already reviewed into that domain's
-  `ALLOWED_WRITE_DOCTYPES`, +confirmation-token where registered)
-  proceeds instead, on a warning — the allowlist/token-gate + mandatory
-  review-before-submit are treated as the design-time-reviewed safety net
-  in place of the broken per-requester check. Either way this is a
-  blocker/warning enforced in code, not a courtesy, and is a
-  **different** failure mode than the "not a personal login" check
-  below, which is only a recommendation. Check both proactively: if a
+  shows the check doesn't discriminate, a write proceeds on a warning
+  only if it has one of two design-time-reviewed controls ahead of it —
+  a **domain-scoped write** (`domain=` set, doctype already reviewed
+  into that domain's `ALLOWED_WRITE_DOCTYPES`, +confirmation-token where
+  registered), or a **`gated_mutate_resource()` write with a verified
+  advisory-draft token** (covers a doctype no domain owns, e.g. Company —
+  the mandatory draft-then-confirm flow is the reviewed control there
+  instead of an allowlist). A write with **neither** — no `domain=` and
+  no verified token — is refused with `PrivilegedBotAccountError` until
+  the bot account is fixed; that's the true "nothing reviewed this"
+  case. Either way this is a blocker/warning enforced in code, not a
+  courtesy, and is a **different** failure mode than the "not a personal
+  login" check below, which is only a recommendation. Check both
+  proactively: if a
   `health` check's `logged_in_as` looks like a real staff member, or its
   `rbac_precheck_reliable` field is `false`, or the user is configuring
   credentials for the first time without mentioning a dedicated bot user,
