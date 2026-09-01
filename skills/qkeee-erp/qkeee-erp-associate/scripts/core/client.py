@@ -52,6 +52,22 @@ call needs — on every environment tag, not PROD only. See
 `_validate_prod_requester()` below (the name reflects a narrower PROD-only
 origin; the check itself is now universal).
 
+Known limitation, confirmed live and structural (not instance-specific —
+`frappe.client.has_permission` has no `user=` parameter in stock Frappe at
+all; it always answers for the calling session, never a named other user):
+per-requester permission can't actually be verified this way. When
+`verify_rbac_precheck_reliable()` detects this, an UNSCOPED write (no
+`domain=`, e.g. gated_mutate_resource()'s remit) is still refused outright
+— it has no other reviewed safety net. A domain-scoped write (`domain=`
+set on mutate_resource(), doctype already reviewed into that domain's
+ALLOWED_WRITE_DOCTYPES, +confirmation-token where registered) proceeds
+with a warning instead of hard-blocking, on the theory that the allowlist +
+token-gate + mandatory human review-before-submit are themselves a
+sufficient design-time-reviewed safety net, even when this specific
+per-requester check can't run. This does not verify the requester actually
+holds the permission — only that the call sits inside a reviewed
+capability boundary.
+
 Write-allowlist gate: domain modules under `scripts/domains/*.py` each
 declare an ALLOWED_WRITE_DOCTYPES tuple and register it via
 register_domain_allowlist() at import time. mutate_resource(...,
@@ -510,8 +526,10 @@ def verify_rbac_precheck_reliable(tag: str) -> dict:
     the static identity check (bot account isn't Administrator or
     System Manager) with the live discrimination probe above. Never raises
     on its own; callers decide what to do with an unreliable result
-    (_validate_prod_requester() fails closed on writes, health_check()
-    just surfaces it as a warning). Called from `hermes qkeee-erp health`
+    (_validate_prod_requester() fails closed only on an unscoped write —
+    no `domain` allowlist to fall back on — and proceeds-with-warning on
+    a domain-scoped write; health_check() just surfaces it as a warning).
+    Called from `hermes qkeee-erp health`
     and internally before every write — safe to call repeatedly, both
     underlying checks are cached per tag."""
     identity = _bot_identity(tag)
@@ -529,10 +547,17 @@ def verify_rbac_precheck_reliable(tag: str) -> dict:
 
 
 def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_type: str,
-                              docname: str = None) -> None:
+                              docname: str = None, *, domain: str = None) -> None:
     """The requester-validation gate — RBAC pre-check, every environment.
     (Name reflects a narrower PROD-only origin; the check itself is
     universal.)
+
+    `domain`: the calling domain module's name (as passed to
+    mutate_resource(..., domain=...)), or None for a read call or for
+    gated_mutate_resource()'s deliberately-unreviewed write path. Only
+    consulted when the RBAC pre-check is unreliable (see below) — decides
+    whether an un-verifiable write still has *some* design-time-reviewed
+    safety net to fall back on.
 
     No-op for any doctype in PROD_GATE_EXEMPT_DOCTYPES, on every tag.
     Otherwise:
@@ -584,22 +609,42 @@ def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_typ
                 f"WARN: RBAC pre-check is NOT reliable on tag '{tag}' — bot identity "
                 f"{trust['bot_user']!r} is privileged ({trust['privileged_identity']}) "
                 f"and/or the live has_permission probe didn't discriminate a bogus user "
-                f"({not trust['precheck_discriminates']}). Every requester-permission "
-                f"check on this tag is being skipped rather than trusted; writes are "
-                f"refused outright. Provision a narrow-role dedicated bot account and "
-                f"re-run health() to clear this.",
+                f"({not trust['precheck_discriminates']}). Per-requester permission "
+                f"can no longer be individually verified on this tag. A domain-scoped "
+                f"write (allowlisted doctype, +confirmation-token where registered) is "
+                f"allowed to proceed on its allowlist/token-gate + mandatory review-"
+                f"before-submit as the safety net instead; an unscoped write (no "
+                f"`domain`, e.g. gated_mutate_resource()'s remit) has no such fallback "
+                f"and is still refused outright. Provision a narrow-role dedicated bot "
+                f"account and re-run health() to clear this properly.",
                 file=sys.stderr,
             )
         if perm_type != "read":
-            raise PrivilegedBotAccountError(
-                f"Refusing {perm_type} on '{doctype}' for tag '{tag}': this connector's "
-                f"own bot identity ({trust['bot_user']!r}) is privileged, or ERPNext's "
-                f"has_permission RPC doesn't discriminate by user= on this instance — "
-                f"either way requester '{requested_by}''s permission for this write can't "
-                f"be verified. Provision a narrow-role dedicated bot account (see "
-                f"init_bot.py / 00-conventions.md), confirm health() reports "
-                f"rbac_precheck_reliable=true, then retry."
-            )
+            if domain is None:
+                raise PrivilegedBotAccountError(
+                    f"Refusing {perm_type} on '{doctype}' for tag '{tag}': this connector's "
+                    f"own bot identity ({trust['bot_user']!r}) is privileged, or ERPNext's "
+                    f"has_permission RPC doesn't discriminate by user= on this instance — "
+                    f"either way requester '{requested_by}''s permission for this write can't "
+                    f"be verified, and this call has no `domain` allowlist to fall back on "
+                    f"(unscoped/unreviewed write path). Provision a narrow-role dedicated bot "
+                    f"account (see init_bot.py / 00-conventions.md), confirm health() reports "
+                    f"rbac_precheck_reliable=true, then retry."
+                )
+            # Domain-scoped write: mutate_resource() has already enforced
+            # DOMAIN_WRITE_ALLOWLISTS[domain] (doctype was reviewed at
+            # design time to belong to this domain's remit) and, for any
+            # action registered via register_domain_token_gate(), the
+            # confirmation-token advisory-first gate — both ahead of this
+            # call. Per-requester permission specifically can't be
+            # verified, but the write itself isn't unscoped/unreviewed, so
+            # it proceeds rather than hard-blocking every write on this
+            # tag. This does NOT verify requester 'requested_by' actually
+            # holds 'perm_type' in ERPNext — only that the call is inside
+            # a reviewed capability boundary. See profile.md's mandatory
+            # review-before-submit step for the remaining human check on
+            # anything docstatus-bearing.
+            return
         # Read: warned above, proceed without a permission gate that's
         # already been proven not to discriminate — a meaningless "allowed"
         # here would be worse than no check at all.
@@ -796,9 +841,12 @@ def health_check(tag: str = "default") -> dict:
             f"This tag's RBAC pre-check cannot be trusted: bot identity "
             f"{trust['bot_user']!r} is privileged={trust['privileged_identity']} "
             f"and the live has_permission probe discriminates="
-            f"{trust['precheck_discriminates']}. Every write on this tag will be "
-            f"refused until a narrow-role dedicated bot account is provisioned — "
-            f"see init_bot.py / 00-conventions.md."
+            f"{trust['precheck_discriminates']}. Per-requester permission can't be "
+            f"verified on this tag: an unscoped write (no `domain` allowlist, e.g. "
+            f"gated_mutate_resource()) is refused outright; a domain-scoped write "
+            f"proceeds on its allowlist/token-gate + mandatory review-before-submit "
+            f"instead. Provision a narrow-role dedicated bot account to restore real "
+            f"per-requester verification — see init_bot.py / 00-conventions.md."
         )
     return out
 
@@ -1322,7 +1370,8 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
     if domain is not None and action in DOMAIN_TOKEN_GATED_ACTIONS.get(domain, ()):
         _require_advisory_token(action, doctype, name, payload, requested_by,
                                  confirmation_token, issued_at)
-    _validate_prod_requester(tag, requested_by, doctype, _MUTATE_ACTION_TO_PTYPE[action], docname=name)
+    _validate_prod_requester(tag, requested_by, doctype, _MUTATE_ACTION_TO_PTYPE[action],
+                              docname=name, domain=domain)
 
     cfg = get_env_config(tag)
     effective_skill_label = skill_label or (f"qkeee-erp-associate/{domain}" if domain else SKILL_LABEL)

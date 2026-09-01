@@ -663,6 +663,22 @@ class RbacPrecheckReliabilityTests(unittest.TestCase):
                                   "precheck_discriminates": True})
     @patch.object(ec, "check_user_permission")
     @patch.object(ec, "resource_exists", return_value=True)
+    def test_domain_scoped_write_proceeds_when_precheck_unreliable(self, mocked_exists, mocked_perm, mocked_trust):
+        # A write with `domain=` set has already cleared mutate_resource()'s
+        # ALLOWED_WRITE_DOCTYPES gate (+ confirmation-token where
+        # registered) before this function ever runs — that's a
+        # design-time-reviewed safety net an unscoped write doesn't have,
+        # so it's allowed to proceed on a warning instead of hard-blocking.
+        ec._validate_prod_requester("tag-i2", "priya@org.com", "Sales Order", "write",
+                                     docname="SO-0001", domain="sales")  # no raise
+        mocked_perm.assert_not_called()  # still never trust a meaningless permission answer
+
+    @patch.object(ec, "verify_rbac_precheck_reliable",
+                   return_value={"reliable": False, "bot_user": "Administrator",
+                                  "bot_roles": [], "privileged_identity": True,
+                                  "precheck_discriminates": True})
+    @patch.object(ec, "check_user_permission")
+    @patch.object(ec, "resource_exists", return_value=True)
     def test_read_warns_but_does_not_raise_when_precheck_unreliable(self, mocked_exists, mocked_perm, mocked_trust):
         ec._validate_prod_requester("tag-j", "priya@org.com", "Sales Order", "read")  # no raise
         mocked_perm.assert_not_called()
@@ -682,6 +698,36 @@ class RbacPrecheckReliabilityTests(unittest.TestCase):
             with self.assertRaises(ec.PrivilegedBotAccountError):
                 ec.mutate_resource("tagk", "Sales Order", "create", payload={"x": 1},
                                     mode="read-write", requested_by="priya@org.com")
+
+    @patch.object(ec, "verify_rbac_precheck_reliable",
+                   return_value={"reliable": False, "bot_user": "Administrator",
+                                  "bot_roles": [], "privileged_identity": True,
+                                  "precheck_discriminates": True})
+    @patch.object(ec, "check_user_permission")
+    @patch.object(ec, "resource_exists", return_value=True)
+    @patch.object(ec, "record_comment")
+    @patch.object(ec, "_audit_insert", return_value=None)
+    def test_mutate_resource_proceeds_for_domain_scoped_write_when_precheck_unreliable(
+            self, mocked_audit_insert, mocked_comment, mocked_exists, mocked_perm, mocked_trust):
+        # Same broken-precheck scenario as test_mutate_resource_refuses_write_when_precheck_unreliable
+        # above, but with `domain=` set to an allowlisted, registered domain
+        # — mutate_resource()'s own ALLOWED_WRITE_DOCTYPES gate has already
+        # reviewed this doctype into scope, so the write proceeds on that
+        # (+ a warning) instead of hard-blocking like the unscoped case.
+        fake_domain = "test_fake_domain_kk"
+        ec.register_domain_allowlist(fake_domain, ("Sales Order",))
+        self.addCleanup(ec.DOMAIN_WRITE_ALLOWLISTS.pop, fake_domain, None)
+        with patch.dict("os.environ", {
+            "QKEEE_ERP_TAGKK_BASE_URL": "https://example.com",
+            "QKEEE_ERP_TAGKK_API_KEY": "key",
+            "QKEEE_ERP_TAGKK_API_SECRET": "secret",
+        }, clear=True), \
+                patch.object(ec, "_do_mutate", return_value={"data": {"name": "SO-0001"}}), \
+                patch.object(ec, "record_audit_log_start", return_value="AUDITLOG-0002"), \
+                patch.object(ec, "record_audit_log_finish"):
+            ec.mutate_resource("tagkk", "Sales Order", "create", payload={"x": 1},
+                                mode="read-write", requested_by="priya@org.com", domain=fake_domain)  # no raise
+        mocked_perm.assert_not_called()
 
     @patch.object(ec, "get_user_roles",
                    return_value={"user": "qkeee-erp-bot@org.com", "roles": ["Accounts User"]})
@@ -738,7 +784,8 @@ class ProdGateWiringTests(unittest.TestCase):
                                                                 mocked_do_mutate, mocked_start, mocked_finish):
         ec.mutate_resource("prod", "Sales Order", "submit", name="SO-0001", mode="read-write",
                             requested_by="priya@org.com")
-        mocked_gate.assert_called_once_with("prod", "priya@org.com", "Sales Order", "submit", docname="SO-0001")
+        mocked_gate.assert_called_once_with("prod", "priya@org.com", "Sales Order", "submit",
+                                             docname="SO-0001", domain=None)
 
     @patch.object(ec, "_validate_prod_requester", side_effect=ec.UnvalidatedProdRequesterError("nope"))
     @patch.object(ec, "get_env_config", return_value={"tag": "prod"})
