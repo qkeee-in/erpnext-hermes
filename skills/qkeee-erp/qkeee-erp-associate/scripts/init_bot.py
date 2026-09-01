@@ -2,37 +2,21 @@
 """
 qkeee-erp-associate — init_bot (admin-invoked, one-time provisioning helper).
 
-Per the consolidation plan section 7: "Bot-init's provisioning script
-survives as scripts/init_bot.py inside the unified skill — an admin-
-invoked, one-time action, not part of the associate's normal
-conversational flow." Not a domain module and not part of the associate's
-normal activation sequence — a human/admin runs this deliberately, once
-per target environment (or after a schema change), same posture as the
-old `qkeee-erp-bot-init` skill it's ported from.
+Not a domain module and not part of the associate's normal activation
+sequence — a human/admin runs this deliberately, once per target
+environment (or after a schema change).
 
-Phase 1 (connector consolidation) carried over only this file's single
-`erp_client.py`-derived function, `ensure_qkeee_env_file_skeleton()`.
-Phase 3 (doctype migration, this pass) ports the rest of
-`qkeee-erp-bot-init/scripts/init_bot.py`'s provisioning flow — WITH the
-persona manifest/registration step dropped entirely per plan §7's
-disposition table (`Qkeee ERP Bot Persona` is removed; see
-`../CHANGELOG.md`), and Audit Log's `persona_code` field renamed to
-`domain_code` in `doctype_defs.py`.
-
-**Deliberately narrower than the old init_bot.py in one more way**: this
-version provisions ONLY the `Qkeee Bot` Role and the `Qkeee Bot Audit Log`
-DocType — no `--bot-email`/bot-user provisioning path (that lived in
-`ensure_bot_user.py`, which has not been ported into this skill; run the
-old `qkeee-erp-bot-init/scripts/ensure_bot_user.py` directly if bot-user
-provisioning is needed, until a future pass folds it in here too). Scoped
-this way deliberately for Phase 3, which is doctype-code migration only.
+This version provisions ONLY the `Qkeee Bot` Role and the `Qkeee Bot Audit
+Log` DocType — there is no `--bot-email`/bot-user provisioning path in
+this skill; bot-user provisioning needs a separate tool until one is
+added here.
 
 **CODE-ONLY as of this commit** — this script has not been run against
 any live ERPNext instance in this form. The dry-run/confirm-token
-discipline below is unchanged from the pre-Phase-3 version: nothing here
-executes a write without a prior --dry-run's token, and a real run
-recomputes its plan against the target's actual current state before
-trusting a passed-in token.
+discipline below applies regardless: nothing here executes a write
+without a prior --dry-run's token, and a real run recomputes its plan
+against the target's actual current state before trusting a passed-in
+token.
 
 Requires an ELEVATED (System Manager/Administrator) API key for the
 target tag — creating a DocType/Role record needs permission the shared
@@ -95,20 +79,12 @@ def ensure_qkeee_env_file_skeleton() -> bool:
 
 def _init_plan_token(tag: str, requested_by: str, role_needed: bool,
                       doctypes_needed: list, issued_at: int = None) -> str:
-    """Token over the (slimmed, persona-free) init plan: which tag, who's
-    running it, whether the Role needs creating, and exactly which
-    doctype names need creating (sorted, so ordering never causes a
-    spurious mismatch). issued_at (epoch seconds) is required — it's the
-    dry-run timestamp, baked into the token so it can't outlive
-    DEFAULT_TOKEN_TTL_SECONDS (checked separately via is_fresh(), not by
-    this function).
-
-    Ported/renamed from qkeee-erp-bot-init/scripts/confirm_token.py's
-    init_plan_token() — that file's full_init_plan_token() (which also
-    covered personas_needed/bot-user fields) is NOT ported here, since
-    this skill's init_bot.py dropped both the persona and bot-user
-    provisioning paths (see this module's docstring and
-    ../CHANGELOG.md)."""
+    """Token over the init plan: which tag, who's running it, whether the
+    Role needs creating, and exactly which doctype names need creating
+    (sorted, so ordering never causes a spurious mismatch). issued_at
+    (epoch seconds) is required — it's the dry-run timestamp, baked into
+    the token so it can't outlive DEFAULT_TOKEN_TTL_SECONDS (checked
+    separately via is_fresh(), not by this function)."""
     if issued_at is None:
         raise ValueError("issued_at is required — pass the dry-run-time epoch seconds.")
     return compute_token(

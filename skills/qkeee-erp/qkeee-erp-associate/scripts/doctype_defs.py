@@ -1,23 +1,15 @@
 """
 Create-payloads for the Qkeee Bot audit-trail doctype + the Qkeee Bot
-role. Synced from qkeee-erp-bot-init/references/bot-doctypes-design.md —
-that file is the design source of truth; if you're changing field shapes,
-update the design doc first, then this file to match (Phase 4+ work: a
-qkeee-erp-associate-specific design doc doesn't exist yet — this module
-still points at the old skill's copy until one is authored).
+role. A qkeee-erp-associate-specific design doc for these field shapes
+doesn't exist yet — this module is the source of truth for now; if you're
+changing field shapes, update it directly.
 
-Phase 3 (doctype migration, consolidation plan §7) — CODE-ONLY. This
-module has never been run against a live instance in this form; it is a
-straight edit of qkeee-erp-bot-init/scripts/doctype_defs.py with the
-persona doctype/manifest removed and Audit Log's persona_code field
-repointed to domain_code. See CHANGELOG.md at this skill's root for what
-was removed and why, and for the exported PERSONA_MANIFEST content kept
-for manual-audit reference.
+CODE-ONLY: this module has never been run against a live instance in this
+form.
 
-Both doctypes-that-were, now the one doctype, are created as custom
-(custom=1) records attached to Frappe's built-in "Custom" module — no
-app, no module folder, no Python controller. See the design doc's
-"Why no app" section.
+The doctype is created as a custom (custom=1) record attached to Frappe's
+built-in "Custom" module — no app, no module folder, no Python
+controller.
 """
 
 ROLE_NAME = "Qkeee Bot"
@@ -36,10 +28,6 @@ def _perm(role, **flags):
     return base
 
 
-# Qkeee Bot Persona is REMOVED as of Phase 3 (consolidation plan §7) — see
-# CHANGELOG.md for the export of its schema/manifest and the reasoning.
-# Do not re-add it without a deliberate decision reversing that removal.
-
 AUDIT_LOG = {
     "doctype": "DocType",
     "name": "Qkeee Bot Audit Log",
@@ -53,28 +41,23 @@ AUDIT_LOG = {
         {"fieldname": "session", "label": "Session (raw id)", "fieldtype": "Data",
          "reqd": 1, "in_list_view": 1,
          "description": "Raw session-id string, not a Link — a plain correlator the "
-                         "caller passes as-is. See design doc decision 10."},
+                         "caller passes as-is."},
         {"fieldname": "domain_code", "label": "Domain Code", "fieldtype": "Data",
-         "description": "Phase 3 rename of the former persona_code field (consolidation "
-                         "plan §7) — same denormalized-string convention (no doctype "
-                         "join), now naming the active qkeee-erp-associate domain "
-                         "reference that made this call (e.g. "
-                         "'qkeee-erp-associate/hr-payroll') instead of a separate "
-                         "installed persona skill. Old rows written before this rename "
-                         "keep whatever string they were given under the old field name "
-                         "if the target instance's DocType field is renamed rather than "
-                         "recreated — a live schema migration (renaming an existing "
-                         "field on an already-provisioned instance) is NOT performed by "
-                         "this code; see CHANGELOG.md."},
+         "description": "Denormalized string (no doctype join) naming the active "
+                         "qkeee-erp-associate domain reference that made this call (e.g. "
+                         "'qkeee-erp-associate/hr-payroll'). A live schema migration "
+                         "(renaming an existing field on an already-provisioned "
+                         "instance) is NOT performed by this code — see CHANGELOG.md for "
+                         "how a pre-existing instance's field gets reconciled."},
         {"fieldname": "environment_tag", "label": "Environment Tag", "fieldtype": "Data"},
         {"fieldname": "channel", "label": "Channel", "fieldtype": "Select",
          "options": "\nWeb\nDiscord\nTelegram\nWhatsApp\nEmail\nSlack\nCLI\nAPI\nOther",
          "in_list_view": 1,
          "description": "Denormalized from Session where one exists; settable directly "
-                         "otherwise — see design doc."},
+                         "otherwise."},
         {"fieldname": "channel_metadata", "label": "Channel Metadata (JSON)", "fieldtype": "Long Text",
          "description": "Free-form per-channel tracing detail, e.g. chat_id, message_id, "
-                         "thread id, email Message-Id header — see bot-doctypes-design.md."},
+                         "thread id, email Message-Id header."},
         {"fieldname": "action", "label": "Action", "fieldtype": "Select",
          "options": "Read\nCreate\nUpdate\nSubmit\nCancel\nDelete", "reqd": 1,
          "in_list_view": 1},
@@ -115,13 +98,7 @@ AUDIT_LOG = {
     ],
 }
 
-# Create order note kept from the pre-Phase-3 file for context: with
-# Persona removed, Audit Log is now the only doctype here, so there is no
-# ordering question left to document — kept as a single-element list for
-# init_bot.py's existing iteration shape.
+# Audit Log is the only doctype here, so there is no create-order question
+# to document — kept as a single-element list for init_bot.py's existing
+# iteration shape.
 ALL_DOCTYPES = [AUDIT_LOG]
-
-# PERSONA_MANIFEST is REMOVED as of Phase 3 — see CHANGELOG.md for the
-# exported list (persona_code/persona_label pairs this library used to
-# provision) kept for manual-audit reference. Do not re-add without a
-# deliberate decision to bring persona registration back.

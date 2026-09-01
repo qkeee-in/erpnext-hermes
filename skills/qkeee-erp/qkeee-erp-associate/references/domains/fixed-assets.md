@@ -1,13 +1,11 @@
 # Domain: fixed-assets (Asset lifecycle)
 
-Ported from `qkeee-erp-fixed-asset-manager`'s SKILL.md, rewritten into the
-associate's single voice. Code lives in `scripts/domains/fixed_assets.py`
+Code lives in `scripts/domains/fixed_assets.py`
 (`ALLOWED_WRITE_DOCTYPES = ("Asset", "Asset Movement", "Asset Repair")`),
-which also carries this domain's genuine unique connector logic ported in
-Phase 1: `mutate_resource_with_concurrency()`, `call_whitelisted_method()`,
-and (per the audit gap closed during Phase 1, see that module's docstring)
-`call_whitelisted_method()` now writes to `Qkeee Bot Audit Log` where the
-old code didn't.
+which also carries this domain's genuine connector logic:
+`mutate_resource_with_concurrency()`, `call_whitelisted_method()` (see
+that module's docstring — `call_whitelisted_method()` also writes to
+`Qkeee Bot Audit Log`, not just the usual ERPNext Comment).
 
 ## When this domain applies
 

@@ -1,17 +1,16 @@
 # Domain: hr-payroll (HR, leave, payroll batch)
 
-Ported from `qkeee-erp-hr-associate`'s SKILL.md, rewritten into the
-associate's single voice. Code lives in `scripts/domains/hr_payroll.py`
+Code lives in `scripts/domains/hr_payroll.py`
 (`ALLOWED_WRITE_DOCTYPES = ("Employee", "Employee Onboarding", "Employee
-Separation", "Job Offer", "Leave Application")` — first-pass, see that
-module's docstring). Applies `00-conventions.md` and `01-connectivity.md`
-in full; this file adds what's specific to HR/talent-acquisition work.
+Separation", "Job Offer", "Leave Application")` — see that module's
+docstring). Applies `00-conventions.md` and `01-connectivity.md` in full;
+this file adds what's specific to HR/talent-acquisition work.
 
-Same Phase 1 finding as `accounts.md`: this skill's old `erp_client.py`
-copy had zero unique connector functions — the PII-flagging and
-advisory-only enforcement described below lived in
-`render_employee_draft.py`/`render_advisory_draft.py`, Phase 2+ porting
-work still ahead. This reference states the target procedure.
+This domain has no unique connector logic of its own — the PII-flagging
+and advisory-only enforcement described below belongs in
+`render_employee_draft.py`/`render_advisory_draft.py`, which don't exist
+in this skill's scripts/ yet. This reference states the target
+procedure.
 
 ## When this domain applies
 

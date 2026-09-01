@@ -2,22 +2,9 @@
 """
 qkeee-erp-associate — procurement domain (Supplier, PO, RFQ).
 
-Ported from qkeee-erp-procurement/scripts/erp_client.py during Phase 1
-(connector consolidation). Same finding as accounts.py/hr_payroll.py/
-sales.py: a full function-by-function diff against qkeee-erp-frappe-core's
-copy found ZERO functions in this skill's erp_client.py beyond the shared
-core set (plus the per-skill `_cli()`/`_parse_json_arg()` variants every
-copy carries). Note: this skill's scripts/ directory also had 15 stray
-leftover HR test-fixture JSON files (emp_create.json, ja_create.json,
-lap_*.json, leave_create.json, ...) per the plan's section 1 table —
-those are a cleanup item for Phase 6 (deleting the old skill directories
-outright makes this moot), not touched here.
-
-ALLOWED_WRITE_DOCTYPES is a first-pass allowlist inferred from
-render_po_draft.py/render_supplier_draft.py's target doctypes plus
-Request for Quotation/Supplier Quotation referenced across references/.
-Confirm/expand against references/domains/procurement.md once authored
-(Phase 2).
+ALLOWED_WRITE_DOCTYPES covers render_po_draft.py/render_supplier_draft.py's
+target doctypes plus Request for Quotation/Supplier Quotation. Cross-check
+against references/domains/procurement.md before expanding.
 """
 
 import os

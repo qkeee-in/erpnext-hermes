@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-qkeee-erp-associate — memory promotion (Phase 4 of the consolidation plan,
-see plan section 8, revised).
+qkeee-erp-associate — memory promotion.
 
 WHAT THIS MODULE IS NOT, first — because it shapes everything below: this
 is NOT a client of Hermes' `memory`/`skill_manage` tools in the sense of
@@ -24,15 +23,12 @@ require in-process state this module cannot reach from where it runs:
 This module's own scripts run the way every other `qkeee-erp-associate`
 script does: as a subprocess under Hermes' `execute_code`/`terminal`
 sandbox, a SEPARATE process from the agent's own tool-calling loop, with
-no `hermes-agent` package on its path (confirmed by direct inspection of
-the `hermes-agent` source for this phase — see the Phase 4 report for the
-full list of what was checked). A subprocess script cannot call a tool
-that only exists as a function bound into the live agent's own LLM
+no `hermes-agent` package on its path. A subprocess script cannot call a
+tool that only exists as a function bound into the live agent's own LLM
 tool-calling loop.
 
-So instead of "calling skill_manage", this module's actual job — matching
-the plan's own framing that it "no longer owns file I/O for the durable
-tier" — is: **redact, format, and hand back a plan** describing the exact
+So instead of calling `skill_manage` directly, this module's job is:
+**redact, format, and hand back a plan** describing the exact
 `skill_manage`/`memory` tool calls the calling agent turn should make
 itself, using its own native tool access. `build_promotion_plan()` is the
 single entry point; its output is a JSON-serializable list of
@@ -43,7 +39,7 @@ skill_manage; `action`, `target`, `content`, `old_text` for memory) — the
 agent reads this script's stdout and then makes those tool calls itself,
 in the same turn, rather than this script attempting to make them.
 
-Naming/layout matches the consolidation plan's section 10 conventions:
+Layout:
   qkeee-erp-learned/<env-tag>/
     SKILL.md
     references/
@@ -54,10 +50,10 @@ Naming/layout matches the consolidation plan's section 10 conventions:
 
 Redaction: every free-text value in the findings dict is passed through
 core.client.redact_pii()/_redact_pii_deep() before it's ever formatted
-into content bound for a durable, Hermes-discoverable location — per the
-plan's explicit warning that skill_manage's own security scanner looks
-for dangerous code patterns and prompt-injection, not sensitive-data
-leakage. This pass is load-bearing, not a courtesy.
+into content bound for a durable, Hermes-discoverable location —
+skill_manage's own security scanner looks for dangerous code patterns and
+prompt-injection, not sensitive-data leakage. This pass is load-bearing,
+not a courtesy.
 """
 
 import json
@@ -75,8 +71,7 @@ from core.client import redact_pii, _redact_pii_deep
 LEARNED_SKILL_PREFIX = "qkeee-erp-learned"
 
 # Skill names must be lowercase letters/digits/hyphens/dots/underscores per
-# skill_manager_tool.py's VALID_NAME_RE — confirmed by direct inspection of
-# hermes-agent (Phase 4). An env tag that doesn't already fit this shape
+# skill_manager_tool.py's VALID_NAME_RE. An env tag that doesn't already fit this shape
 # (e.g. it came from a user-typed --tag with underscores, mixed case) is
 # sanitized here so the resulting skill name is guaranteed valid, rather
 # than discovering a rejected skill_manage(create) call at execution time.
@@ -101,11 +96,8 @@ def learned_skill_name(env_tag: str) -> str:
     `name=` argument: skill_manager_tool.py's VALID_NAME_RE
     (^[a-z0-9][a-z0-9._-]*$) rejects '/' outright. skill_manage nests
     skills via a separate `category=` parameter instead
-    (_resolve_skill_dir() -> skills_dir/category/name) — confirmed by
-    direct inspection of hermes-agent (Phase 4); see
-    learned_skill_manage_args() for the actual create-call shape and
-    the module docstring's report note on this drift vs. a naive reading
-    of the plan's 'qkeee-erp-learned/<env-tag>' naming convention. The
+    (_resolve_skill_dir() -> skills_dir/category/name) — see
+    learned_skill_manage_args() for the actual create-call shape. The
     resulting ON-DISK layout is identical either way
     (skills/qkeee-erp-learned/<env-tag>/) — only the tool-call argument
     shape differs from what a literal slash-joined name would suggest."""
@@ -159,8 +151,7 @@ description: "Learned notes for ERPNext environment tag '{env_tag}' — versions
 
 Durable, per-environment knowledge for `qkeee-erp-associate`'s `{env_tag}`
 tag — created and updated via `skill_manage` by
-`scripts/core/memory_promote.py`'s promotion plan, per the consolidation
-plan's section 8 (self-evolving memory, tiered). This is a satellite
+`scripts/core/memory_promote.py`'s promotion plan. This is a satellite
 skill, not a copy of the associate itself: `qkeee-erp-associate` stays
 protected/externally-owned (see its own SKILL.md status note); this
 skill is the deliberately-open counterpart Hermes' background-review pass
@@ -275,8 +266,8 @@ def format_non_erpnext_md(env_tag: str, system_slug: str, findings: dict) -> str
 
 
 def format_memory_breadcrumb(env_tag: str, one_line_summary: str) -> str:
-    """The <profile>/memories/MEMORY.md breadcrumb line, per plan section 8's
-    table: 'one line per known env tag'. Kept well under the memory tool's
+    """The <profile>/memories/MEMORY.md breadcrumb line: one line per known
+    env tag. Kept well under the memory tool's
     ~2,200-char whole-store budget (confirmed by inspecting
     tools/memory_tool.py: MemoryStore defaults to
     memory_char_limit=2200) — this single entry should be a small fraction
@@ -341,8 +332,7 @@ def build_promotion_plan(env_tag: str, findings: dict, *,
     # the qualified "qkeee-erp-learned/example-env" — see
     # learned_skill_name()'s docstring for why a literal slash would be
     # rejected by skill_manage's own name validation. `category` nests it
-    # under skills/qkeee-erp-learned/ on disk, matching the plan's naming
-    # convention's actual directory shape.
+    # under skills/qkeee-erp-learned/ on disk.
     manage_args = learned_skill_manage_args(env_tag)
     name = manage_args["name"]
     category = manage_args["category"]

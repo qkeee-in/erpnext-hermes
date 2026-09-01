@@ -1,15 +1,6 @@
 #!/usr/bin/env python3
-"""Regression tests for core.client, ported (Phase 1 consolidation) from
-qkeee-erp-frappe-core/scripts/test_erp_client.py — the module under test
-was frappe-core's erp_client.py copy, now core/client.py. Only the two
-import lines below changed (module name `erp_client` -> `client`,
-imported under the SAME `erp_client`/`ec` aliases so every test body
-below is untouched); every assertion, mock target, and test case is
-identical to the original. Ten more test_erp_client.py suites (one per
-retired skill) still need reconciling/deduping into this file — tracked
-as Phase 7 work (see the consolidation plan's migration phases and this
-Phase 1 task's final report), not attempted here since most of those
-suites cover the SAME shared functions this file already exercises.
+"""Regression tests for core.client. Imports the module under both the
+`erp_client` and `ec` aliases.
 
 Regression tests for the audit-logging silent-failure bug: session_id
 missing must never produce an empty `session` field on Qkeee Bot Audit Log
@@ -30,9 +21,8 @@ class GetEnvConfigRequestedByTests(unittest.TestCase):
     """QKEEE_ERP_<TAG>_REQUESTED_BY is optional, per-tag, and must never
     block connection like BASE_URL/API_KEY/API_SECRET do.
 
-    QKEEE_ERP_<TAG>_DEBUG / `debug_default` were removed in Phase 5 (GRC
-    hardening, consolidation plan §9): read audit logging is now always
-    on, so there is no debug flag left to resolve."""
+    There is no QKEEE_ERP_<TAG>_DEBUG / `debug_default`: read audit
+    logging is always on, so there is no debug flag to resolve."""
 
     ENV_BASE = {
         "QKEEE_ERP_DEFAULT_BASE_URL": "https://org.erpnext.com",
@@ -105,11 +95,11 @@ class AuditInsertFailureVisibilityTests(unittest.TestCase):
 
 
 class AuditSubmitSkipsWhenInsertFailedTests(unittest.TestCase):
-    """Phase 7 live finding (demo.qkeee.in): _audit_submit(None) — reached
-    whenever the preceding insert already failed and warned — used to raise
-    a second, confusing warning (urllib.parse.quote(None) ->
-    "quote_from_bytes() expected bytes") that masked the real cause. Guard
-    added: log_name falsy short-circuits to False before any request."""
+    """_audit_submit(None) — reached whenever the preceding insert already
+    failed and warned — must not raise a second, confusing warning
+    (urllib.parse.quote(None) -> "quote_from_bytes() expected bytes") that
+    would mask the real cause. Guard: log_name falsy short-circuits to
+    False before any request."""
 
     def test_returns_false_without_a_request_when_log_name_is_none(self):
         with patch.object(ec, "_request") as mocked_request:
@@ -119,14 +109,12 @@ class AuditSubmitSkipsWhenInsertFailedTests(unittest.TestCase):
 
 
 class PersonaDoctypeRemovedTests(unittest.TestCase):
-    """Phase 3 (doctype migration, consolidation plan §7): `Qkeee Bot
-    Persona` is removed — `ensure_persona_registered()`, `PERSONA_DOCTYPE`,
-    and the `register-persona` CLI subcommand no longer exist in
-    core/client.py. These are guard tests, not coverage of a removed
-    capability: they fail loudly if a future edit accidentally
-    reintroduces persona-registration code without a deliberate decision
-    to reverse the Phase 3 removal (see ../../CHANGELOG.md for the
-    exported schema/manifest this replaces)."""
+    """There is no `Qkeee Bot Persona` doctype — `ensure_persona_registered()`,
+    `PERSONA_DOCTYPE`, and the `register-persona` CLI subcommand don't
+    exist in core/client.py. These are guard tests, not coverage of a
+    capability: they fail loudly if a future edit reintroduces
+    persona-registration code without a deliberate decision to do so (see
+    ../../CHANGELOG.md for the exported schema/manifest this replaces)."""
 
     def test_ensure_persona_registered_does_not_exist(self):
         self.assertFalse(hasattr(ec, "ensure_persona_registered"))
@@ -148,12 +136,10 @@ class PersonaDoctypeRemovedTests(unittest.TestCase):
 
 
 class AuditLogDomainCodeTests(unittest.TestCase):
-    """Qkeee Bot Audit Log's former `persona_code` field is repointed to
-    `domain_code` (Phase 3) — same denormalized-string convention, now
+    """Qkeee Bot Audit Log's `domain_code` field — a denormalized string
     naming the active qkeee-erp-associate domain reference (e.g.
-    'qkeee-erp-associate/hr-payroll') rather than a separate installed
-    persona skill. Confirms the write payload key actually changed, not
-    just the parameter name."""
+    'qkeee-erp-associate/hr-payroll'). Confirms the write payload carries
+    `domain_code`, not `persona_code`."""
 
     @patch.object(ec, "_audit_insert")
     def test_log_read_writes_domain_code_field(self, mock_insert):
@@ -180,10 +166,8 @@ class AuditLogDomainCodeTests(unittest.TestCase):
 
 class RunQueryReportTests(unittest.TestCase):
     """Fully-qualified `import erp_client` + `unittest.mock.patch.object`
-    throughout — deliberately not relying on any particular alias
-    (`ec`/`patch`) a specific copy of this test file might import under,
-    so this class stays portable when appended into a persona skill's own
-    test_erp_client.py by the core sync script."""
+    throughout, deliberately not relying on the `ec`/`patch` aliases used
+    elsewhere in this file."""
 
     @unittest.mock.patch.object(erp_client, "_log_read")
     @unittest.mock.patch.object(erp_client, "_request")
@@ -199,8 +183,7 @@ class RunQueryReportTests(unittest.TestCase):
         self.assertEqual(mock_request.call_args[1]["params"]["report_name"], "Sales Order Analysis")
         self.assertEqual(result["report_name"], "Sales Order Analysis")
         self.assertEqual(result["result"], [{"customer": "Acme"}])
-        # Phase 5 GRC hardening (consolidation plan §9): read logging is
-        # unconditional now, not debug-gated — every read logs.
+        # Read logging is unconditional, not debug-gated — every read logs.
         mock_log_read.assert_called_once()
 
     @unittest.mock.patch.object(erp_client, "check_user_permission", return_value=True)
@@ -289,9 +272,8 @@ class TestGatedMutateResource(unittest.TestCase):
             mocked_request.assert_not_called()
 
     def test_succeeds_with_matching_fresh_token(self):
-        # Phase 5 GRC hardening (consolidation plan §9): the requester-
-        # permission check now runs on every tag, not PROD only — a
-        # write on non-PROD 'qa' with a requested_by present still gets
+        # The requester-permission check runs on every tag, not PROD only
+        # — a write on non-PROD 'qa' with a requested_by present still gets
         # validated as a real User with has_permission, so those two
         # need mocking here even though 'qa' isn't PROD.
         issued_at = int(time.time())
@@ -330,9 +312,8 @@ class QkeeeEnvFileTests(unittest.TestCase):
     file parser and its precedence over os.environ directly, without
     touching the real filesystem location HERMES_HOME would resolve to.
     Fully-qualified `erp_client.*`/`unittest.mock.*` and a locally-imported
-    `os` throughout, deliberately not relying on any particular alias this
-    file's own top-of-file imports happen to use, so this class stays
-    portable when appended into a persona skill's own test_erp_client.py."""
+    `os` throughout, deliberately not relying on the aliases used
+    elsewhere in this file."""
 
     def setUp(self):
         import os
@@ -405,12 +386,12 @@ class IsProdTagTests(unittest.TestCase):
 class ValidateProdRequesterTests(unittest.TestCase):
     """_validate_prod_requester(): presence of requested_by stays
     mandatory on PROD only (no-op with a missing requester off PROD/on
-    exempt doctypes). But per Phase 5 GRC hardening (consolidation plan
-    §9), whenever a requested_by IS present it is validated — as a real
-    ERPNext User, with actual has_permission on the doctype/action — on
-    EVERY tag, not PROD only. Never falls back to a tag default, never
-    proceeds unverified. See UniversalRequesterValidationTests below for
-    the non-PROD-with-a-requester cases this Phase 5 change adds."""
+    exempt doctypes). But whenever a requested_by IS present it is
+    validated — as a real ERPNext User, with actual has_permission on the
+    doctype/action — on EVERY tag, not PROD only. Never falls back to a
+    tag default, never proceeds unverified. See
+    UniversalRequesterValidationTests below for the non-PROD-with-a-requester
+    cases."""
 
     def test_noop_on_non_prod_tag(self):
         with patch.object(ec, "resource_exists") as mocked_exists:
@@ -458,14 +439,13 @@ class ValidateProdRequesterTests(unittest.TestCase):
 
 
 class UniversalRequesterValidationTests(unittest.TestCase):
-    """Phase 5 GRC hardening (consolidation plan §9, "RBAC pre-check,
-    every environment"): supplying a requested_by on a NON-PROD tag now
-    gets the same real-User + has_permission validation PROD always got —
-    closing the prior gap where a bogus requester was silently accepted
-    off PROD."""
+    """RBAC pre-check, every environment: supplying a requested_by on a
+    NON-PROD tag gets the same real-User + has_permission validation PROD
+    always gets, so a bogus requester is never silently accepted, PROD or
+    not."""
 
     def test_noop_on_non_prod_with_no_requester(self):
-        # Presence stays optional off PROD — unchanged from Phase 1.
+        # Presence stays optional off PROD.
         with patch.object(ec, "resource_exists") as mocked_exists:
             ec._validate_prod_requester("qa", None, "Sales Order", "read")
         mocked_exists.assert_not_called()
@@ -575,7 +555,7 @@ class CheckUserPermissionTests(unittest.TestCase):
     @patch.object(ec, "_request", return_value={"message": True})
     @patch.object(ec, "get_env_config", return_value={"tag": "prod"})
     def test_docname_sent_as_empty_string_when_not_given(self, mocked_cfg, mocked_request):
-        # Phase 7 live finding (demo.qkeee.in): this Frappe build's
+        # Live-confirmed against demo.qkeee.in: this Frappe build's
         # frappe.client.has_permission has no default for docname — omitting
         # the param entirely 500s. docname="" is the live-confirmed working
         # doctype-level-only shape; see check_user_permission_raw()'s docstring.

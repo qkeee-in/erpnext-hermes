@@ -1,10 +1,7 @@
 # Domain: manufacturing (BOM, Work Order, Job Card) — NEW, unvalidated
 
-**This domain is new, not ported.** No predecessor `qkeee-erp-*` skill
-ever covered manufacturing — this is the documented gap named in the
-consolidation plan's Risks section (§12): "no existing skill touches BOM,
-Work Order, or Job Card." Everything below is authored from general
-ERPNext/Frappe product knowledge, the same way `references/domains/
+**This domain has no write path yet.** Everything below is authored from
+general ERPNext/Frappe product knowledge, the same way `references/domains/
 doc-extraction.md` and every other domain file cite ERPNext mechanics —
 **but with none of the live-instance confirmation every other domain
 file's specifics carry** (no `<erp-instance>` round trip, no confirmed
@@ -16,15 +13,14 @@ it, not as ground truth the way `domains/inventory.md`'s batch-tracking
 finding is.
 
 **No code exists yet either.** There is no `scripts/domains/
-manufacturing.py` — Phase 1 (connector consolidation) deliberately didn't
-write one, since there was no source skill's `erp_client.py` to extract
-from. This reference document describes the target shape a future
-`manufacturing.py` should take; until that module exists and registers an
-`ALLOWED_WRITE_DOCTYPES` allowlist via `core.client.register_domain_allowlist()`,
+manufacturing.py`. This reference document describes the target shape a
+future `manufacturing.py` should take; until that module exists and
+registers an `ALLOWED_WRITE_DOCTYPES` allowlist via
+`core.client.register_domain_allowlist()`,
 `core.client.mutate_resource(..., domain="manufacturing")` will raise
 `DoctypeNotAllowedError` for every doctype — there is no write path for
 this domain in the shipped skill yet, full stop. Anything below framed as
-"drafting/creating" a manufacturing doctype describes a Phase 3+ build
+"drafting/creating" a manufacturing doctype describes a future build
 target, not a live capability.
 
 ## When this domain would apply (once built)
@@ -94,16 +90,14 @@ planned production run.
 
 ## What this domain deliberately doesn't try to do yet
 
-No write capability ships in this phase. Read-only exploration (via the
-generic `core.client.query_resource()`/`get_resource()`/`run_query_report()`,
+No write capability ships today. Read-only exploration (via the generic
+`core.client.query_resource()`/`get_resource()`/`run_query_report()`,
 with `domain=` omitted since there's no allowlist yet to gate against) is
 usable today for a user who just wants to look at BOM/Work Order/Job Card
 data — but say explicitly that manufacturing writes aren't a capability of
 this skill yet, rather than attempting to route them through
-`gated_mutate_resource()` as a workaround. When a real build happens
-(Phase 3+), it should follow the same pattern as `domains/inventory.md`:
-diff against nothing (there's no predecessor copy), write
-`scripts/domains/manufacturing.py` fresh, declare its
+`gated_mutate_resource()` as a workaround. When a real build happens, it
+should write `scripts/domains/manufacturing.py`, declare its
 `ALLOWED_WRITE_DOCTYPES`, and replace every "proposed"/"unconfirmed" claim
 in this file with a live-verified one — the same bar every other domain
-file in this library was held to.
+file here is held to.

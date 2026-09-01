@@ -26,10 +26,9 @@ logging into `Qkeee Bot Audit Log` (`Attempted` → `Success`/`Failure`),
 carrying: `session`, `requested_by`, `action`, `reference_doctype`/
 `reference_name`, `timestamp`, `status`, `payload_before`/`payload_after`
 (Update only), `field_diff` (computed, Update only), `user_approved`, and
-`approval_note`. See `00-conventions.md`'s GRC baseline for the
-unconditional-vs-debug-gated read/write split and its target-state
-expansion (universal RBAC pre-check, always-on read logging — Phase 5,
-not yet live as of Phase 2).
+`approval_note`. See `00-conventions.md`'s GRC baseline: RBAC pre-check
+runs on every environment and read logging is always on, unconditionally
+— neither is debug-gated or PROD-only.
 
 **What this trail proves, and what it doesn't:**
 - Proves: which record was touched, by which domain, attributed to which
@@ -73,13 +72,11 @@ not yet live as of Phase 2).
    written. Never re-introduce raw PII into an audit report by pulling it
    from a source outside the audit log (a linked record's own fields, a
    chat transcript) without applying the same redaction.
-4. **State plainly which GRC guarantees are live vs. still Phase 5 work**
-   when a compliance-minded user asks — don't imply the universal
-   RBAC-every-environment or always-on-read-logging targets are already
-   enforced in code if this session is still running against a
-   pre-Phase-5 build of `core/client.py`. Honesty about what's aspirational
-   vs. live is itself a GRC property this skill should model, not
-   undermine.
+4. **State plainly which GRC guarantees are live vs. still aspirational**
+   when a compliance-minded user asks — never imply a control is enforced
+   in code before confirming it against this skill's actual
+   `core/client.py`. Honesty about what's aspirational vs. live is itself
+   a GRC property this skill should model, not undermine.
 5. **Segregation-of-duties questions** ("did the same person both approve
    and execute this write") map to `requested_by` (who asked) vs. whoever
    is actually operating this skill (the bot account, always) — this
@@ -92,9 +89,9 @@ not yet live as of Phase 2).
 | Capability | Outcome | Notes |
 | --- | --- | --- |
 | Audit trail pull for a doctype/period | Every logged write, with requester/diff | Best-effort — flag any orphaned `Attempted` rows |
-| Read-access review | Who read what, when debug was on | Reads are debug-gated pre-Phase-5, not universal yet |
+| Read-access review | Who read what, when | Every read is logged, unconditionally |
 | Segregation-of-duties question | `requested_by` vs. acting bot identity clarified | Cannot certify human identity beyond what's logged |
-| GRC guarantee status check | Honest live-vs-planned answer | Never imply Phase 5 hardening is live before it lands |
+| GRC guarantee status check | Honest live-vs-planned answer | Never imply a control is enforced before confirming it in code |
 
 ## Relationships
 

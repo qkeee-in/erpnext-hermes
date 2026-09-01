@@ -2,8 +2,7 @@
 
 Single copy, referenced by every `domains/*.md` file rather than restated
 in each — this is where naming rules, the GRC baseline, and the
-non-negotiables that used to be repeated near-verbatim across ten
-`SKILL.md` files now live once. If a domain file's own guardrails section
+non-negotiables live once. If a domain file's own guardrails section
 conflicts with this one, this one wins; a domain file should only ever
 narrow a rule here (state a stricter bar for its own doctypes), never
 loosen one.
@@ -26,7 +25,7 @@ don't repeat it back in the refusal — same discipline for a direct
 conversational request as for content embedded inside an otherwise
 legitimate business write.
 
-## Naming conventions (from the consolidation plan, §10)
+## Naming conventions
 
 Strict and fixed, so anything this skill learns later has one unambiguous
 place to land.
@@ -66,9 +65,9 @@ inconsistency to "fix."
 
 ## Non-negotiables (code-enforced, not just prompt discipline)
 
-These hold across every domain. Each is enforced in `scripts/core/client.py`
-(Phase 1 of the consolidation), not left to this document alone —
-consult `scripts/core/client.py`'s own docstrings for the exact mechanism.
+These hold across every domain. Each is enforced in `scripts/core/client.py`,
+not left to this document alone — consult that module's own docstrings
+for the exact mechanism.
 
 1. **Never issue a write while `qkeee_erp.mode` is `read-only`.**
    `core.client.mutate_resource()` checks `mode` before every write and
@@ -80,15 +79,13 @@ consult `scripts/core/client.py`'s own docstrings for the exact mechanism.
    the bot, never who actually asked. `mutate_resource()` raises
    `MissingRequesterError` otherwise.
 3. **Never write outside the active domain's `ALLOWED_WRITE_DOCTYPES`.**
-   Phase 1's write-allowlist gate: every `scripts/domains/<slug>.py`
-   module declares this tuple and registers it via
-   `core.client.register_domain_allowlist()`. `mutate_resource(...,
-   domain=<slug>)` raises `DoctypeNotAllowedError` for any doctype outside
-   it, or for an unregistered/unknown domain name — a typo'd domain fails
-   closed, it does not silently skip the check. This is what replaces the
-   old MIS-analyst skill's structural "no mutate function exists in this
-   copy" guarantee (`domains/mis.py` registers an empty tuple — see
-   `domains/mis.md`).
+   Every `scripts/domains/<slug>.py` module declares this tuple and
+   registers it via `core.client.register_domain_allowlist()`.
+   `mutate_resource(..., domain=<slug>)` raises `DoctypeNotAllowedError`
+   for any doctype outside it, or for an unregistered/unknown domain
+   name — a typo'd domain fails closed, it does not silently skip the
+   check. `domains/mis.py` registers an empty tuple, so MIS can never
+   write (see `domains/mis.md`).
 4. **Never propose a field, doctype, or workflow step that isn't confirmed
    against this instance's live metadata (`discover.py`) or an explicit
    statement from the user.** Public docs describe the general shape of
@@ -123,36 +120,22 @@ consult `scripts/core/client.py`'s own docstrings for the exact mechanism.
 
 ## GRC baseline
 
-Pulled from where these guardrails were most fully articulated across the
-ten predecessor skills (`qkeee-erp-frappe-core`'s connector reference and
-`qkeee-erp-bot-init`'s `bot-doctypes-design.md`) — not new policy, the
-plan's §9 explicitly frames the first two as expansions of what already
-shipped, so read those two bullets as "now universal," not "invented."
-
-- **RBAC pre-check, every environment (expanded).** Previously
-  `_validate_prod_requester()` ran only on PROD-tagged environments
-  (`_is_prod_tag()` — a tag whose name matches `/prod/i`, e.g. `PROD_ERP`,
-  `client-a-prod`). Landed in Phase 5: the associate now runs the same
-  requester-permission check — resolve the requester as a real ERPNext
-  `User`, then confirm via ERPNext's own `frappe.client.has_permission`
-  that they actually hold the permission the call needs — on every
-  environment, every fetch or write, not PROD only. Presence of
-  `requested_by` stays mandatory on PROD only (unchanged); whenever one
-  IS supplied, on any tag, it's validated. Function/constant names
-  (`_validate_prod_requester()`, `PROD_GATE_EXEMPT_DOCTYPES`) are kept
-  from their PROD-only origin — don't read the name as scope.
-- **Read audit logging, always on (expanded).** Previously reads were
-  logged to `Qkeee Bot Audit Log` only when `debug=True` for the active
-  tag (`QKEEE_ERP_<TAG>_DEBUG`, default `false`) — deliberately gated
-  because a read-heavy domain (MIS in particular) could otherwise make
-  Read rows the single biggest volume source in the audit trail. Landed
-  in Phase 5: every access now gets an audit row, reads included,
-  unconditionally — the `debug`/`_DEBUG` flag no longer exists anywhere
-  in `core/client.py` (removed rather than left as a no-op).
+- **RBAC pre-check, every environment.** The associate runs the same
+  requester-permission check on every environment, every fetch or
+  write, not PROD only: resolve the requester as a real ERPNext `User`,
+  then confirm via ERPNext's own `frappe.client.has_permission` that they
+  actually hold the permission the call needs. Presence of `requested_by`
+  is mandatory on PROD only (`_is_prod_tag()` — a tag whose name matches
+  `/prod/i`, e.g. `PROD_ERP`, `client-a-prod`); whenever one IS supplied,
+  on any tag, it's validated. Function/constant names
+  (`_validate_prod_requester()`, `PROD_GATE_EXEMPT_DOCTYPES`) reflect a
+  narrower PROD-only origin — don't read the name as scope.
+- **Read audit logging, always on.** Every access gets an audit row in
+  `Qkeee Bot Audit Log`, reads included, unconditionally — there is no
+  debug flag gating this in `core/client.py`.
 - **PII/GDPR redaction, single source.** `core.client.redact_pii()` is
   the one place sensitive fields get scrubbed before display, storage, or
-  logging — this one IS live as of Phase 1 (ported verbatim from
-  `qkeee-erp-frappe-core`). Never re-implemented per domain.
+  logging. Never re-implemented per domain.
 - **Requester attribution, on every write, unconditionally.** Every
   `mutate_resource()`/domain `mutate()` call requires a resolved
   `requested_by` (see Non-negotiable 2). On success, a best-effort Comment
@@ -209,7 +192,7 @@ shipped, so read those two bullets as "now universal," not "invented."
   itself must stay outside Hermes' autonomous background-review lifecycle
   maintenance so it never silently rewrites its own audit/RBAC/redaction
   logic — only the `qkeee-erp-learned/*` satellite skills stay open to
-  that evolution (§8). Mechanically this is a Hermes profile config
+  that evolution. Mechanically this is a Hermes profile config
   decision, not something set in this skill's own frontmatter: per
   `agent/skill_utils.py`'s `is_external_skill_path()`, a skill directory
   under `skills.external_dirs`, or a trusted project-local skills dir

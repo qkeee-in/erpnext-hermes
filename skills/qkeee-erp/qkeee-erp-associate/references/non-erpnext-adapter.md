@@ -1,6 +1,6 @@
 # Non-ERPNext systems adapter procedure
 
-Per the consolidation plan §9. This is not a connector — `scripts/core/
+This is not a connector — `scripts/core/
 client.py` is Frappe-REST-specific by construction, and nothing in this
 skill auto-discovers or drives an arbitrary external API. This document is
 the *procedure* for the case where a user's request is about a system that
@@ -33,14 +33,13 @@ Tally export" or "check the payment status in our gateway's dashboard."
    isolated-credential mechanism for a second system, say so and ask the
    user how they'd like to handle it, rather than improvising a new
    storage location.
-4. **Catalog what's learned the same way as a custom Frappe app.** Once
-   Phase 4's memory wiring lands, a non-ERPNext system's notes land under
+4. **Catalog what's learned the same way as a custom Frappe app.** A
+   non-ERPNext system's notes land under
    `qkeee-erp-learned/<env-tag>/references/non-erpnext/<system-slug>.md`
    — same tier, same promotion path (`memory_promote.py`'s redact +
    format, then `skill_manage`), same one-line `MEMORY.md` breadcrumb
    convention as a custom app gets under `custom-apps/<app-slug>.md`. See
-   `00-conventions.md`'s naming table. Until Phase 4 lands, report
-   findings back to the user plainly rather than assuming they persist.
+   `00-conventions.md`'s naming table.
 5. **Every other non-negotiable in `00-conventions.md` still applies.**
    PII redaction, the scope guardrail, requester-attribution discipline
    where the action has a real-world approval analog, save-then-review

@@ -1,15 +1,13 @@
 # Domain: sales (Customer, Quotation, Sales Order, Delivery Note)
 
-Ported from `qkeee-erp-sales`'s SKILL.md, rewritten into the associate's
-single voice. Code lives in `scripts/domains/sales.py`
+Code lives in `scripts/domains/sales.py`
 (`ALLOWED_WRITE_DOCTYPES = ("Customer", "Quotation", "Sales Order",
 "Delivery Note")`). Deliberately scoped to ERPNext's Selling module, not a
 full CRM replacement.
 
-Same Phase 1 finding as accounts/hr-payroll: zero unique connector
-functions in this skill's old `erp_client.py` — the domain logic below
-lived in `render_customer_draft.py`/`render_quotation_draft.py`/
-`render_report.py`, Phase 2+ porting work.
+This domain has no unique connector logic of its own — the domain logic
+below belongs in `render_customer_draft.py`/`render_quotation_draft.py`/
+`render_report.py`, which don't exist in this skill's scripts/ yet.
 
 ## When this domain applies
 

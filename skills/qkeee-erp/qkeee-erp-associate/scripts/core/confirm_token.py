@@ -1,22 +1,9 @@
 #!/usr/bin/env python3
 """
-qkeee-erp-associate core — shared confirmation-token primitives, plus
-frappe-core's original advisory-first write-gate token constructor.
+qkeee-erp-associate core — shared confirmation-token primitives, plus this
+skill's advisory-first write-gate token constructor.
 
-Ported verbatim from qkeee-erp-frappe-core/scripts/confirm_token.py during
-Phase 1 (connector consolidation) because core/client.py's
-gated_mutate_resource() depends on advisory_write_token()/is_fresh() below.
-Per-skill token constructors that used to live in the OTHER nine skills'
-own confirm_token.py copies (permission_change_token, destructive_action_token,
-elevated_user_token, config_change_token, depreciation_run_token,
-disposal_token, the bot-init dry-run token, ...) were NOT consolidated here
-— that's a separate, not-yet-scoped piece of work (see the refactor plan).
-Where a Phase 1 domain module needs one of those, it carries its own copy
-(see domains/fixed_assets.py, domains/system_admin.py) rather than reaching
-back into the old skill directories, which are slated for deletion in a
-later phase.
-
-Several persona skills gate an irreversible or high-blast-radius write
+Several domains gate an irreversible or high-blast-radius write
 (depreciation runs, asset disposal, destructive sysadmin actions, bot-user
 provisioning) behind a DOUBLE confirm: the render/stage step computes a
 token from the exact facts just shown to the user, and the execute step
@@ -32,20 +19,18 @@ This module owns the two primitives every such token needs:
     future tokens.
 
 ...plus this skill's OWN token constructor, `advisory_write_token()` (see
-below) — merged in from the former qkeee-erp-catch-all skill, 2026-08-18.
-Unlike every other persona skill, which gates only its highest-risk
-actions, this skill's `gated_mutate_resource()` (erp_client.py) runs
-EVERY create/update/submit/cancel/delete through this one constructor,
-unconditionally — nothing this skill investigates has had the design-
-time capability review that lets the eight named persona skills be more
-assertive.
+below). Unlike a domain module's own capability-reviewed writes, this
+skill's `gated_mutate_resource()` (client.py) runs EVERY create/update/
+submit/cancel/delete that falls outside a named domain's allowlist
+through this one constructor, unconditionally — nothing outside a
+domain's own ALLOWED_WRITE_DOCTYPES has had that design-time capability
+review.
 
 Other capability-specific token constructors (e.g. depreciation_run_token(),
 permission_change_token(), destructive_action_token()) do NOT live here —
-those stay in the owning persona skill's own confirm_token.py, built on
-top of the two shared primitives, same as erp_client.py's split between
-generic connector primitives (this skill) and persona-specific business
-logic (the persona skill). A persona skill's confirm_token.py should:
+each domain module that needs one carries its own copy (see
+domains/fixed_assets.py, domains/system_admin.py), built on top of the two
+shared primitives:
 
     from confirm_token import compute_token, is_fresh, DEFAULT_TOKEN_TTL_SECONDS
 
@@ -99,9 +84,9 @@ def is_fresh(issued_at: int, max_age_seconds: int = DEFAULT_TOKEN_TTL_SECONDS,
 
 def advisory_write_token(action: str, doctype: str, name: str, payload: dict,
                           requested_by: str, issued_at: int = None) -> str:
-    """Gates every create/update/submit/cancel/delete this skill performs
-    — see module docstring for why this is unconditional here, unlike the
-    narrower gating in system-admin/fixed-asset-manager's copies.
+    """Gates every create/update/submit/cancel/delete that falls outside a
+    named domain's allowlist — see module docstring for why this is
+    unconditional here, unlike a domain module's own narrower gating.
 
     payload is folded into the token as-is (sorted-key JSON) so the token
     is bound to the exact drafted field values, not just the doctype/

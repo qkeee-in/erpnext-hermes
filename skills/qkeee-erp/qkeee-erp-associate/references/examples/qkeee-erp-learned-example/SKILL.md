@@ -7,8 +7,7 @@ description: "Learned notes for ERPNext environment tag 'example-env' — versio
 
 Durable, per-environment knowledge for `qkeee-erp-associate`'s `example-env`
 tag — created and updated via `skill_manage` by
-`scripts/core/memory_promote.py`'s promotion plan, per the consolidation
-plan's section 8 (self-evolving memory, tiered). This is a satellite
+`scripts/core/memory_promote.py`'s promotion plan. This is a satellite
 skill, not a copy of the associate itself: `qkeee-erp-associate` stays
 protected/externally-owned (see its own SKILL.md status note); this
 skill is the deliberately-open counterpart Hermes' background-review pass

@@ -3,29 +3,19 @@
 qkeee-erp-associate — fixed-assets domain (Asset lifecycle: depreciation,
 disposal, transfer).
 
-Ported from qkeee-erp-fixed-asset-manager/scripts/erp_client.py during
-Phase 1 (connector consolidation): mutate_resource_with_concurrency() and
-call_whitelisted_method() (plus its _expected_token() helper) below are
-this skill's genuine business logic beyond the shared core set.
+mutate_resource_with_concurrency() and call_whitelisted_method() (plus its
+_expected_token() helper) below are this domain's genuine business logic
+beyond the shared core connector.
 
-AUDIT GAP CLOSED (per the refactor plan's Risks section, "Fix during
-Phase 1, don't carry the gap forward"): the old erp_client.py's
-call_whitelisted_method() never wrote to Qkeee Bot Audit Log — depreciation
-runs, scraps, and disposals were unaudited there even though they posted
-the usual ERPNext Comment. call_whitelisted_method() below now wraps the
-RPC call with the same two-phase record_audit_log_start()/
-record_audit_log_finish() every other write path gets, closing that gap
-instead of carrying it forward into the consolidated connector.
+call_whitelisted_method() wraps its RPC call with the same two-phase
+record_audit_log_start()/record_audit_log_finish() every other write path
+gets — depreciation runs, scraps, and disposals must be audited there too,
+even though they also post the usual ERPNext Comment; a Comment alone is
+not the audit trail.
 
-SCOPE NOTE on confirm_token.py: _expected_token()'s token constructors
-(depreciation_run_token, disposal_token) originally lived in this skill's
-OWN confirm_token.py, a sibling file to erp_client.py that Phase 1's task
-was not scoped to consolidate (only the ten erp_client.py copies were
-diffed/ported — see the consolidation report). Rather than leave this
-module non-functional pending a separate confirm_token.py consolidation
-pass, its two small token constructors are carried here verbatim,
-alongside their consumer. This is a deliberate Phase 1 scope call, not an
-oversight — flag it in Phase 2 review.
+depreciation_run_token()/disposal_token() (in _expected_token() below)
+live here, not in core/confirm_token.py — see that module's docstring for
+why capability-specific token constructors stay with their owning domain.
 
 ALLOWED_WRITE_DOCTYPES: "Asset" (create/update/submit/cancel via
 render_asset_draft.py/render_movement_draft.py) plus "Asset Movement" and
@@ -104,7 +94,7 @@ def disposal_token(asset: str, method: str, disposal_date: str, amount: float, i
 
 
 # --------------------------------------------------------------------------
-# Genuine per-skill business logic, ported from erp_client.py
+# Genuine domain-specific business logic beyond the shared core connector
 # --------------------------------------------------------------------------
 
 def mutate_resource_with_concurrency(tag: str, doctype: str, action: str, payload: dict = None,
@@ -185,12 +175,10 @@ def call_whitelisted_method(tag: str, method: str, body: dict, mode: str = "read
     to ERPNext.
 
     On success, posts a best-effort audit Comment onto the relevant Asset
-    record naming the requester. AUDIT GAP CLOSED (Phase 1, per the
-    consolidation plan's Risks section): this call is now also wrapped in
-    the same two-phase Qkeee Bot Audit Log logging every other write path
-    gets — the old erp_client.py copy bypassed mutate_resource() entirely
-    for this RPC shape and never logged it there, which the plan flags as
-    a gap to fix in this phase, not carry forward.
+    record naming the requester. This call is also wrapped in the same
+    two-phase Qkeee Bot Audit Log logging every other write path gets —
+    this RPC shape bypasses mutate_resource() entirely, so without this
+    wrapping it would go unlogged there.
     """
     if method not in WHITELISTED_METHODS:
         raise ConnectorError(

@@ -2,19 +2,16 @@
 """
 qkeee-erp-associate — inventory domain (Stock, transfers, reconciliation).
 
-Ported from qkeee-erp-inventory/scripts/erp_client.py during Phase 1
-(connector consolidation). Unlike accounts/hr_payroll/sales/procurement,
-this skill's erp_client.py DID carry genuine business logic beyond the
-shared core set: get_stock_reconciliation_items(), bin_rows_to_actual_source_qty(),
-and get_bin_qty() below, all ported verbatim (see the docstrings for the
-two live-bug-driven code gates noted in the plan's section 1 table — the
-batch-tracked-item Stock Reconciliation footgun this trio exists to
-prevent).
+Unlike most other domain modules, this one carries genuine business logic
+beyond the shared core connector: get_stock_reconciliation_items(),
+bin_rows_to_actual_source_qty(), and get_bin_qty() below (see their
+docstrings) exist to prevent a batch-tracked-item Stock Reconciliation
+footgun.
 
-ALLOWED_WRITE_DOCTYPES is a first-pass allowlist inferred from
-render_stock_entry_draft.py / render_material_request_draft.py /
-render_reconciliation_draft.py's target doctypes. Confirm/expand against
-references/domains/inventory.md once authored (Phase 2).
+ALLOWED_WRITE_DOCTYPES covers render_stock_entry_draft.py /
+render_material_request_draft.py / render_reconciliation_draft.py's target
+doctypes. Cross-check against references/domains/inventory.md before
+expanding.
 """
 
 import json

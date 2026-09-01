@@ -1,11 +1,10 @@
 # Domain: inventory (Stock, transfers, reconciliation)
 
-Ported from `qkeee-erp-inventory`'s SKILL.md, rewritten into the
-associate's single voice. Code lives in `scripts/domains/inventory.py`
+Code lives in `scripts/domains/inventory.py`
 (`ALLOWED_WRITE_DOCTYPES = ("Stock Entry", "Material Request", "Stock
-Reconciliation")`), which also carries this domain's genuine unique
-connector logic ported in Phase 1: `get_bin_qty()`,
-`get_stock_reconciliation_items()`, `bin_rows_to_actual_source_qty()`.
+Reconciliation")`), which also carries this domain's genuine connector
+logic: `get_bin_qty()`, `get_stock_reconciliation_items()`,
+`bin_rows_to_actual_source_qty()`.
 
 ## When this domain applies
 

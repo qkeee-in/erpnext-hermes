@@ -1,27 +1,20 @@
 # Domain: mis (GL / MIS reporting, read-only)
 
-Ported from `qkeee-erp-mis-analyst`'s SKILL.md, rewritten into the
-associate's single voice. Code lives in `scripts/domains/mis.py`
+Code lives in `scripts/domains/mis.py`
 (`ALLOWED_WRITE_DOCTYPES = ()` — deliberately empty, see below).
 
 ## Read-only, always — enforced in code, not by omission
 
-The old `qkeee-erp-mis-analyst` skill's read-only guarantee was
-**structural**: its copy of `erp_client.py` had no `mutate_resource`
-function at all — there was no write call in that skill's code to invoke.
-Phase 1's consolidation removed that physical omission by design (one
-shared `core.client.mutate_resource()` now exists for every domain). The
-guarantee this domain relies on now is the **runtime write-allowlist
-gate**: `domains/mis.py` registers an empty `ALLOWED_WRITE_DOCTYPES`
-tuple, so `core.client.mutate_resource(..., domain="mis")` refuses every
-doctype, unconditionally, via `DoctypeNotAllowedError`. This is weaker in
-kind (a runtime check can theoretically be misconfigured; a missing
-function cannot) but it is the confirmed decision in the consolidation
-plan (§2, "Read-only guarantee: runtime allowlist") — treat any proposal
-to add a doctype to this domain's allowlist as a decision that
-contradicts this domain's entire purpose, not a routine capability
-expansion. `domains.mis.mutate()` exists only for interface symmetry with
-every other domain module; calling it always fails.
+`core.client.mutate_resource()` is one shared function used by every
+domain, so this domain's read-only guarantee is a **runtime
+write-allowlist gate**, not a missing write path: `domains/mis.py`
+registers an empty `ALLOWED_WRITE_DOCTYPES` tuple, so
+`core.client.mutate_resource(..., domain="mis")` refuses every doctype,
+unconditionally, via `DoctypeNotAllowedError`. Treat any proposal to add a
+doctype to this domain's allowlist as a decision that contradicts this
+domain's entire purpose, not a routine capability expansion.
+`domains.mis.mutate()` exists only for interface symmetry with every
+other domain module; calling it always fails.
 
 ## When this domain applies
 

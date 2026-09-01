@@ -2,31 +2,25 @@
 """
 qkeee-erp-associate — system-admin domain (Users, roles, permissions).
 
-Ported from qkeee-erp-system-admin/scripts/erp_client.py during Phase 1
-(connector consolidation) — the skill with the widest blast radius and
-heaviest GRC per the plan's section 1 table, and it shows: this domain
-carries the most genuine business logic of any skill diffed in this pass
-(8 functions beyond the shared core set): _record_attribution_comment(),
+This is the widest-blast-radius, heaviest-GRC domain, and it carries the
+most business logic of any domain module: _record_attribution_comment(),
 destructive_mutate(), get_roles_and_doctypes(), get_permissions(),
 call_permission_manager(), create_user(), gated_config_mutate(), and
 get_scheduler_status().
 
-SCOPE NOTE on confirm_token.py (same call as fixed_assets.py — see that
-module's docstring): permission_change_token(), destructive_action_token(),
-elevated_user_token(), and config_change_token() originally lived in this
-skill's own confirm_token.py, not in erp_client.py. Phase 1's task was
-scoped to the ten erp_client.py copies only; rather than leave this module
-non-functional pending a separate confirm_token.py consolidation pass,
-those four token constructors are carried here verbatim, alongside their
-consumers. Flag for Phase 2 review.
+permission_change_token(), destructive_action_token(),
+elevated_user_token(), and config_change_token() live here (not in
+core/confirm_token.py — see that module's docstring for why
+capability-specific token constructors stay with their owning domain)
+alongside their consumers.
 
-ALLOWED_WRITE_DOCTYPES is a first-pass allowlist covering the doctypes
-this domain's business logic actually targets: User (create_user/
-destructive_mutate), Role, Custom Field/Property Setter (customization),
-Webhook/Workflow (gated_config_mutate's two CONFIG_CHANGE_KINDS). Note
-that destructive_mutate()/call_permission_manager()/gated_config_mutate()
-route through mutate_resource(domain="system_admin") for their underlying
-write (or, for call_permission_manager, a whitelisted-method RPC outside
+ALLOWED_WRITE_DOCTYPES covers the doctypes this domain's business logic
+actually targets: User (create_user/destructive_mutate), Role, Custom
+Field/Property Setter (customization), Webhook/Workflow
+(gated_config_mutate's two CONFIG_CHANGE_KINDS). destructive_mutate()/
+call_permission_manager()/gated_config_mutate() route through
+mutate_resource(domain="system_admin") for their underlying write (or,
+for call_permission_manager, a whitelisted-method RPC outside
 mutate_resource() entirely, same as fixed_assets.call_whitelisted_method())
 — see each function's docstring.
 """
@@ -126,7 +120,7 @@ def config_change_token(kind: str, doctype: str, identifier: str, reason: str,
 
 
 # --------------------------------------------------------------------------
-# Genuine per-skill business logic, ported from erp_client.py
+# Genuine domain-specific business logic beyond the shared core connector
 # --------------------------------------------------------------------------
 
 def _record_attribution_comment(cfg: dict, doctype: str, name: str, action_label: str,
@@ -278,12 +272,10 @@ def call_permission_manager(tag: str, action: str, doctype: str, role: str, perm
     DocPerm) isn't a document instance with its own timeline, so there's
     no natural record to attach one to.
 
-    KNOWN GAP, carried from the original code, not fixed in this pass
-    (see connector-reference.md / references/domains/system-admin.md when
-    authored): `has_permission`'s `user=` parameter honoring is
-    unresolved — carries into the universal RBAC check per the
-    consolidation plan's Risks section, and needs a live test before this
-    is relied on as a per-requester gate.
+    KNOWN GAP (see references/domains/system-admin.md): `has_permission`'s
+    `user=` parameter honoring is unresolved — this carries into the
+    universal RBAC check too, and needs a live test before this is relied
+    on as a per-requester gate.
 
     This RPC shape doesn't fit mutate_resource()'s create/update/submit/
     cancel signature and so bypasses it (and its ALLOWED_WRITE_DOCTYPES

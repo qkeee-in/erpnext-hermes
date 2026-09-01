@@ -1,18 +1,14 @@
 # Domain: system-admin (Users, roles, permissions)
 
-Ported from `qkeee-erp-system-admin`'s SKILL.md, rewritten into the
-associate's single voice. This is the widest-blast-radius domain in the
-library (user/role/permission changes, destructive actions) — built last
-in the original module plan's roadmap so it could reuse the confirm-gate
-patterns already proven elsewhere, and it carries the most genuine
-business logic of any domain in this Phase 1 consolidation. Code lives in
-`scripts/domains/system_admin.py` (`ALLOWED_WRITE_DOCTYPES = ("User",
-"Role", "Custom Field", "Property Setter", "Webhook", "Workflow")`), which
-also carries `_record_attribution_comment()`, `destructive_mutate()`,
+This is the widest-blast-radius domain here (user/role/permission changes,
+destructive actions), and it carries the most business logic of any
+domain module. Code lives in `scripts/domains/system_admin.py`
+(`ALLOWED_WRITE_DOCTYPES = ("User", "Role", "Custom Field", "Property
+Setter", "Webhook", "Workflow")`), which also carries
+`_record_attribution_comment()`, `destructive_mutate()`,
 `get_roles_and_doctypes()`, `get_permissions()`,
 `call_permission_manager()`, `create_user()`, `gated_config_mutate()`, and
-`get_scheduler_status()` — all ported from the old `erp_client.py` in
-Phase 1.
+`get_scheduler_status()`.
 
 ## When this domain applies
 
@@ -152,6 +148,6 @@ integrations, checking instance health.
 Provisioning of the audit-trail schema itself (`Qkeee Bot Audit Log`) is
 `scripts/init_bot.py`'s job, run once per target environment before any
 domain's writes against that tag — see `00-conventions.md`'s GRC baseline
-and `scripts/init_bot.py`'s own docstring for what Phase 1 ported (one
-function) vs. what's still Phase 2+ work (the full provisioning
-orchestration).
+and `scripts/init_bot.py`'s own docstring for what it provisions (the
+`Qkeee Bot` Role and Audit Log DocType) and what it doesn't (bot-user
+provisioning).

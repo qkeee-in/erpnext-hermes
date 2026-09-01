@@ -3,15 +3,9 @@
 qkeee-erp-associate core connector — the single, consolidated ERPNext
 (Frappe REST API) client for every domain of the qkeee-erp-associate skill.
 
-Phase 1 of the qkeee-erp-associate-consolidation-plan.md refactor: this file
-replaces ten near-identical `erp_client.py` copies (accounts-executive,
-bot-init, fixed-asset-manager, frappe-core, hr-associate, inventory,
-mis-analyst, procurement, sales, system-admin) with one shared module.
-Based on qkeee-erp-frappe-core's copy, which the plan identifies as the
-source of truth: it already carried the gated write path, PII redaction,
-and prod-requester validation every other skill's copy was syncing in from
-it via `sync_to_personas.py` (now retired — nothing left to sync once there
-is one file).
+This is the single connector every domain module uses; there is no
+per-domain copy. It carries the gated write path, PII redaction, and
+requester validation shared by every domain.
 
 Self-contained: stdlib only (urllib), no third-party deps.
 
@@ -45,49 +39,43 @@ record_comment()/mutate_resource() below.
 
 Every write is additionally logged to the `Qkeee Bot Audit Log` doctype
 (two-phase: an `Attempted` row inserted before the real write, updated to
-`Success`/`Failure` after), and every read is logged there too, always
-(Phase 5 GRC hardening, consolidation plan §9 — reads were previously
-debug-gated; there is no debug flag left, logging is unconditional).
-Audit Log's `session` field is a plain string correlator, with no doctype
-of its own behind it. All of this is best-effort — see "Audit logging is
-best-effort, not a gate" below.
+`Success`/`Failure` after), and every read is logged there too,
+unconditionally — no debug flag gates it. Audit Log's `session` field is
+a plain string correlator, with no doctype of its own behind it. All of
+this is best-effort — see "Audit logging is best-effort, not a gate"
+below.
 
-RBAC pre-check (Phase 5 GRC hardening, consolidation plan §9): every read
-and write with a `requested_by` resolves that identity as a real ERPNext
-`User` and confirms via ERPNext's own `frappe.client.has_permission` that
-they actually hold the permission the call needs — on every environment
-tag, not PROD only. See `_validate_prod_requester()` below (name kept
-from its Phase 1 PROD-only origin; behavior is now universal).
+RBAC pre-check: every read and write with a `requested_by` resolves that
+identity as a real ERPNext `User` and confirms via ERPNext's own
+`frappe.client.has_permission` that they actually hold the permission the
+call needs — on every environment tag, not PROD only. See
+`_validate_prod_requester()` below (the name reflects a narrower PROD-only
+origin; the check itself is now universal).
 
-Write-allowlist gate (Phase 1, new — see consolidation plan section 6):
-domain modules under `scripts/domains/*.py` each declare an
-ALLOWED_WRITE_DOCTYPES tuple and register it via register_domain_allowlist()
-at import time. mutate_resource(..., domain="<name>") then refuses any
-create/update/submit/cancel/delete whose doctype isn't in that domain's
-allowlist, raising DoctypeNotAllowedError. This is what replaces
-qkeee-erp-mis-analyst's old structural guarantee ("no mutate function
-exists in this copy of erp_client.py") now that mutate_resource() is one
-shared function used by every domain — mis-analyst's successor
-(domains/mis.py) registers an EMPTY allowlist, so every doctype is refused.
+Write-allowlist gate: domain modules under `scripts/domains/*.py` each
+declare an ALLOWED_WRITE_DOCTYPES tuple and register it via
+register_domain_allowlist() at import time. mutate_resource(...,
+domain="<name>") then refuses any create/update/submit/cancel/delete whose
+doctype isn't in that domain's allowlist, raising DoctypeNotAllowedError.
+`mis.py` registers an EMPTY allowlist, so every doctype is refused there.
 `domain=None` (the default) applies no allowlist restriction at all — used
-by gated_mutate_resource() below (frappe-core's own advisory-first write
-path for doctypes that were never known in advance, so no capability
-review / allowlist could have been drawn up for them ahead of time) and by
-any core-level/admin script (e.g. init_bot.py) that intentionally operates
-outside domain scope.
+by gated_mutate_resource() below (an advisory-first write path for
+doctypes that aren't known in advance, so no capability review /
+allowlist can be drawn up ahead of time) and by any core-level/admin
+script (e.g. init_bot.py) that intentionally operates outside domain
+scope.
 
-Advisory-first write gate (merged in from the former qkeee-erp-catch-all
-skill, kept from frappe-core's copy): this file also ships
+Advisory-first write gate: this file also ships
 `gated_mutate_resource()`, the associate's OWN write entry point for
 whatever doesn't fit a named domain — it requires a confirmation_token +
-issued_at from a render_*.py draft script, matching the "never write
-without an unconditionally-advisory-first draft" non-negotiable in code,
-not just prompt discipline. Domain modules' own `mutate()` wrappers call
-plain `mutate_resource(..., domain=<name>)` directly (their capability
-tables were reviewed at design time via ALLOWED_WRITE_DOCTYPES); nothing
-in gated_mutate_resource()'s remit has had that review, so it stays
-allowlist-free and confirmation-token-gated instead. See
-confirm_token.py's `advisory_write_token()`.
+issued_at from a render_*.py draft script, enforcing "never write without
+an advisory-first draft" in code, not just prompt discipline. Domain
+modules' own `mutate()` wrappers call plain `mutate_resource(...,
+domain=<name>)` directly (their capability tables are reviewed at design
+time via ALLOWED_WRITE_DOCTYPES); nothing in gated_mutate_resource()'s
+remit has had that review, so it stays allowlist-free and
+confirmation-token-gated instead. See confirm_token.py's
+`advisory_write_token()`.
 """
 
 import argparse
@@ -115,19 +103,10 @@ except ImportError:
 # label is supplied — see mutate_resource()'s `domain`/`skill_label` params.
 SKILL_LABEL = "qkeee-erp-associate"
 
-# Qkeee Bot audit-trail doctype (see qkeee-erp-bot-init / this skill's own
-# scripts/init_bot.py). A target instance may not have it provisioned yet
-# — every call into it below is best-effort and never blocks or fails the
-# caller's actual ERPNext read/write.
-#
-# Phase 3 (doctype migration, consolidation plan §7): `Qkeee Bot Persona`
-# — formerly `PERSONA_DOCTYPE` here, plus `ensure_persona_registered()`
-# and the `register-persona` CLI subcommand — is REMOVED as of this
-# module. Every skill only ever wrote it and nothing read it back for a
-# functional decision; see ../CHANGELOG.md for the exported schema/
-# manifest kept for manual-audit reference. Don't re-add a persona
-# doctype reference here without a deliberate decision reversing that
-# removal.
+# Qkeee Bot audit-trail doctype (see scripts/init_bot.py). A target
+# instance may not have it provisioned yet — every call into it below is
+# best-effort and never blocks or fails the caller's actual ERPNext
+# read/write.
 AUDIT_LOG_DOCTYPE = "Qkeee Bot Audit Log"
 
 # Doctypes exempt from audit-wrapping. Mandatory, not optional: without
@@ -142,9 +121,9 @@ AUDIT_EXEMPT_DOCTYPES = {
 }
 
 # Doctypes exempt from the requester-validation gate below (see
-# _validate_prod_requester() — name kept from its Phase 1 PROD-only
-# origin; the gate itself now runs on every environment tag, per Phase 5
-# GRC hardening). Mandatory, not optional, for the same recursion reason
+# _validate_prod_requester() — name reflects a narrower PROD-only origin;
+# the gate itself runs on every environment tag). Mandatory, not optional,
+# for the same recursion reason
 # AUDIT_EXEMPT_DOCTYPES exists: _validate_prod_requester() itself calls
 # resource_exists(tag, "User", requested_by), which calls
 # get_resource(tag, "User", ...) — without "User" here, validating a
@@ -168,7 +147,7 @@ _MUTATE_ACTION_TO_PTYPE = {
 }
 
 # --------------------------------------------------------------------------
-# Write-allowlist gate (Phase 1, new)
+# Write-allowlist gate
 #
 # Domain modules register their ALLOWED_WRITE_DOCTYPES here at import time
 # via register_domain_allowlist(). mutate_resource(domain=...) then checks
@@ -216,8 +195,7 @@ class StaleConfirmationError(ConnectorError):
 class DoctypeNotAllowedError(ConnectorError):
     """Raised when mutate_resource(domain=...) targets a doctype outside
     that domain's registered ALLOWED_WRITE_DOCTYPES (or the domain itself
-    is unknown/unregistered) — see the write-allowlist gate section above
-    and the consolidation plan's section 6."""
+    is unknown/unregistered) — see the write-allowlist gate section above."""
 
 
 def _tag_env_var(tag: str, suffix: str) -> str:
@@ -345,7 +323,7 @@ def check_user_permission_raw(tag: str, doctype: str, perm_type: str, requested_
     wants to inspect more than the boolean. See check_user_permission()'s
     docstring for the live-validation caveat this shares.
 
-    Live-confirmed (Phase 7 smoke pass, demo.qkeee.in): this Frappe
+    Live-confirmed against demo.qkeee.in: this Frappe
     build's `frappe.client.has_permission` has NO default for `docname` —
     omitting the query param entirely (the previous behavior here, via
     `if docname: params["docname"] = docname`) 500s with `TypeError:
@@ -365,15 +343,15 @@ def check_user_permission_raw(tag: str, doctype: str, perm_type: str, requested_
 
 def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_type: str,
                               docname: str = None) -> None:
-    """The requester-validation gate (Phase 5 GRC hardening, consolidation
-    plan §9 — "RBAC pre-check, every environment"; name kept from its
-    Phase 1 PROD-only origin, behavior is now universal).
+    """The requester-validation gate — RBAC pre-check, every environment.
+    (Name reflects a narrower PROD-only origin; the check itself is
+    universal.)
 
     No-op for any doctype in PROD_GATE_EXEMPT_DOCTYPES, on every tag.
     Otherwise:
 
     - Presence of `requested_by` is mandatory ONLY on a PROD tag (see
-      _is_prod_tag()) — same as Phase 1: the QKEEE_ERP_<TAG>_REQUESTED_BY
+      _is_prod_tag()): the QKEEE_ERP_<TAG>_REQUESTED_BY
       env-var default is REFUSED here even if configured, a PROD call
       must pass an explicit, freshly-validated requester every time,
       never fall back to a standing default. On a non-PROD tag a missing
@@ -383,11 +361,9 @@ def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_typ
     - Whenever `requested_by` IS present — on ANY tag, PROD or not — it is
       validated: (1) a real ERPNext User (resource_exists check), and (2)
       actually holds `perm_type` on `doctype`/`docname` per ERPNext's own
-      permission check (check_user_permission()). This is the universal
-      part: previously this validation only ran on PROD tags at all; now
-      supplying a requester on any tag gets it checked, closing the gap
-      where a bogus/unauthorized requester was silently accepted outside
-      PROD.
+      permission check (check_user_permission()). Any supplied requester
+      gets checked on every tag, so a bogus/unauthorized requester is never
+      silently accepted, PROD or not.
 
     Raises UnvalidatedProdRequesterError on any failure — fails closed,
     never proceeds unverified. Called from query_resource()/get_resource()/
@@ -601,11 +577,9 @@ def query_resource(tag: str, doctype: str, filters: list = None, fields: list = 
     result set that's silently incomplete.
 
     Every read is logged to Qkeee Bot Audit Log (best-effort), unconditionally
-    — Phase 5 GRC hardening, consolidation plan §9: read logging was
-    previously debug-gated to avoid a read-heavy domain (e.g. MIS) making
-    Read rows the biggest volume source in the audit trail; the target
-    policy accepts that volume in exchange for an audit row on every
-    access, no exceptions.
+    — accepted volume cost (a read-heavy domain like MIS makes Read rows
+    the biggest source in the audit trail) in exchange for an audit row on
+    every access, no exceptions.
     """
     _validate_prod_requester(tag, requested_by, doctype, "read")
     cfg = get_env_config(tag)
@@ -868,7 +842,7 @@ def _audit_submit(cfg: dict, log_name: str) -> bool:
     anything — the row's content is what matters for the audit trail;
     submission is a tamper-evidence nicety on top."""
     if not log_name:
-        # Live-observed (Phase 7 smoke pass): the insert this depends on
+        # Live-observed: the insert this depends on
         # already failed and warned (returns None), most commonly a 403 on
         # Qkeee Bot Audit Log for a requester lacking the Qkeee Bot role.
         # Without this guard, urllib.parse.quote(None) raises a confusing
@@ -891,9 +865,8 @@ def _audit_submit(cfg: dict, log_name: str) -> bool:
 def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id: str, domain_code: str,
               channel: str = None, channel_metadata: dict = None) -> None:
     """Best-effort insert+submit Audit Log row for a read — called
-    unconditionally by query_resource()/get_resource()/run_query_report(),
-    Phase 5 GRC hardening (consolidation plan §9). Insert/update are
-    collapsed into one status ("Success") since a read
+    unconditionally by query_resource()/get_resource()/run_query_report().
+    Insert/update are collapsed into one status ("Success") since a read
     has no in-flight state to crash into, but submit still runs so the
     row doesn't sit as an unsubmitted Draft like two-phase write rows
     would if left unfinished."""
@@ -993,7 +966,7 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
     DocType record. The one shared write entry point every domain module's
     own `mutate()` wrapper calls into (see scripts/domains/*.py).
 
-    `domain` (Phase 1, new — see the write-allowlist gate section in this
+    `domain` (see the write-allowlist gate section in this
     module's docstring): when given, this doctype must appear in
     DOMAIN_WRITE_ALLOWLISTS[domain] (registered by that domain module at
     import time via register_domain_allowlist()) or this call is refused
@@ -1071,10 +1044,9 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
         if doctype not in allowed:
             raise DoctypeNotAllowedError(
                 f"Refusing {action} on '{doctype}': not in domain '{domain}''s "
-                f"ALLOWED_WRITE_DOCTYPES {allowed!r}. This is the runtime write gate that "
-                f"replaces a structurally read-only connector copy (see the consolidation "
-                f"plan, section 6) — if '{doctype}' genuinely belongs to this domain's "
-                f"remit, add it to that tuple deliberately; don't route around this gate."
+                f"ALLOWED_WRITE_DOCTYPES {allowed!r}. If '{doctype}' genuinely belongs to "
+                f"this domain's remit, add it to that tuple deliberately; don't route "
+                f"around this gate."
             )
     _validate_prod_requester(tag, requested_by, doctype, _MUTATE_ACTION_TO_PTYPE[action], docname=name)
 
@@ -1135,8 +1107,7 @@ def gated_mutate_resource(tag: str, doctype: str, action: str, payload: dict = N
                            channel: str = None, channel_metadata: dict = None,
                            approval_note: str = None) -> dict:
     """The associate's own write entry point for whatever doesn't fit a
-    named domain (ported from qkeee-erp-frappe-core, the former catch-all
-    skill) — wraps mutate_resource() with the token-gated advisory-first
+    named domain — wraps mutate_resource() with the token-gated advisory-first
     check every such write goes through, unconditionally. Unlike a domain
     module's own `mutate()` wrapper, this is deliberately called WITHOUT
     `domain=` (no ALLOWED_WRITE_DOCTYPES restriction): nothing routed
@@ -1381,13 +1352,10 @@ def _cli():
     if args.command in ("query", "get", "report", "mutate", "gated-mutate") and not args.session_id:
         args.session_id = _session_or_fallback(None)
 
-    # Bugfix vs. the pre-consolidation copies (all ten crashed identically
-    # on `list-envs`/`health`, which never set --tag): effective_requested_by
-    # is now only resolved for commands that actually need a tag, instead
-    # of unconditionally calling
-    # resolve_requested_by(args.tag, ...) -> _is_prod_tag(None) -> a
-    # TypeError from re.search(pattern, None). Every other command's
-    # behavior is unchanged.
+    # effective_requested_by is only resolved for commands that actually
+    # need a tag — `list-envs`/`health` never set --tag, and unconditionally
+    # calling resolve_requested_by(args.tag, ...) would hit
+    # _is_prod_tag(None) -> a TypeError from re.search(pattern, None).
     tag_requested_by_default = ""
     effective_requested_by = ""
     if args.command in ("query", "get", "report", "mutate", "gated-mutate"):

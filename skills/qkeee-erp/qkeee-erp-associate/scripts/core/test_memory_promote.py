@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for memory_promote.py (Phase 4). No network, no hermes-agent
+"""Tests for memory_promote.py. No network, no hermes-agent
 import — this module never imports hermes-agent internals (see its module
 docstring for why it can't), so these tests only exercise pure string/
 dict formatting and the redaction pass."""

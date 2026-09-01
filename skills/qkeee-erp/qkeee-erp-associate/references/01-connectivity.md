@@ -41,10 +41,9 @@ naming and var-setting, it doesn't declare the vars for them:
 | `QKEEE_ERP_<TAG>_ALLOW_INSECURE` | OPTIONAL. Set `1` to allow a non-`https://` base URL (local/dev only — `get_env_config()` refuses plaintext by default since credentials go in the clear otherwise) |
 | `QKEEE_ERP_<TAG>_REQUESTED_BY` | OPTIONAL, no default. Per-tag requester identity fallback — never used on a PROD-tagged environment, see below |
 
-There is no `_DEBUG` var — Phase 5 GRC hardening made read audit logging
-unconditional (every read logs to `Qkeee Bot Audit Log`, no per-tag
-opt-in), so the flag was removed rather than left as a no-op. See
-`00-conventions.md`'s GRC baseline.
+There is no `_DEBUG` var — read audit logging is unconditional (every
+read logs to `Qkeee Bot Audit Log`, no per-tag opt-in), so there is no
+debug flag to resolve. See `00-conventions.md`'s GRC baseline.
 
 `<TAG>` is uppercased/sanitized from whatever the user names it (`qa`,
 `client-a-prod`, etc). Adding a second/third environment is a runtime
@@ -68,7 +67,7 @@ explicitly; never invent or guess a requester to work around this.
 ## Env resolution — why `qkeee-erp.env`, not native frontmatter passthrough
 
 **This is a deliberate exception, documented here so it doesn't read as an
-oversight on review** (consolidation plan §6). Hermes' own
+oversight on review.** Hermes' own
 `required_environment_variables`/`required_credential_files` frontmatter
 auto-registers passthrough into `execute_code`/`terminal` sandboxes — but
 those sandboxes strip *all* env vars by default, and only names a skill
@@ -174,15 +173,14 @@ per-report filter schemas.
 Any file this skill's tooling needs to write that isn't the final
 deliverable — a staged artifact genuinely too large to hold in the
 conversation — goes under `<profile>/workspace/qkeee-erp/<env-tag>/`,
-plain file I/O, never `/tmp`. **Not `terminal.cwd`:** an earlier revision
-of this convention used `terminal.cwd`, but the local CLI backend (this
-skill's primary usage path) deliberately ignores that config key and
-always uses the launch directory — only gateway- and cron-driven sessions
-bridge it into a fixed path. `<profile>/workspace/` is the one directory
+plain file I/O, never `/tmp`. **Not `terminal.cwd`:** the local CLI
+backend (this skill's primary usage path) deliberately ignores that
+config key and always uses the launch directory — only gateway- and
+cron-driven sessions bridge it into a fixed path. `<profile>/workspace/`
+is the one directory
 that's stable regardless of which backend or invocation mode is running,
 provisioned at profile creation alongside `memories/`, `skills/`, etc. —
-see `00-conventions.md`'s naming table and the consolidation plan §8 for
-the full reasoning behind this revision. Most tasks need none of this:
+see `00-conventions.md`'s naming table. Most tasks need none of this:
 Hermes' own session transcript already retains the working conversation,
 so reach for scratch only when something is genuinely too bulky to keep
 in context. Clean scratch files up once the task no longer needs them —
@@ -205,7 +203,7 @@ health`, `python core/client.py --tag <tag> --mode read-write mutate
 <DocType> create --domain <slug> --payload '{...}' --requested-by
 <id>`. See `core/client.py`'s own `_cli()` for the full subcommand list
 (`health`, `list-envs`, `query`, `get`, `report`, `roles`, `mutate`,
-`gated-mutate`, `register-persona`). Every invocation is relative to this
+`gated-mutate`). Every invocation is relative to this
 skill's own `scripts/` directory under the active Hermes profile root —
 `cd` there first, or prefix every command with the full path; don't guess
 a shorter path.

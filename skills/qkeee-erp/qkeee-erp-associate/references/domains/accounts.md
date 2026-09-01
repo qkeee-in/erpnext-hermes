@@ -1,22 +1,19 @@
 # Domain: accounts (AP/AR, Journal Entry, tax)
 
-Ported from `qkeee-erp-accounts-executive`'s SKILL.md, rewritten into the
-associate's single voice. Code lives in `scripts/domains/accounts.py`
+Code lives in `scripts/domains/accounts.py`
 (`ALLOWED_WRITE_DOCTYPES = ("Journal Entry", "Payment Entry", "Purchase
-Invoice", "Sales Invoice")` — a first-pass allowlist, see that module's
-docstring). Applies `00-conventions.md` and `01-connectivity.md` in full;
-this file only adds what's specific to AP/AR, JE drafting, 3-way match,
-and tax mechanics.
+Invoice", "Sales Invoice")` — see that module's docstring). Applies
+`00-conventions.md` and `01-connectivity.md` in full; this file only adds
+what's specific to AP/AR, JE drafting, 3-way match, and tax mechanics.
 
-**Surprise carried over from Phase 1:** the old `erp_client.py` copy for
-this skill had zero unique connector functions — every capability below
-routes through the shared `core.client` functions plus
-`domains.accounts.mutate()`. The domain-specific logic (JE balance
-enforcement, cancel-impact statement) lived in `render_je_draft.py`/
-`render_cancel_confirmation.py`, which are Phase 2+ porting work still
-ahead — this reference describes the target procedure those renderers are
-meant to enforce, flagged where they don't exist yet in this skill's
-current script set.
+Every capability below routes through the shared `core.client` functions
+plus `domains.accounts.mutate()` — this domain has no unique connector
+logic of its own. The domain-specific logic (JE balance enforcement,
+cancel-impact statement) belongs in `render_je_draft.py`/
+`render_cancel_confirmation.py`, which don't exist in this skill's
+scripts/ yet — this reference describes the target procedure those
+renderers are meant to enforce, flagged below where it isn't code-enforced
+today.
 
 ## When this domain applies
 

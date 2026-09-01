@@ -1,7 +1,6 @@
 # Domain: doc-extraction (field extraction, no writes)
 
-Ported from `qkeee-erp-doc-extraction`'s SKILL.md, rewritten into the
-associate's single voice. **Not a connector domain** — there is no
+**Not a connector domain** — there is no
 `scripts/domains/doc_extraction.py` and no `ALLOWED_WRITE_DOCTYPES`
 because this domain has no write path at all, structurally, not by
 allowlist. Turns attached documents — including scanned/photographed
@@ -9,12 +8,10 @@ images — or a shared URL into structured fields shaped for a target
 ERPNext doctype (Supplier, Purchase Invoice, Job Applicant, Employee),
 then stops: it hands back a staged report, never a written record.
 
-**Scope note carried from the original skill:** the original module plan
-scoped this domain's inputs to attached PDFs/DOCX/XLSX/images.
-Scanned-image handling is a direct extension of that. URL-based extraction
-is a materially different capability — fetching arbitrary external web
-content — added on top of the plan's original scope; flagged here rather
-than presented as if the plan always covered it.
+**Scope note:** this domain's inputs are attached PDFs/DOCX/XLSX/images.
+URL-based extraction is a materially different capability — fetching
+arbitrary external web content — flagged here rather than treated as
+equivalent to attached-file extraction.
 
 ## When this domain applies
 

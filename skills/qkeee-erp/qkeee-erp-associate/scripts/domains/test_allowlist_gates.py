@@ -1,26 +1,22 @@
 #!/usr/bin/env python3
-"""Allowlist-gate regression tests (Phase 7 — consolidation plan §11 item 7,
-"add allowlist-gate tests per domain"). Run from this directory (matches the
+"""Allowlist-gate regression tests. Run from this directory (matches the
 convention in scripts/core/test_client.py): `cd scripts/domains && python -m
 pytest -q`.
 
 core.client.mutate_resource(domain=...) refuses a write whose doctype isn't
 in that domain's registered ALLOWED_WRITE_DOCTYPES, per the write-allowlist
-gate added in Phase 1 (see client.py's module docstring and the plan's §6).
-Each domain module below registers its own tuple at import time via
-register_domain_allowlist(); these tests confirm two things per domain: (1)
-a doctype NOT in the tuple is refused with DoctypeNotAllowedError before any
-network call, and (2) a doctype that IS in the tuple clears the allowlist
-check specifically (isolated from the RBAC/prod-requester gate downstream,
-which is core.client's own concern and already covered by
-scripts/core/test_client.py's WritePathGatingTests).
+gate (see client.py's module docstring). Each domain module below registers
+its own tuple at import time via register_domain_allowlist(); these tests
+confirm two things per domain: (1) a doctype NOT in the tuple is refused
+with DoctypeNotAllowedError before any network call, and (2) a doctype that
+IS in the tuple clears the allowlist check specifically (isolated from the
+RBAC/prod-requester gate downstream, which is core.client's own concern and
+already covered by scripts/core/test_client.py's WritePathGatingTests).
 
-mis.py's empty allowlist is this associate's runtime replacement for the
-pre-consolidation structural read-only guarantee (MIS's erp_client.py copy
-never had a mutate function at all) — its test below is the one that
-actually stands in for that lost structural proof, so it's written to fail
-loudly (not skip) if a doctype is ever added to mis.ALLOWED_WRITE_DOCTYPES
-without a matching deliberate test update.
+mis.py registers an empty allowlist — MIS is read-only, no doctype can ever
+be written there. The test below is written to fail loudly (not skip) if a
+doctype is ever added to mis.ALLOWED_WRITE_DOCTYPES without a matching
+deliberate test update.
 """
 
 import os
@@ -105,11 +101,10 @@ class AllowedDoctypeClearsTheGateTests(unittest.TestCase):
 
 
 class MisIsAlwaysReadOnlyTests(unittest.TestCase):
-    """mis.py's empty ALLOWED_WRITE_DOCTYPES is the runtime stand-in for
-    the pre-consolidation structural read-only guarantee — this is the
-    test that actually carries that guarantee forward. Refuses BEFORE the
-    RBAC/prod-requester gate too, confirming the empty-tuple path is
-    checked ahead of (not instead of) that gate."""
+    """mis.py's empty ALLOWED_WRITE_DOCTYPES is what keeps MIS read-only —
+    this test carries that guarantee. Refuses BEFORE the RBAC/prod-requester
+    gate too, confirming the empty-tuple path is checked ahead of (not
+    instead of) that gate."""
 
     def test_empty_allowlist_is_unchanged(self):
         self.assertEqual(mis.ALLOWED_WRITE_DOCTYPES, ())

@@ -1,16 +1,12 @@
 # Domain: procurement (Supplier, PO, RFQ)
 
-Ported from `qkeee-erp-procurement`'s SKILL.md, rewritten into the
-associate's single voice. Code lives in `scripts/domains/procurement.py`
+Code lives in `scripts/domains/procurement.py`
 (`ALLOWED_WRITE_DOCTYPES = ("Supplier", "Purchase Order", "Request for
 Quotation", "Supplier Quotation")`).
 
-Same Phase 1 finding as accounts/hr-payroll/sales: zero unique connector
-functions in this skill's old `erp_client.py` — the domain logic below
-lived in `render_supplier_draft.py`/`render_po_draft.py`/`render_report.py`,
-Phase 2+ porting work. Note: the old skill's `scripts/` also had 15 stray
-leftover HR test-fixture JSON files — a Phase 6 cleanup item (moot once
-the old directories are deleted), not carried into this domain.
+This domain has no unique connector logic of its own — the domain logic
+below belongs in `render_supplier_draft.py`/`render_po_draft.py`/
+`render_report.py`, which don't exist in this skill's scripts/ yet.
 
 ## When this domain applies
 

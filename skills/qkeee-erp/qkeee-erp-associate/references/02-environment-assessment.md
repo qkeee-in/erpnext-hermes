@@ -1,22 +1,16 @@
 # Environment assessment procedure
 
-Ported from `qkeee-erp-frappe-core`'s fallback-investigation method (its
-`domain-knowledge.md` "investigation method" section) — the closest
-predecessor to this procedure. Runs once per environment tag, the first
-time this skill talks to that tag (see the activation sequence in
-`SKILL.md`), and again whenever something about the target instance looks
-different from what durable memory says (a version bump, an app that
-wasn't there before).
+Runs once per environment tag, the first time this skill talks to that tag
+(see the activation sequence in `SKILL.md`), and again whenever something
+about the target instance looks different from what durable memory says (a
+version bump, an app that wasn't there before).
 
-**What Phase 2 builds vs. what Phase 4 wires up.** This document is the
-*procedure* — what to check and in what order. It is NOT the memory
-mechanism itself: `scripts/core/memory_promote.py` (redact + format, then
-hand off to Hermes' `skill_manage` tool) and the first `skill_manage`-
-created `qkeee-erp-learned/<env-tag>` skill land in Phase 4. Until then,
-run this procedure and hold the findings in-session (or in your own
-report-back to the user) — don't invent a bespoke file-write step to fill
-the gap; that's exactly the pattern the consolidation plan retired (see
-§8's revision note) in favor of Hermes' native memory tools.
+This document is the *procedure* — what to check and in what order. It is
+NOT the memory mechanism itself: that's `scripts/core/memory_promote.py`
+(redact + format, then hand off to Hermes' `skill_manage` tool) writing
+into `qkeee-erp-learned/<env-tag>`, per step 6 below. Don't invent a
+bespoke file-write step to fill that gap — use `memory_promote.py` and
+Hermes' native memory tools.
 
 ## When this procedure runs
 
@@ -27,8 +21,8 @@ the gap; that's exactly the pattern the consolidation plan retired (see
   classification — don't re-run this procedure against an environment
   already cataloged, unless something looks stale (see below).
 - **No `qkeee-erp-learned/<env-tag>` skill found.** Run the full procedure
-  below before doing anything substantive, and (once Phase 4 lands)
-  promote the findings into one.
+  below before doing anything substantive, then promote the findings into
+  one (step 6).
 - **Staleness signal mid-session.** A `discover.py apps` version that
   doesn't match what durable memory says, an app installed/removed since
   last cataloged, or a doctype `meta` call that disagrees with what's
@@ -77,22 +71,23 @@ the gap; that's exactly the pattern the consolidation plan retired (see
    not just first contact, but first contact is where "is this bot account
    even a dedicated service identity, not someone's personal login" also
    gets its first check (see `00-conventions.md`'s GRC baseline).
-6. **Record what was found.** Once Phase 4's `memory_promote.py` exists:
-   redact, format, and promote Frappe/ERPNext/app versions, the custom
-   doctype catalog, and any non-ERPNext system notes into
-   `qkeee-erp-learned/<env-tag>`'s references (`environment.md`,
-   `doctypes-catalog.md`, `custom-apps/<slug>.md`,
-   `non-erpnext/<slug>.md` — see `00-conventions.md`'s naming table), plus
-   a one-line breadcrumb in `<profile>/memories/MEMORY.md` naming the
-   environment tag and pointing at the full skill. Until then: report the
-   findings back to the user plainly, and don't assume they'll persist to
-   the next session — nothing durable is written yet.
+6. **Record what was found.** Run `memory_promote.py` (or call its
+   `build_promotion_plan()` directly): redact, format, and promote
+   Frappe/ERPNext/app versions, the custom doctype catalog, and any
+   non-ERPNext system notes into `qkeee-erp-learned/<env-tag>`'s
+   references (`environment.md`, `doctypes-catalog.md`,
+   `custom-apps/<slug>.md`, `non-erpnext/<slug>.md` — see
+   `00-conventions.md`'s naming table), plus a one-line breadcrumb in
+   `<profile>/memories/MEMORY.md` naming the environment tag and pointing
+   at the full skill. `memory_promote.py` cannot issue the `skill_manage`/
+   `memory` tool calls itself (it runs as a subprocess script — see its
+   own docstring); issue the calls it returns yourself, in order, and stop
+   at the first failure.
 
 ## What this deliberately doesn't try to do
 
-Same posture as the fallback-investigation predecessor this procedure is
-ported from: this is not a general-purpose Frappe-app auditor, and it
-doesn't attempt to reverse-engineer business logic behind a custom app's
+This is not a general-purpose Frappe-app auditor, and it doesn't attempt
+to reverse-engineer business logic behind a custom app's
 doctypes beyond what live metadata and the user's own explanation cover.
 If a specific investigated capability becomes trusted and repeatedly used,
 that's a signal it deserves a proper domain reference of its own (a
