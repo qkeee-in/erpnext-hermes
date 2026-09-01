@@ -1,5 +1,77 @@
 # Changelog
 
+## Generic submit/cancel confirmation-token gate + PROD env-class override + audit-failure escalation — 2026-09-01
+
+Adversarial-review follow-up. Three code changes to `scripts/core/client.py`
+plus `scripts/core/confirm_token.py`, all covered by new tests in
+`scripts/core/test_client.py`:
+
+1. **Generic advisory-first token gate for submit/cancel.** Previously only
+   `fixed_assets.py`/`system_admin.py` carried bespoke double-confirm token
+   schemes for their own highest-blast-radius actions — every other
+   domain's plain `mutate()` wrapper (accounts, hr_payroll, sales,
+   procurement, inventory) relied on prompt discipline alone to keep
+   create/update and submit/cancel in separate turns. `mutate_resource()`
+   gained a `DOMAIN_TOKEN_GATED_ACTIONS` registry
+   (`register_domain_token_gate()`) and a shared `_require_advisory_token()`
+   check; those five domains now register `{"submit", "cancel"}` and get
+   the same fresh, exact-match `confirmation_token` requirement
+   `gated_mutate_resource()` already enforced for its own path, computed
+   via `confirm_token.py`'s new `advisory-token` CLI. fixed_assets/
+   system_admin are unaffected — their own stricter per-action token
+   constructors keep running exactly as before.
+2. **`QKEEE_ERP_<TAG>_ENV_CLASS` override for PROD detection.** `_is_prod_tag()`
+   was purely `/prod/i` name-matching — a production tag not named with
+   "prod" in it silently lost every PROD-only protection. This optional
+   var (`prod`/`production` vs. `nonprod`/`dev`/`test`/`qa`/`staging`/`uat`)
+   lets an operator declare it explicitly; unset falls back to the
+   original name-based rule unchanged.
+3. **Audit-insert failure streak escalation.** A persistently failing audit
+   path (bot-init never run, permission revoked, instance unreachable)
+   previously produced one easy-to-miss `WARN:` line per failure,
+   indistinguishable from a one-off blip. `_audit_insert()` now tracks a
+   per-tag consecutive-failure streak and prints a louder, distinct
+   warning once it crosses `AUDIT_FAILURE_STREAK_WARN_THRESHOLD` (3).
+   Still best-effort, never blocks the real write.
+
+Docs updated to match: `00-conventions.md` (Non-negotiable 5, GRC baseline's
+new "source requester identity from the channel's own authenticated sender
+field" bullet), `01-connectivity.md` (ENV_CLASS row + PROD-tag section),
+`03-spec-driven-execution.md` (new section recommending Hermes' Kanban
+feature over a flat spec file for work that crosses agent/session
+boundaries), `SKILL.md`'s Status note (separates the now-code-enforced
+gate from the still-prompt-only draft-composition renderers), and the
+`accounts`/`hr_payroll`/`sales` domain module docstrings + `accounts.md`'s
+procedure section.
+
+## Spec-driven execution + ERP doc-lookup procedure — 2026-09-01
+
+Docs-only addition: `references/03-spec-driven-execution.md` (clarify →
+draft a crisp objective/plan/functional/technical spec → persist to
+`./qkeee-erp-specs/` under the session's actual working directory
+(`terminal.cwd` on gateway/cron, the real launch directory on local
+CLI — `01-connectivity.md`'s note that local CLI ignores the
+`terminal.cwd` *config key* doesn't mean it ignores the working
+directory itself; `<profile>/workspace/...` is only a last-resort
+fallback when neither resolves) → seek approval → fold in edits →
+execute → append an Outcome section at close-out) and
+`references/04-erp-doc-lookup.md` (identify the installed Frappe/ERPNext
+package + version via `discover.py`, map it to its `docs.frappe.io`
+subpath or GitHub README, fall back to a `discuss.frappe.io` search for
+an unfamiliar functional area — never overriding live metadata or an
+explicit user statement per Non-negotiable 4).
+
+Autonomous-mode requests ("just do it," no check-ins) skip only the
+interactive-approval conversation, never spec creation itself — the spec
+is still drafted and persisted, marked `Approval: autonomous (<why>)` in
+its header, so every autonomous run stays auditable against a written
+plan the same way an interactively-approved one is.
+
+Wired into `SKILL.md`'s activation sequence as new step 6 (after scope/
+mode statement) and both files added to the `Files` list;
+`00-conventions.md`'s naming table gained a `Task spec` row. No code
+changed — `scripts/` and its test suite are untouched by this entry.
+
 ## RBAC pre-check reliability guard — 2026-09-01
 
 Fix for a gap flagged and live-confirmed against a real ERPNext instance

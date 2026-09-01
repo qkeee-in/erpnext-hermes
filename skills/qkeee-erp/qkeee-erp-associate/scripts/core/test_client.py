@@ -753,5 +753,169 @@ class ProdGateWiringTests(unittest.TestCase):
             mocked_start.assert_not_called()
 
 
+class IsProdTagEnvClassOverrideTests(unittest.TestCase):
+    """QKEEE_ERP_<TAG>_ENV_CLASS lets an operator declare prod/non-prod
+    explicitly instead of relying on the tag name containing "prod" —
+    see 01-connectivity.md's rationale (a naming-only signal is easy to
+    miss on a tag like "LIVE_ERP")."""
+
+    def setUp(self):
+        import os
+        self._patcher = unittest.mock.patch.dict(os.environ, {}, clear=True)
+        self._patcher.start()
+        self.addCleanup(self._patcher.stop)
+        ec._QKEEE_ENV_FILE_CACHE = None
+        self.addCleanup(setattr, ec, "_QKEEE_ENV_FILE_CACHE", None)
+
+    def test_explicit_prod_override_wins_over_non_matching_name(self):
+        import os
+        os.environ["QKEEE_ERP_LIVE_ERP_ENV_CLASS"] = "prod"
+        self.assertTrue(ec._is_prod_tag("LIVE_ERP"))
+
+    def test_explicit_nonprod_override_wins_over_matching_name(self):
+        import os
+        os.environ["QKEEE_ERP_PROD_ERP_ENV_CLASS"] = "staging"
+        self.assertFalse(ec._is_prod_tag("PROD_ERP"))
+
+    def test_unset_falls_back_to_name_based_regex(self):
+        self.assertTrue(ec._is_prod_tag("client-a-prod"))
+        self.assertFalse(ec._is_prod_tag("qa"))
+
+    def test_unrecognized_override_value_falls_back_to_name(self):
+        import os
+        os.environ["QKEEE_ERP_QA_ENV_CLASS"] = "banana"
+        self.assertFalse(ec._is_prod_tag("qa"))
+
+
+class DomainTokenGateTests(unittest.TestCase):
+    """mutate_resource()'s generic advisory-token gate for a domain that
+    has opted submit/cancel (or delete) into it via
+    register_domain_token_gate() — accounts/hr-payroll/sales/procurement/
+    inventory's actual registrations, exercised here through a throwaway
+    fake domain so this test doesn't depend on any real domain module's
+    doctype list."""
+
+    FAKE_DOMAIN = "test_fake_domain"
+
+    QA_ENV = {
+        "QKEEE_ERP_QA_BASE_URL": "https://example.com",
+        "QKEEE_ERP_QA_API_KEY": "key",
+        "QKEEE_ERP_QA_API_SECRET": "secret",
+    }
+
+    def setUp(self):
+        ec.register_domain_allowlist(self.FAKE_DOMAIN, ("Fake Doctype",))
+        ec.register_domain_token_gate(self.FAKE_DOMAIN, {"submit", "cancel"})
+        self.addCleanup(ec.DOMAIN_WRITE_ALLOWLISTS.pop, self.FAKE_DOMAIN, None)
+        self.addCleanup(ec.DOMAIN_TOKEN_GATED_ACTIONS.pop, self.FAKE_DOMAIN, None)
+        ec._QKEEE_ENV_FILE_CACHE = None
+        self.addCleanup(setattr, ec, "_QKEEE_ENV_FILE_CACHE", None)
+
+    def _mocks(self):
+        return (
+            patch.object(ec, "record_comment"),
+            patch.object(ec, "_audit_insert", return_value=None),
+            patch.object(ec, "_audit_update", return_value=False),
+            patch.object(ec, "_audit_submit", return_value=False),
+            patch.object(ec, "resource_exists", return_value=True),
+            patch.object(ec, "check_user_permission", return_value=True),
+            patch.object(ec, "verify_rbac_precheck_reliable", return_value={"reliable": True}),
+        )
+
+    def test_submit_refused_without_token(self):
+        with self.assertRaises(ec.ConnectorError) as ctx:
+            ec.mutate_resource("qa", "Fake Doctype", "submit", name="FD-0001", mode="read-write",
+                                requested_by="priya@org.com", domain=self.FAKE_DOMAIN)
+        self.assertIn("confirmation_token", str(ctx.exception))
+
+    def test_cancel_refused_without_token(self):
+        with self.assertRaises(ec.ConnectorError):
+            ec.mutate_resource("qa", "Fake Doctype", "cancel", name="FD-0001", mode="read-write",
+                                requested_by="priya@org.com", domain=self.FAKE_DOMAIN)
+
+    def test_create_is_never_token_gated(self):
+        """create/update aren't in the registered action set — they're the
+        draft steps meant to be reviewed BEFORE this gate ever applies."""
+        with patch.dict("os.environ", self.QA_ENV, clear=True), \
+                patch.object(ec, "_request", return_value={"data": {"name": "FD-0001"}}), \
+                patch.object(ec, "record_comment"), \
+                patch.object(ec, "resource_exists", return_value=True), \
+                patch.object(ec, "check_user_permission", return_value=True), \
+                patch.object(ec, "verify_rbac_precheck_reliable", return_value={"reliable": True}):
+            result = ec.mutate_resource("qa", "Fake Doctype", "create", payload={"x": 1},
+                                         mode="read-write", requested_by="priya@org.com",
+                                         domain=self.FAKE_DOMAIN)
+        self.assertEqual(result["data"]["name"], "FD-0001")
+
+    def test_submit_refused_with_stale_token(self):
+        old_issued_at = int(time.time()) - 10_000
+        token = advisory_write_token("submit", "Fake Doctype", "FD-0001", {}, "priya@org.com", old_issued_at)
+        with self.assertRaises(ec.StaleConfirmationError):
+            ec.mutate_resource("qa", "Fake Doctype", "submit", name="FD-0001", mode="read-write",
+                                requested_by="priya@org.com", domain=self.FAKE_DOMAIN,
+                                confirmation_token=token, issued_at=old_issued_at)
+
+    def test_submit_refused_with_mismatched_token(self):
+        issued_at = int(time.time())
+        token = advisory_write_token("submit", "Fake Doctype", "FD-0001", {"amount": 1}, "priya@org.com", issued_at)
+        with self.assertRaises(ec.ConnectorError):
+            ec.mutate_resource("qa", "Fake Doctype", "submit", name="FD-0001", mode="read-write",
+                                requested_by="priya@org.com", domain=self.FAKE_DOMAIN,
+                                confirmation_token=token, issued_at=issued_at,
+                                payload={"amount": 2})
+
+    def test_submit_succeeds_with_matching_fresh_token(self):
+        issued_at = int(time.time())
+        token = advisory_write_token("submit", "Fake Doctype", "FD-0001", {}, "priya@org.com", issued_at)
+        mocks = self._mocks()
+        with mocks[0], mocks[1], mocks[2], mocks[3], mocks[4], mocks[5], mocks[6], \
+                patch.dict("os.environ", self.QA_ENV, clear=True), \
+                patch.object(ec, "_request", return_value={"data": {"name": "FD-0001"}}):
+            result = ec.mutate_resource("qa", "Fake Doctype", "submit", name="FD-0001", mode="read-write",
+                                         requested_by="priya@org.com", domain=self.FAKE_DOMAIN,
+                                         confirmation_token=token, issued_at=issued_at)
+        self.assertEqual(result["data"]["name"], "FD-0001")
+
+    def test_ungated_domain_action_combination_is_unaffected(self):
+        """A domain/action combination that was never registered (e.g. this
+        fake domain's "delete", only submit/cancel were registered) gets no
+        token check at all — same as before this gate existed."""
+        with patch.dict("os.environ", self.QA_ENV, clear=True), \
+                patch.object(ec, "_request", return_value={}), \
+                patch.object(ec, "record_comment"), \
+                patch.object(ec, "resource_exists", return_value=True), \
+                patch.object(ec, "check_user_permission", return_value=True), \
+                patch.object(ec, "verify_rbac_precheck_reliable", return_value={"reliable": True}):
+            ec.mutate_resource("qa", "Fake Doctype", "delete", name="FD-0001", mode="read-write",
+                                requested_by="priya@org.com", domain=self.FAKE_DOMAIN)
+
+
+class AuditFailureStreakTests(unittest.TestCase):
+    """A persistently failing audit path (bot-init never run, permission
+    revoked, instance unreachable) should escalate past a single easy-to-
+    miss stderr line once it's clearly not a one-off — see
+    AUDIT_FAILURE_STREAK_WARN_THRESHOLD. Still never raises or blocks the
+    real write either way."""
+
+    def setUp(self):
+        ec._AUDIT_FAILURE_STREAK.clear()
+        self.addCleanup(ec._AUDIT_FAILURE_STREAK.clear)
+
+    @patch.object(ec, "_request", side_effect=RuntimeError("boom"))
+    def test_streak_escalates_after_threshold(self, mocked_request):
+        with patch("sys.stderr") as mock_stderr:
+            for _ in range(ec.AUDIT_FAILURE_STREAK_WARN_THRESHOLD):
+                ec._audit_insert({"tag": "streak-tag"}, {"session": "s1"})
+        combined = "".join(c.args[0] for c in mock_stderr.write.call_args_list if c.args)
+        self.assertIn("looks systemic", combined)
+
+    @patch.object(ec, "_request", side_effect=[RuntimeError("boom"), {"data": {"name": "LOG-1"}}])
+    def test_success_resets_the_streak(self, mocked_request):
+        ec._audit_insert({"tag": "streak-tag-2"}, {"session": "s1"})
+        self.assertEqual(ec._AUDIT_FAILURE_STREAK["streak-tag-2"], 1)
+        ec._audit_insert({"tag": "streak-tag-2"}, {"session": "s1"})
+        self.assertEqual(ec._AUDIT_FAILURE_STREAK["streak-tag-2"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

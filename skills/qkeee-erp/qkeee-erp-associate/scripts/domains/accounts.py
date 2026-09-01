@@ -2,10 +2,14 @@
 """
 qkeee-erp-associate — accounts domain (AP/AR, Journal Entry, tax).
 
-The domain's "double gate on submit/cancel" and its JE-narration/
-cancel-confirmation business logic belong in render_je_draft.py /
-render_cancel_confirmation.py — those advisory-draft scripts don't exist
-in this skill's scripts/ yet, so that logic isn't enforced in code today.
+The domain's JE-narration/cancel-confirmation DRAFT composition belongs in
+render_je_draft.py / render_cancel_confirmation.py — those advisory-draft
+scripts don't exist in this skill's scripts/ yet, so drafting itself isn't
+code-assisted today. The actual "double gate on submit/cancel" IS
+code-enforced, though: register_domain_token_gate() below opts this
+domain's submit/cancel into core.client.mutate_resource()'s generic
+confirmation-token check — see core/confirm_token.py's advisory-token CLI
+for how to compute the token over what the user actually confirmed.
 Cross-check ALLOWED_WRITE_DOCTYPES below against
 references/domains/accounts.md before expanding it: Journal Entry
 (render_je_draft.py), plus generic cancel (render_cancel_confirmation.py,
@@ -34,6 +38,12 @@ ALLOWED_WRITE_DOCTYPES = (
 )
 
 core_client.register_domain_allowlist(DOMAIN_NAME, ALLOWED_WRITE_DOCTYPES)
+
+# Closes the "not code-enforced today" gap the module docstring above used
+# to describe: submit/cancel now require a fresh confirmation_token from
+# core/confirm_token.py's advisory-token CLI, verified in mutate_resource()
+# itself — not just the reference doc's "three distinct steps" instruction.
+core_client.register_domain_token_gate(DOMAIN_NAME, {"submit", "cancel"})
 
 
 def mutate(tag: str, doctype: str, action: str, **kwargs) -> dict:

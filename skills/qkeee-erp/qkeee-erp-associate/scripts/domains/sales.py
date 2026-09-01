@@ -3,9 +3,12 @@
 qkeee-erp-associate — sales domain (Customer, Quotation, Sales Order,
 Delivery Note).
 
-"Quotation submit hardcoded advisory" belongs in render_quotation_draft.py
-— that advisory-draft script doesn't exist in this skill's scripts/ yet,
-so that behavior isn't enforced in code today.
+Quotation-draft composition belongs in render_quotation_draft.py — that
+advisory-draft script doesn't exist in this skill's scripts/ yet. The
+advisory-first submit/cancel gate itself IS code-enforced:
+register_domain_token_gate() below opts this domain into
+core.client.mutate_resource()'s generic confirmation-token check — see
+core/confirm_token.py's advisory-token CLI.
 
 ALLOWED_WRITE_DOCTYPES covers render_customer_draft.py/
 render_quotation_draft.py's target doctypes plus Sales Order/Delivery
@@ -31,6 +34,11 @@ ALLOWED_WRITE_DOCTYPES = (
 )
 
 core_client.register_domain_allowlist(DOMAIN_NAME, ALLOWED_WRITE_DOCTYPES)
+
+# Submit/cancel now require a fresh confirmation_token from
+# core/confirm_token.py's advisory-token CLI, verified in mutate_resource()
+# — a real code-level backstop, not prompt discipline alone.
+core_client.register_domain_token_gate(DOMAIN_NAME, {"submit", "cancel"})
 
 
 def mutate(tag: str, doctype: str, action: str, **kwargs) -> dict:

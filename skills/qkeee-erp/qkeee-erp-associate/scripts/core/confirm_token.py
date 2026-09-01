@@ -104,3 +104,50 @@ def advisory_write_token(action: str, doctype: str, name: str, payload: dict,
         requested_by=requested_by or "",
         issued_at=int(issued_at),
     )
+
+
+def _cli():
+    """Manual/agent-facing CLI: compute an advisory_write_token() over the
+    exact facts just shown to and confirmed by the user, for domains that
+    have opted their submit/cancel/delete actions into the generic
+    confirmation-token gate (core/client.py's DOMAIN_TOKEN_GATED_ACTIONS —
+    see register_domain_token_gate()). Print, then pass both
+    confirmation_token and issued_at unchanged to the matching `mutate`
+    call — never hand-construct a token, always run it through here (or
+    advisory_write_token() directly) over the real payload/name/
+    requested_by, so the token is actually bound to what was confirmed.
+
+    A domain with its OWN bespoke token scheme (fixed_assets, system_admin)
+    has its own constructor for that (depreciation_run_token(),
+    destructive_action_token(), ...) — this generic CLI is for every other
+    domain's plain submit/cancel/delete instead."""
+    import argparse
+
+    p = argparse.ArgumentParser(
+        description="Compute an advisory_write_token for the generic domain "
+                     "submit/cancel/delete confirmation gate."
+    )
+    p.add_argument("--action", required=True, choices=["create", "update", "submit", "cancel", "delete"])
+    p.add_argument("--doctype", required=True)
+    p.add_argument("--name", default="", help="record name (required for submit/cancel/delete)")
+    p.add_argument("--payload", default="{}", help="JSON object of the exact fields just shown to the user")
+    p.add_argument("--requested-by", required=True, help="ERPNext user id/email of the confirming requester")
+    p.add_argument("--issued-at", type=int, default=None,
+                    help="epoch seconds; defaults to now — record whatever this call prints, "
+                         "the execute step must receive the SAME issued_at back")
+    args = p.parse_args()
+
+    issued_at = args.issued_at if args.issued_at is not None else int(time.time())
+    try:
+        payload = json.loads(args.payload) if args.payload else {}
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"--payload must be valid JSON: {e}")
+    if not isinstance(payload, dict):
+        raise SystemExit("--payload must be a JSON object")
+
+    token = advisory_write_token(args.action, args.doctype, args.name, payload, args.requested_by, issued_at)
+    print(json.dumps({"confirmation_token": token, "issued_at": issued_at}, indent=2))
+
+
+if __name__ == "__main__":
+    _cli()

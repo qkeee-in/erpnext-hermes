@@ -89,6 +89,16 @@ action:
    domain(s) are in play and whether writes are possible this session,
    restated after a gap or before a new batch of writes, same cadence as
    step 1's environment reminder.
+6. **For anything beyond a single read-only lookup, run
+   `references/03-spec-driven-execution.md` before acting.** Clarify,
+   draft a crisp objective/plan/functional/technical spec, persist it,
+   get it approved (or, if the user opted out of interactive review,
+   silently persist it anyway and mark it autonomous), then execute
+   against it. This is not optional under "run autonomously" — that only
+   skips the approval *conversation*, never the spec itself. When a
+   functional area or an installed app's behavior is unfamiliar, pull in
+   `references/04-erp-doc-lookup.md` to ground the spec against real
+   documentation rather than guessing.
 
 ## Domain table
 
@@ -127,6 +137,12 @@ all** (a third-party tool, an internal API) follows
   `discover.py` usage, the `qkeee-erp.env` design decision.
 - `references/02-environment-assessment.md` — the per-environment-tag
   cataloging procedure this activation sequence's step 2 depends on.
+- `references/03-spec-driven-execution.md` — clarify → spec → persist →
+  approve → execute procedure this activation sequence's step 6 depends
+  on, for anything beyond a single read-only lookup.
+- `references/04-erp-doc-lookup.md` — how to find official docs (or, for
+  an unfamiliar functional area, a forum search) for whatever Frappe/
+  ERPNext package or app a target environment actually runs.
 - `references/non-erpnext-adapter.md` — procedure for a non-ERPNext
   target system.
 - `references/domains/*.md` — one per domain slug above, lazily latched.
@@ -177,12 +193,30 @@ not a repo-side config change.
 
 `scripts/core/client.py` and the domain modules with a write path are
 real, tested code, including RBAC-every-environment and always-on read
-audit logging (see `00-conventions.md`'s GRC baseline). Several
-`render_*.py` draft-staging scripts — the actual enforcement mechanism
-for "never write without an advisory-first draft" — are **not yet
-present in this skill's `scripts/` directory**; where a domain's
-reference file describes advisory-draft behavior that depends on one,
-that behavior isn't code-enforced today. Don't claim a capability is
-fully enforced in code without confirming it in `scripts/` — say what's
-live vs. planned plainly, the same discipline
+audit logging (see `00-conventions.md`'s GRC baseline).
+
+Two distinct things sit under "advisory-first draft," and only one of
+them is code-enforced today:
+
+- **The double-confirm GATE on submit/cancel/delete** (never let a write
+  through without a fresh, exact-match confirmation over what was just
+  shown to the user) **is code-enforced**, uniformly, via
+  `core.client.mutate_resource()`'s `DOMAIN_TOKEN_GATED_ACTIONS` registry
+  (`register_domain_token_gate()`) for accounts/hr-payroll/sales/
+  procurement/inventory's submit/cancel, and via each domain's own
+  bespoke token scheme for fixed-assets' depreciation/disposal and
+  system-admin's destructive/permission/config actions. Compute the token
+  via `scripts/core/confirm_token.py`'s `advisory-token` CLI (or a
+  domain's own token constructor) over the exact facts confirmed — never
+  hand-construct one.
+- **Composing the draft's actual content** — a Journal Entry's balance
+  check and narration, a cancel's impact statement, a Quotation's
+  presentation — still depends on the `render_*.py` scripts several
+  domain files describe, which are **not yet present in this skill's
+  `scripts/` directory**. The gate above will refuse an unconfirmed
+  submit/cancel either way, but nothing yet code-assists producing the
+  draft itself; that part is still prompt discipline.
+
+Don't claim a capability is fully enforced in code without confirming it
+in `scripts/` — say what's live vs. planned plainly, the same discipline
 `references/domains/grc-audit.md` asks of any GRC-framed conversation.

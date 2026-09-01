@@ -8,12 +8,15 @@ what's specific to AP/AR, JE drafting, 3-way match, and tax mechanics.
 
 Every capability below routes through the shared `core.client` functions
 plus `domains.accounts.mutate()` — this domain has no unique connector
-logic of its own. The domain-specific logic (JE balance enforcement,
-cancel-impact statement) belongs in `render_je_draft.py`/
+logic of its own. The DRAFT-composition logic (JE balance enforcement,
+cancel-impact statement wording) belongs in `render_je_draft.py`/
 `render_cancel_confirmation.py`, which don't exist in this skill's
-scripts/ yet — this reference describes the target procedure those
-renderers are meant to enforce, flagged below where it isn't code-enforced
-today.
+scripts/ yet — that part is still prompt discipline. The submit/cancel
+GATE itself is code-enforced: `scripts/domains/accounts.py` registers
+both actions with `core.client.register_domain_token_gate()`, so
+`mutate_resource()` refuses either one without a fresh
+`confirmation_token` computed via `scripts/core/confirm_token.py`'s
+`advisory-token` CLI over the exact facts just confirmed with the user.
 
 ## When this domain applies
 
@@ -68,10 +71,15 @@ review, TDS/GST/e-invoicing/e-way-bill questions.
    field (`account`, `party`, `cost_center`, `against_account` where set)
    resolves to a real, existing record. Fix via `update` and re-review if
    anything is wrong. Only once the reviewed draft is correct, present it
-   for a second explicit confirmation and call `mutate(..., "submit")`.
-   **Cancelling an existing document** gets the same staged-confirmation
-   treatment — state the impact, confirm, then `mutate(..., "cancel")`;
-   never cancel off a bare request with nothing staged first.
+   for a second explicit confirmation, compute a `confirmation_token` via
+   `core/confirm_token.py`'s `advisory-token` CLI over the confirmed
+   facts, and call `mutate(..., "submit", confirmation_token=..., issued_at=...)`
+   — `mutate_resource()` refuses the submit without a matching, fresh
+   token. **Cancelling an existing document** gets the same
+   staged-confirmation treatment plus the same token requirement — state
+   the impact, confirm, compute the token, then
+   `mutate(..., "cancel", confirmation_token=..., issued_at=...)`; never
+   cancel off a bare request with nothing staged first.
 5. **3-way match walks PO → Receipt → Invoice in order**, reporting every
    discrepancy found, not just the first — ERPNext's `per_received`/
    `per_billed` fields make this checkable without re-deriving match state

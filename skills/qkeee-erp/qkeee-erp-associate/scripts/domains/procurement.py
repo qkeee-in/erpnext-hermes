@@ -27,6 +27,11 @@ ALLOWED_WRITE_DOCTYPES = (
 
 core_client.register_domain_allowlist(DOMAIN_NAME, ALLOWED_WRITE_DOCTYPES)
 
+# Submit/cancel now require a fresh confirmation_token from
+# core/confirm_token.py's advisory-token CLI, verified in mutate_resource()
+# — a real code-level backstop, not prompt discipline alone.
+core_client.register_domain_token_gate(DOMAIN_NAME, {"submit", "cancel"})
+
 
 def mutate(tag: str, doctype: str, action: str, **kwargs) -> dict:
     """This domain's write entry point — plain mutate_resource() gated by

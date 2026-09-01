@@ -40,13 +40,17 @@ place to land.
 | Durable memory, non-ERPNext | `.../<env-tag>/references/non-erpnext/<system-slug>.md` | `non-erpnext/tally-prime.md` |
 | Memory breadcrumb | one line in `<profile>/memories/MEMORY.md` via the `memory` tool | `qkeee-erp env prod-in: ... — see skill qkeee-erp-learned/prod-in` |
 | Working scratch (rare) | `<profile>/workspace/qkeee-erp/<env-tag>/` | disposable, cleared at end of task |
+| Task spec | `./qkeee-erp-specs/<slug>-<YYYYMMDD-HHMM>.md`, relative to the session's actual working directory (`terminal.cwd` on gateway/cron, launch dir on local CLI) | see `references/03-spec-driven-execution.md`; `<profile>/workspace/...` only as a last-resort fallback when neither resolves; disposable across sessions, not mid-task |
 | New-learning entries | append under `## Learned <YYYY-MM-DD>` | never edit or delete a prior entry |
 
 `<profile>` = the active Hermes profile root (`~/.hermes/` by default,
 `~/.hermes/profiles/<name>/` for a named one) — resolved through Hermes'
-own profile mechanism, never hardcoded or invented by this skill. Nothing
-lives in `terminal.cwd`: the local CLI backend (this skill's primary usage
-path) doesn't honor it — see `01-connectivity.md`.
+own profile mechanism, never hardcoded or invented by this skill. The
+task-spec row above is the one exception that does target the working
+directory directly: local CLI ignores the `terminal.cwd` *config key*
+but still writes relative to the real launch directory, which a spec
+uses on purpose — see `01-connectivity.md` and
+`references/03-spec-driven-execution.md`.
 
 **The domain slug enum is fixed** — a twelfth domain requires a deliberate
 edit to this list, not an ad hoc file:
@@ -92,17 +96,25 @@ for the exact mechanism.
    ERPNext; they don't confirm what a specific org's instance has
    customized, added, or removed. An honest "I don't see that field on
    this DocType" beats a guessed field name that happens to resolve.
-5. **Save-draft-then-review-then-submit, always three distinct steps.**
-   `create`/`update` and `submit` are always separate `mutate` calls —
-   this skill's job is to keep them separate, never chain create straight
-   into submit. Re-fetch the record by its returned `name` after create/
-   update and review every persisted field — in particular that every
-   Link-type field resolves to a real, existing record — before issuing a
-   `submit`. Use `core.client.get_resource()` (or the domain's own
-   equivalent) when the review needs child-table data (Frappe's list
-   endpoint silently drops child tables even when named in `fields`);
-   `query_resource()` with explicit `fields` is far cheaper when it
-   doesn't.
+5. **Save-draft-then-review-then-submit, always three distinct steps —
+   code-enforced, not just sequencing discipline.** `create`/`update` and
+   `submit` are always separate `mutate` calls. Re-fetch the record by its
+   returned `name` after create/update and review every persisted field —
+   in particular that every Link-type field resolves to a real, existing
+   record — before issuing a `submit`. Use `core.client.get_resource()`
+   (or the domain's own equivalent) when the review needs child-table data
+   (Frappe's list endpoint silently drops child tables even when named in
+   `fields`); `query_resource()` with explicit `fields` is far cheaper
+   when it doesn't. `submit`/`cancel` on every domain
+   (accounts/hr-payroll/sales/procurement/inventory) additionally require
+   a fresh `confirmation_token` — `mutate_resource()` refuses either
+   action without one that matches the exact (action, doctype, name,
+   payload, requested_by, issued_at) facts, computed via
+   `scripts/core/confirm_token.py`'s `advisory-token` CLI over what was
+   actually shown to and confirmed by the user. Fixed-assets and
+   system-admin instead carry their own stricter, capability-specific
+   token schemes for their highest-blast-radius actions (see those
+   domains' own modules) — this generic gate is what backstops the rest.
 6. **Sensitive data (SSN, credit card numbers, and similar) is never
    written in raw form anywhere.** `core.client.redact_pii()` is a
    code-level backstop applied to Comment content and Audit Log free-text
@@ -120,6 +132,20 @@ for the exact mechanism.
 
 ## GRC baseline
 
+- **Source the requester identity from the channel's own authenticated
+  sender field, never reconstruct it conversationally.** Hermes' gateway
+  already resolves and authorizes the inbound sender before this skill
+  ever sees the message (platform allowlists, DM pairing — see
+  [Security | Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/security)'s
+  "User Authorization" section). Use that already-resolved platform
+  identity (the Google Chat/Discord user id, or the email `From` header)
+  as the input to the ERPNext-`User` lookup below — don't ask the model to
+  infer or restate who's asking from conversation text, and never accept a
+  `requested_by` that didn't originate from that channel-provided field.
+  This is what `resource_exists(tag, "User", requested_by)` and
+  `check_user_permission()` are validating *against*; they can't detect a
+  plausible-looking but fabricated identity that was never actually tied
+  to the channel message.
 - **RBAC pre-check, every environment.** The associate runs the same
   requester-permission check on every environment, every fetch or
   write, not PROD only: resolve the requester as a real ERPNext `User`,

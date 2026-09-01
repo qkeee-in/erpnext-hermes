@@ -177,6 +177,71 @@ def register_domain_allowlist(domain: str, allowed_doctypes) -> None:
     DOMAIN_WRITE_ALLOWLISTS[domain] = tuple(allowed_doctypes)
 
 
+# --------------------------------------------------------------------------
+# Generic advisory-first confirmation-token gate for a domain's plain
+# mutate() wrapper.
+#
+# fixed_assets.py / system_admin.py already carry their OWN bespoke
+# double-confirm token schemes (depreciation_run_token(), disposal_token(),
+# destructive_action_token(), permission_change_token(), ...) for their
+# highest-blast-radius single actions — those stay exactly as they are and
+# do NOT register here; this registry exists for domains that have no such
+# bespoke scheme (accounts, hr_payroll, sales, procurement, inventory) so
+# their plain create->update->submit/cancel/delete path — described in
+# 00-conventions.md's Non-negotiable 5 as "three distinct steps, never
+# chained" — gets a real code-level backstop for the submit/cancel/delete
+# step, instead of relying on prompt discipline alone to keep create/update
+# and submit separate turns. A domain registers the specific actions it
+# wants gated this way; omitting a domain here (or omitting an action)
+# means mutate_resource() applies no token check for it — either because
+# that domain gates it its own way (fixed_assets, system_admin) or because
+# nothing in it warrants one (mis's empty write allowlist, doc-extraction's
+# lack of a connector).
+DOMAIN_TOKEN_GATED_ACTIONS: dict = {}
+
+
+def register_domain_token_gate(domain: str, actions) -> None:
+    """Opt a domain's plain mutate_resource(domain=...) calls into the
+    shared advisory_write_token gate for the given actions (normally
+    {"submit", "cancel", "delete"} — create/update are the draft steps and
+    stay ungated here, they're what gets reviewed before this gate ever
+    triggers). Called once, at import time, alongside
+    register_domain_allowlist()."""
+    DOMAIN_TOKEN_GATED_ACTIONS[domain] = set(actions)
+
+
+def _require_advisory_token(action: str, doctype: str, name: str, payload: dict,
+                             requested_by: str, confirmation_token: str, issued_at) -> None:
+    """Shared verification logic behind the generic domain token gate above
+    — same freshness + exact-match-over-the-real-facts mechanics as
+    gated_mutate_resource() and each domain's own bespoke token check, just
+    factored out so mutate_resource() can apply it without duplicating the
+    three checks inline."""
+    if not confirmation_token or issued_at is None:
+        raise ConnectorError(
+            f"Refusing {action} on '{doctype}': this step requires a fresh "
+            f"confirmation_token + issued_at. Show the reviewed draft/impact to the user, "
+            f"get an explicit confirmation, compute the token via "
+            f"confirm_token.py's advisory-token CLI (or advisory_write_token()) over these "
+            f"exact (action, doctype, name, payload, requested_by, issued_at) facts, and "
+            f"pass it here — never hand-construct one."
+        )
+    if not is_fresh(int(issued_at)):
+        raise StaleConfirmationError(
+            f"This confirmation for {action} on '{doctype}' has expired or its issued_at is "
+            f"implausible — re-show the current draft/impact to the user, reconfirm, and get "
+            f"a fresh token before retrying."
+        )
+    expected = advisory_write_token(action, doctype, name, payload or {}, requested_by, int(issued_at))
+    if confirmation_token != expected:
+        raise ConnectorError(
+            f"confirmation_token does not match the (action, doctype, name, payload, "
+            f"requested_by, issued_at) facts actually being submitted for {action} on "
+            f"'{doctype}' — recompute it over exactly what was shown to and confirmed by the "
+            f"user, don't hand-construct one."
+        )
+
+
 class ConnectorError(Exception):
     """Raised for missing config / auth / HTTP failures with a specific, actionable message."""
 
@@ -224,13 +289,31 @@ def _tag_env_var(tag: str, suffix: str) -> str:
     return f"QKEEE_ERP_{sanitized}_{suffix}"
 
 
+_PROD_ENV_CLASS_VALUES = {"prod", "production"}
+_NONPROD_ENV_CLASS_VALUES = {"nonprod", "non-prod", "non_prod", "dev", "test", "qa", "staging", "uat"}
+
+
 def _is_prod_tag(tag: str) -> bool:
-    """A tag counts as PRODUCTION if its name contains "prod" (case-
-    insensitive) anywhere — "PROD_ERP", "prod", "client-a-prod" all match.
-    Deliberately name-based, not a separate declared config value: there
-    is no QKEEE_ERP_<TAG>_ENV_CLASS or similar — a tag not named with
-    "prod" in it will NOT get the requester-validation gate below, so
-    name new production tags accordingly. See _validate_prod_requester()."""
+    """A tag counts as PRODUCTION if EITHER of these says so:
+
+    1. QKEEE_ERP_<TAG>_ENV_CLASS is explicitly set to "prod"/"production"
+       (or explicitly to a recognized non-prod value, which forces False
+       regardless of the tag's name) — the belt to the name-based regex's
+       suspenders, for an operator who wants this declared rather than
+       inferred, or whose tag name doesn't happen to contain "prod".
+    2. Falling back to the tag's own name matching /prod/i anywhere
+       ("PROD_ERP", "prod", "client-a-prod" all match) when ENV_CLASS is
+       unset or holds a value this module doesn't recognize.
+
+    A tag named without "prod" in it AND with no ENV_CLASS override will
+    NOT get the requester-validation gate below — name new production
+    tags accordingly, or set ENV_CLASS explicitly. See
+    _validate_prod_requester()."""
+    override = (_qkeee_env().get(_tag_env_var(tag, "ENV_CLASS")) or "").strip().lower()
+    if override in _PROD_ENV_CLASS_VALUES:
+        return True
+    if override in _NONPROD_ENV_CLASS_VALUES:
+        return False
     return bool(re.search(r"prod", tag, re.IGNORECASE))
 
 
@@ -958,19 +1041,44 @@ def _diff_fields(before: dict, after: dict) -> list:
     return diff
 
 
+# Per-tag count of consecutive _audit_insert() failures — each individual
+# failure already warns once (below), but a single stderr line is easy to
+# miss in a long-running session. This tracks the streak so a PERSISTENT
+# failure (bot-init never run, audit doctype permission revoked, instance
+# unreachable) escalates to a louder, distinct warning rather than looking
+# identical to one transient blip. Never raises, never blocks the real
+# write either way — see module docstring's "Audit logging is best-effort,
+# not a gate."
+_AUDIT_FAILURE_STREAK: dict = {}
+AUDIT_FAILURE_STREAK_WARN_THRESHOLD = 3
+
+
 def _audit_insert(cfg: dict, fields: dict) -> str:
     """Raw best-effort insert into Qkeee Bot Audit Log. Returns the created
     record's name, or None on any failure (doctype not provisioned,
     permission denied, network error, etc.) — never raises."""
+    tag = cfg.get("tag", "")
     try:
         payload = {"doctype": AUDIT_LOG_DOCTYPE, **fields}
         result = _request(cfg, "POST", f"/api/resource/{urllib.parse.quote(AUDIT_LOG_DOCTYPE)}", payload=payload)
+        _AUDIT_FAILURE_STREAK[tag] = 0
         return (result.get("data") or {}).get("name")
     except Exception as e:
         # Broad by design: audit logging must never surface a failure mode
         # that could be mistaken for the real write failing. Still warn to
         # stderr so a persistently-failing audit path is visible in logs.
         print(f"WARN: audit log insert failed (non-fatal): {e}", file=sys.stderr)
+        streak = _AUDIT_FAILURE_STREAK.get(tag, 0) + 1
+        _AUDIT_FAILURE_STREAK[tag] = streak
+        if streak >= AUDIT_FAILURE_STREAK_WARN_THRESHOLD:
+            print(
+                f"WARN: audit logging has now failed {streak} times in a row on tag "
+                f"'{tag}' — this looks systemic (bot-init not run, audit doctype permission "
+                f"revoked, or the instance unreachable), not a one-off. Every read/write is "
+                f"still proceeding unaudited; surface this to the user/operator rather than "
+                f"treating each failure as independent.",
+                file=sys.stderr,
+            )
         return None
 
 
@@ -1114,7 +1222,8 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
                      *, domain: str = None, skill_label: str = None,
                      session_id: str = None, domain_code: str = None,
                      channel: str = None, channel_metadata: dict = None,
-                     user_approved: bool = False, approval_note: str = None) -> dict:
+                     user_approved: bool = False, approval_note: str = None,
+                     confirmation_token: str = None, issued_at: int = None) -> dict:
     """Generic resource mutate — create/update/submit/cancel/delete a
     DocType record. The one shared write entry point every domain module's
     own `mutate()` wrapper calls into (see scripts/domains/*.py).
@@ -1159,6 +1268,15 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
     a gate here. Defaults to False deliberately: a caller that forgets to
     pass it shows up as "Not Confirmed" on scan, which is the intended
     detection behavior, not a silent default.
+
+    `confirmation_token`/`issued_at`: required, verified in code (not just
+    prompt discipline), whenever `domain` has registered this `action` via
+    register_domain_token_gate() — normally submit/cancel/delete, never
+    create/update (the draft steps this gate exists to be reviewed
+    *before*). See DOMAIN_TOKEN_GATED_ACTIONS above. Ignored for a domain/
+    action combination that hasn't opted in — either because that domain
+    carries its own bespoke, stricter token scheme instead (fixed_assets,
+    system_admin) or because nothing about it warrants one.
     """
     _VALID_ACTIONS = {"create", "update", "submit", "cancel", "delete"}
     if action not in _VALID_ACTIONS:
@@ -1201,6 +1319,9 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
                 f"this domain's remit, add it to that tuple deliberately; don't route "
                 f"around this gate."
             )
+    if domain is not None and action in DOMAIN_TOKEN_GATED_ACTIONS.get(domain, ()):
+        _require_advisory_token(action, doctype, name, payload, requested_by,
+                                 confirmation_token, issued_at)
     _validate_prod_requester(tag, requested_by, doctype, _MUTATE_ACTION_TO_PTYPE[action], docname=name)
 
     cfg = get_env_config(tag)
@@ -1485,6 +1606,10 @@ def _cli():
     m.add_argument("--name", help="record name, required for update/submit/cancel/delete")
     m.add_argument("--domain", help="registered domain name (see scripts/domains/*.py) to gate this "
                                      "write against — import that domain module first so it's registered")
+    m.add_argument("--confirmation-token", help="required for submit/cancel/delete on a domain that has "
+                                                  "registered those actions via register_domain_token_gate() "
+                                                  "(see scripts/core/confirm_token.py's advisory-token CLI)")
+    m.add_argument("--issued-at", type=int, help="epoch seconds the confirmation token was computed at")
 
     gm = sub.add_parser("gated-mutate", help="Advisory-first gated write — requires a token from a "
                                               "render_*.py draft script (no domain allowlist)")
@@ -1568,7 +1693,8 @@ def _cli():
                                  args.mode, effective_requested_by, domain=args.domain,
                                  session_id=args.session_id, domain_code=args.domain_code,
                                  channel=args.channel, channel_metadata=channel_metadata,
-                                 user_approved=False, approval_note=args.approval_note),
+                                 user_approved=bool(args.confirmation_token), approval_note=args.approval_note,
+                                 confirmation_token=args.confirmation_token, issued_at=args.issued_at),
                 indent=2,
             ))
         elif args.command == "gated-mutate":

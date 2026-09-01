@@ -40,6 +40,7 @@ naming and var-setting, it doesn't declare the vars for them:
 | `QKEEE_ERP_<TAG>_API_SECRET` | API secret for that site/user |
 | `QKEEE_ERP_<TAG>_ALLOW_INSECURE` | OPTIONAL. Set `1` to allow a non-`https://` base URL (local/dev only — `get_env_config()` refuses plaintext by default since credentials go in the clear otherwise) |
 | `QKEEE_ERP_<TAG>_REQUESTED_BY` | OPTIONAL, no default. Per-tag requester identity fallback — never used on a PROD-tagged environment, see below |
+| `QKEEE_ERP_<TAG>_ENV_CLASS` | OPTIONAL. `prod`/`production` forces PROD rules regardless of the tag's name; `nonprod`/`dev`/`test`/`qa`/`staging`/`uat` forces non-PROD even if the name matches `/prod/i`. Unset falls back to the name-based rule below. Set this explicitly rather than relying on naming discipline when the tag name won't reliably contain "prod" |
 
 There is no `_DEBUG` var — read audit logging is unconditional (every
 read logs to `Qkeee Bot Audit Log`, no per-tag opt-in), so there is no
@@ -55,9 +56,11 @@ never silently also change write access, so `mode` requires its own
 explicit confirmation independent of which tag is active.
 
 **PROD tags get a stricter requester rule.** A tag counts as PRODUCTION if
+`QKEEE_ERP_<TAG>_ENV_CLASS` explicitly says so, or — absent that override —
 its name matches `/prod/i` anywhere (`PROD_ERP`, `client-a-prod`,
-`Production` all match — deliberately name-based, there's no separate
-declared config value). On a PROD tag, `QKEEE_ERP_<TAG>_REQUESTED_BY`'s
+`Production` all match). Set `ENV_CLASS` explicitly for a production tag
+whose name won't reliably contain "prod"; don't rely on naming discipline
+alone for something this consequential. On a PROD tag, `QKEEE_ERP_<TAG>_REQUESTED_BY`'s
 env-var default is refused even if configured — a PROD call must pass an
 explicit, freshly-validated `--requested-by` every time. Before any read
 or write on a PROD tag, resolve the inbound channel identity (the user's
@@ -185,6 +188,15 @@ Hermes' own session transcript already retains the working conversation,
 so reach for scratch only when something is genuinely too bulky to keep
 in context. Clean scratch files up once the task no longer needs them —
 disposable, never assumed present next session.
+
+**Task specs are the deliberate exception.** They target the working
+directory directly instead of `<profile>/workspace/` — the whole point is
+for the user to see the file sitting alongside their own project, not
+tucked inside the Hermes profile. "Ignores the `terminal.cwd` config key"
+above doesn't mean "writes nowhere near the working directory" — the
+local CLI backend still writes relative to the real launch directory it
+started from, and a spec uses exactly that. See
+`references/03-spec-driven-execution.md`.
 
 ## Harness capability discovery
 
