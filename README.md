@@ -2,8 +2,6 @@
 
 Git-tracked source of truth for a Hermes Agent profile specialized as an ERPNext functional consultant and operations agent — running the single `qkeee-erp-associate` skill across HR/Payroll, Accounts, Inventory, Procurement, Sales, Fixed Assets, System Admin, MIS reporting, Manufacturing, and Doc Extraction.
 
-`qkeee-erp-associate` is the 2026-08-31 consolidation of what used to be 11 separate `qkeee-erp-*` persona skills (see [`skills/qkeee-erp/qkeee-erp-associate/CHANGELOG.md`](./skills/qkeee-erp/qkeee-erp-associate/CHANGELOG.md) for the full migration record) — one shared connector, one voice, domain procedures loaded on demand from `references/domains/*.md` instead of ten near-duplicate skill directories kept in sync by a build script.
-
 **Live Hermes profile:** `~/.hermes/profiles/dev-erpnext`
 Hermes reads these portable files through symlinks from the live profile directory back into this repo — edit here, not in `~/.hermes/profiles/dev-erpnext` directly.
 
@@ -31,11 +29,11 @@ An ERPNext specialist that acts like a functional consultant, not a click-execut
 |---|---|
 | `scripts/core/client.py` | Shared connector — auth, discovery, RBAC pre-check, write-allowlist gate, PII redaction, audit logging |
 | `scripts/domains/*.py` | Per-domain functions + `ALLOWED_WRITE_DOCTYPES`: `hr_payroll`, `accounts`, `mis` (no write path), `sales`, `procurement`, `inventory`, `fixed_assets`, `system_admin` |
-| `references/domains/*.md` | Per-domain procedure, one per module above, plus `manufacturing.md` (new coverage, no predecessor skill) and `doc-extraction.md` |
+| `references/domains/*.md` | Per-domain procedure, one per module above, plus `manufacturing.md` and `doc-extraction.md` |
 | `references/00-conventions.md` | Naming rules, GRC baseline, scope guardrail — single copy, referenced by every domain file |
 | `scripts/init_bot.py` | Admin-invoked, one-time: provisions the `Qkeee Bot` Role + `Qkeee Bot Audit Log` doctype |
 
-Domain modules import the shared core directly (same-skill imports) — nothing here is synced from a copy anymore; there is only one file.
+Domain modules import the shared core directly (same-skill imports) — there is only one connector implementation.
 
 ### Runtime-only (never commit)
 
@@ -46,17 +44,17 @@ Domain modules import the shared core directly (same-skill imports) — nothing 
 ERPNext instance credentials (`QKEEE_ERP_*`) live in their own file at `$HERMES_HOME/qkeee-erp.env`, deliberately **outside** the profile's main `.env`. `scripts/core/client.py` reads this file directly, bypassing Hermes' sandbox env-stripping (`execute_code`/`terminal` sandboxes strip env vars by default; only statically-declared `required_environment_variables` for the DEFAULT tag survive) and the `env_passthrough` allowlist. This also keeps ERPNext secrets physically separate from any LLM-provider key in the main `.env`.
 
 - Copy `skills/qkeee-erp/qkeee-erp-associate/qkeee-erp-associate.env.example` to `$HERMES_HOME/qkeee-erp.env` and fill in real values out-of-band — never by having the agent read/cat this file or echo the values back.
-- One file holds every environment **tag** (`qkeee_erp.active_env`): `QKEEE_ERP_<TAG>_BASE_URL` / `_API_KEY` / `_API_SECRET` (required), plus optional `_ALLOW_INSECURE`, `_REQUESTED_BY` per tag. Add a new ERPNext instance by appending another tag's trio, never by creating a second file.
+- One file holds every environment **tag** (`qkeee_erp.active_env`): `QKEEE_ERP_<TAG>_BASE_URL` / `_API_KEY` / `_API_SECRET` (required), plus optional `_ALLOW_INSECURE`, `_REQUESTED_BY`, `_ENV_CLASS` per tag. Add a new ERPNext instance by appending another tag's trio, never by creating a second file.
 - See `qkeee-erp-associate/references/01-connectivity.md`'s "Env resolution" section for the full rationale.
-- The per-tag `_DEBUG` flag and its `debug=` plumbing were removed in the consolidation (Phase 5) — read audit logging is now unconditional on every `query_resource()`/`get_resource()`/`run_query_report()` call, not gated by an env var. See the audit-trail table below.
+- Read audit logging is unconditional on every `query_resource()`/`get_resource()`/`run_query_report()` call — there is no debug flag to gate it.
 
 ### Audit-trail doctypes
 
-`scripts/init_bot.py` provisions 1 `Qkeee Bot *` doctype directly in ERPNext (no custom app) to give every bot action a compliance-grade trail. The old 4-doctype design (`Qkeee Bot Persona`, `Qkeee Bot Session`, `Qkeee Bot Message`, `Qkeee Bot Audit Log`) was cut down to just the audit log in the consolidation — persona was dead weight (write-only, never read back, not foreign-keyed to anything) and the debug-only session/message doctypes went with the `_DEBUG` flag they depended on.
+`scripts/init_bot.py` provisions 1 `Qkeee Bot *` doctype directly in ERPNext (no custom app) to give every bot action a compliance-grade trail.
 
 | Doctype | Created | Purpose |
 |---|---|---|
-| `Qkeee Bot Audit Log` | **Always**, every read and write | One row per ERPNext record read/written by the bot — action, reference doc, before/after payload, field diff, `domain_code` (which `references/domains/*.md` procedure made the call — replaces the old `persona_code`, same denormalized-string convention), `user_approved` (Approved/Not Confirmed/Not Required — detection, not a write gate), submittable/locked once resolved |
+| `Qkeee Bot Audit Log` | **Always**, every read and write | One row per ERPNext record read/written by the bot — action, reference doc, before/after payload, field diff, `domain_code` (which `references/domains/*.md` procedure made the call), `user_approved` (Approved/Not Confirmed/Not Required — detection, not a write gate), submittable/locked once resolved |
 
 ## Example prompts / tasks this profile handles
 
@@ -115,7 +113,7 @@ Other profile commands (not specific to this repo, general Hermes usage): `herme
 
 - **Skill write approval:** `skills.write_approval: true` in `config.yaml` stages every agent-initiated skill write (create/edit/patch/delete) under `~/.hermes/pending/skills/` for approve/deny review via `/skills pending`, `/skills diff`, `/skills approve`, `/skills reject` — nothing lands unreviewed. See [Security | Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/security).
 - **Skill source separation:** `qkeee-erp-associate` (this repo, shipped/pinned) mounts via `skills.external_dirs` (read-only) and should be marked externally-owned so Hermes' autonomous background-review pass can't silently patch its audit/RBAC/GRC logic. The satellite `qkeee-erp-learned/<env-tag>` skills it writes via `skill_manage` (per-instance environment notes — versions, custom doctypes, non-ERPNext API notes) live in the profile's normal local/learned skill space and stay open to that same background review, since letting the agent refine its own instance notes is the point. See `qkeee-erp-associate/references/00-conventions.md` and [Skills System | Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills).
-- **Submit-before-review, always:** every docstatus-bearing document requires a review-before-submit step with explicit human confirmation — defined in `profile.md`, enforced at the skill-instruction level in each `references/domains/*.md` procedure.
+- **Save-draft-then-review-then-submit, always:** every docstatus-bearing document requires a review-before-submit step with explicit human confirmation, defined in `profile.md` — and code-enforced for submit/cancel via a fresh confirmation token, not prompt discipline alone (see `references/00-conventions.md`'s Non-negotiable 5).
 - **No auth fallbacks:** token auth (`QKEEE_ERP_*` env vars) only — no session-cookie/password workarounds that drop audit attribution.
 - **RBAC pre-check + read audit logging, every tag:** `scripts/core/client.py`'s requester-permission check and audit logging both run unconditionally on every environment and every read/write — no PROD-only or debug-only carve-out.
 - **Audit log & tracing:** every ERPNext access goes through `scripts/core/client.py`, which stamps audit-log entries with the acting bot's session id, `_REQUESTED_BY`, and the calling domain — no audit-log row is written without them.
@@ -139,12 +137,3 @@ There are many openitems, lacunas to be worked upon, below is just a short list 
 - [Personality & SOUL.md](https://hermes-agent.nousresearch.com/docs/user-guide/features/personality)
 - [Skills System | Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/features/skills)
 - [Security | Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/security)
-
-Sources:
-- Configuration | Hermes Agent
-- Security | Hermes Agent
-- Skills System | Hermes Agent
-- Personality & SOUL.md
-- Profiles: Running Multiple Agents
-- Profile Distributions
-

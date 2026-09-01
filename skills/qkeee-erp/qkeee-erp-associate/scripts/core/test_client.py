@@ -113,8 +113,7 @@ class PersonaDoctypeRemovedTests(unittest.TestCase):
     `PERSONA_DOCTYPE`, and the `register-persona` CLI subcommand don't
     exist in core/client.py. These are guard tests, not coverage of a
     capability: they fail loudly if a future edit reintroduces
-    persona-registration code without a deliberate decision to do so (see
-    ../../CHANGELOG.md for the exported schema/manifest this replaces)."""
+    persona-registration code without a deliberate decision to do so."""
 
     def test_ensure_persona_registered_does_not_exist(self):
         self.assertFalse(hasattr(ec, "ensure_persona_registered"))

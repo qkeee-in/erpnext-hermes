@@ -165,7 +165,6 @@ all** (a third-party tool, an internal API) follows
   shapes `memory_promote.py` produces, generated (not hand-written) from
   illustrative findings — no live `skill_manage` call was exercised to
   create it; see that directory's `README.md`.
-- `CHANGELOG.md` — history, kept for manual-audit reference.
 - `qkeee-erp-associate.env.example` — template for `$HERMES_HOME/qkeee-erp.env`.
 
 ## Governance: this skill is externally-owned, not curator-managed

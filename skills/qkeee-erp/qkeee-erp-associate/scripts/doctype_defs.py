@@ -47,8 +47,9 @@ AUDIT_LOG = {
                          "qkeee-erp-associate domain reference that made this call (e.g. "
                          "'qkeee-erp-associate/hr-payroll'). A live schema migration "
                          "(renaming an existing field on an already-provisioned "
-                         "instance) is NOT performed by this code — see CHANGELOG.md for "
-                         "how a pre-existing instance's field gets reconciled."},
+                         "instance) is NOT performed by this code — reconciling an "
+                         "already-provisioned instance's field name is a manual, "
+                         "deliberate action for whoever operates that instance."},
         {"fieldname": "environment_tag", "label": "Environment Tag", "fieldtype": "Data"},
         {"fieldname": "channel", "label": "Channel", "fieldtype": "Select",
          "options": "\nWeb\nDiscord\nTelegram\nWhatsApp\nEmail\nSlack\nCLI\nAPI\nOther",
