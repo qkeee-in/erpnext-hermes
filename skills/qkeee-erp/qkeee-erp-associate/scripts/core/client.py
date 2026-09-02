@@ -1081,14 +1081,37 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
+SESSION_FIELD_MAX_LEN = 140  # Frappe Data fieldtype default length
+CHANNEL_OPTIONS = {"Web", "Discord", "Telegram", "WhatsApp", "Email", "Slack", "CLI", "API", "Other"}
+
+
 def _session_or_fallback(session_id: str) -> str:
     """`session` is a mandatory field on Qkeee Bot Audit Log. Callers that
     never got/passed a real session_id (e.g. CLI invocations without
     --session-id) must still produce a non-empty value here — an empty
     string fails Audit Log's mandatory-field validation, and because
     _audit_insert() swallows all exceptions by design, that failure is
-    otherwise invisible (the row is just silently never written)."""
-    return session_id or f"local-{_now_iso()}"
+    otherwise invisible (the row is just silently never written).
+
+    Also clamps to SESSION_FIELD_MAX_LEN. Live-observed: a chat-platform
+    session_id carried across a long-lived/resumed conversation can drift
+    into something oversized or otherwise malformed (unlike requested_by/
+    reference_doctype/etc, this value is never validated anywhere upstream
+    of the raw ERPNext insert) — the Data field then silently rejects the
+    whole row, and because the insert is swallowed by design, the only
+    symptom is a blank/missing Audit Log row days later. Truncating here
+    keeps the row alive even when the caller's session_id has gone bad;
+    the caller should still fix why it went bad (see conventions doc)."""
+    value = session_id or f"local-{_now_iso()}"
+    return value[:SESSION_FIELD_MAX_LEN]
+
+
+def _safe_channel(channel: str) -> str:
+    """`channel` is a Select field with a fixed option list — ERPNext
+    rejects any value outside it. A stale caller-side session can hand
+    back a channel string from a since-changed option set; fall back to
+    'Other' rather than let that reject the whole audit row."""
+    return channel if channel in CHANNEL_OPTIONS else ("Other" if channel else "")
 
 
 # qkeee-erp:write-path
@@ -1201,9 +1224,9 @@ def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id:
         return
     log_name = _audit_insert(cfg, {
         "session": _session_or_fallback(session_id),
-        "domain_code": domain_code or "",
+        "domain_code": (domain_code or "")[:SESSION_FIELD_MAX_LEN],
         "environment_tag": cfg.get("tag", ""),
-        "channel": channel or "",
+        "channel": _safe_channel(channel),
         "channel_metadata": json.dumps(_redact_pii_deep(channel_metadata)) if channel_metadata else None,
         "action": "Read",
         "reference_doctype": doctype,
@@ -1234,9 +1257,9 @@ def record_audit_log_start(cfg: dict, *, action: str, doctype: str, name: str, r
         return None
     return _audit_insert(cfg, {
         "session": _session_or_fallback(session_id),
-        "domain_code": domain_code or "",
+        "domain_code": (domain_code or "")[:SESSION_FIELD_MAX_LEN],
         "environment_tag": cfg.get("tag", ""),
-        "channel": channel or "",
+        "channel": _safe_channel(channel),
         "channel_metadata": json.dumps(_redact_pii_deep(channel_metadata)) if channel_metadata else None,
         "action": action,
         "reference_doctype": doctype,
@@ -1253,14 +1276,16 @@ def record_audit_log_start(cfg: dict, *, action: str, doctype: str, name: str, r
 # qkeee-erp:write-path
 def record_audit_log_finish(cfg: dict, log_name: str, *, status: str, reference_name: str = None,
                              payload_before: dict = None, payload_after: dict = None,
-                             error_detail: str = None, audit_comment_posted: bool = None) -> None:
+                             error_detail: str = None, audit_comment_posted: bool = None) -> bool:
     """Phase 2: flip an `Attempted` row to `Success`/`Failure` after the
     real write completes (or fails). Computes field_diff from
     payload_before/payload_after when both are present (Update only).
     Best-effort; failures here are swallowed, same rationale as
-    everywhere else in this section."""
+    everywhere else in this section. Returns whether the update actually
+    landed, so a caller (mutate_resource) can surface degraded audit
+    logging instead of it being visible only on stderr."""
     if not log_name:
-        return
+        return False
     fields = {"status": status, "timestamp": _now_iso()}
     if reference_name:
         fields["reference_name"] = reference_name
@@ -1273,8 +1298,10 @@ def record_audit_log_finish(cfg: dict, log_name: str, *, status: str, reference_
         fields["error_detail"] = error_detail[:1900]  # Small Text-ish headroom
     if audit_comment_posted is not None:
         fields["audit_comment_posted"] = 1 if audit_comment_posted else 0
-    if _audit_update(cfg, log_name, fields):
+    ok = _audit_update(cfg, log_name, fields)
+    if ok:
         _audit_submit(cfg, log_name)
+    return ok
 
 
 # --------------------------------------------------------------------------
@@ -1447,11 +1474,26 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
             file=sys.stderr,
         )
     audit_comment_posted = result.pop("_audit_comment_posted", None) if isinstance(result, dict) else None
-    record_audit_log_finish(
+    finish_ok = record_audit_log_finish(
         cfg, audit_log_name, status="Success", reference_name=reference_name,
         payload_before=payload_before, payload_after=data if isinstance(data, dict) else None,
         audit_comment_posted=audit_comment_posted,
     )
+    if isinstance(result, dict):
+        # Surfaced so a caller (hermes) can proactively flag degraded audit
+        # logging to the user instead of relying on someone reading stderr —
+        # live-observed: a stale/malformed session_id silently drops Audit
+        # Log rows for days before anyone notices. "exempt" (doctype in
+        # AUDIT_EXEMPT_DOCTYPES) and "ok" are both healthy; anything else
+        # means this write is NOT in the audit trail.
+        if doctype in AUDIT_EXEMPT_DOCTYPES:
+            result["_audit_log_status"] = "exempt"
+        elif audit_log_name is None:
+            result["_audit_log_status"] = "insert_failed"
+        elif not finish_ok:
+            result["_audit_log_status"] = "update_failed"
+        else:
+            result["_audit_log_status"] = "ok"
     return result
 
 

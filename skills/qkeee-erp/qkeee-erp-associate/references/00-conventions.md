@@ -43,6 +43,34 @@ place to land.
 | Task spec | `./qkeee-erp-specs/<slug>-<YYYYMMDD-HHMM>.md`, relative to the session's actual working directory (`terminal.cwd` on gateway/cron, launch dir on local CLI) | see `references/03-spec-driven-execution.md`; `<profile>/workspace/...` only as a last-resort fallback when neither resolves; disposable across sessions, not mid-task |
 | New-learning entries | append under `## Learned <YYYY-MM-DD>` | never edit or delete a prior entry |
 
+**Before any `skill_manage(create)` touching ERPNext/organizational
+content — including Hermes' own autonomous "offer to save as skill"
+reflex after a hard session, not just `SKILL.md`'s structured
+environment-promotion flow (activation step 2) — check for existing
+coverage first:**
+
+1. Is this already documented in this skill's own `references/` tree
+   (this file, `01-connectivity.md` through `04-erp-doc-lookup.md`, or a
+   `domains/*.md` file)? If yes, don't create a new skill — the finding
+   belongs nowhere else. Patch the associate's own reference file only
+   through a foreground, user-directed edit (see the GRC baseline's
+   "Shipped skill is protected from autonomous drift" entry — this
+   skill's own tree is not something a background/autonomous save should
+   touch).
+2. Is this instance/environment-specific learning (a custom doctype, a
+   version quirk, an RBAC finding for one tag)? That's `qkeee-erp-learned/
+   <env-tag>` territory per the table above — `category='qkeee-erp-
+   learned'`, name=`<env-tag>` (or a nested `references/` file under an
+   existing `qkeee-erp-learned/<env-tag>` skill via `write_file`/`patch`,
+   preferred over a brand-new top-level skill for a tag that already has
+   one). Never a freeform category (`erpnext`, `erp`, or similar) — the
+   `category` param on `skill_manage` is unvalidated free text and Hermes
+   enforces nothing about it; this convention is the only thing that does.
+3. Only create a genuinely new, unrelated skill when neither 1 nor 2
+   applies. Restating this file's non-negotiables or the GRC baseline in
+   different words is never grounds for a new skill — extend or link
+   back to this file instead.
+
 `<profile>` = the active Hermes profile root (`~/.hermes/` by default,
 `~/.hermes/profiles/<name>/` for a named one) — resolved through Hermes'
 own profile mechanism, never hardcoded or invented by this skill. The
@@ -183,6 +211,25 @@ for the exact mechanism.
   detection field for later scanning (did every write really get
   confirmed), not a second gate; omitting it logs `"Not Confirmed"` rather
   than blocking the write.
+- **`session_id` — regenerate per platform session, never carry forward
+  indefinitely.** Live-observed: a Discord/Slack/etc conversation resumed
+  across a long gap (a day, a context-compaction event) can end up handing
+  the connector a `session_id` that's drifted stale or malformed — unlike
+  `requested_by`/`reference_doctype`, this value is never validated
+  anywhere upstream of the raw Audit Log insert, so a bad one silently
+  drops the Audit Log row (real write is unaffected) with nothing but a
+  stderr WARN to show for it. `core/client.py` now clamps/sanitizes
+  `session`/`domain_code`/`channel` defensively before insert, but the
+  caller-side fix is the one that actually matters: derive `session_id`
+  fresh at the start of each logical session (new platform thread/DM,
+  bot restart, or a context-compaction event mid-conversation — treat
+  compaction as a new logical session, matching what "open a fresh
+  Discord session" empirically fixes) rather than reusing/appending to
+  one carried across the whole lifetime of a long-running chat. After any
+  write, check the returned `_audit_log_status` key (`"ok"`/`"exempt"` are
+  healthy; `"insert_failed"`/`"update_failed"` mean this write did NOT
+  make it into the audit trail) and surface a warning to the user rather
+  than silently trusting the best-effort insert.
 - **Bot account — mandatory, dedicated service identity, and never
   privileged.** The API key/secret every domain authenticates with must
   be generated against a dedicated ERPNext integration/bot user (e.g.
@@ -253,3 +300,15 @@ for the exact mechanism.
   this skill's install path resolves under one of those two — this is an
   operator action, not something `qkeee-erp-associate`'s own code can
   enforce on itself.
+- **Doc claims about skill-write gating are not self-enforcing — verify
+  `config.yaml` matches them.** `profile.md` states local skill writes are
+  gated by `skills.write_approval` and reviewed before landing; that's
+  only true if `skills.write_approval: true` is actually set in
+  `config.yaml` — the key defaults off (`tools/write_approval.py`), and a
+  profile can drift into having the doc claim without the config backing
+  it (this happened: see the check-before-create rule above). Same for
+  `curator.consolidate` (default off, `agent/curator.py`) — the
+  mechanism that would otherwise merge overlapping agent-created skills
+  back into this one doesn't run unless explicitly turned on. Neither is
+  this skill's own code to enforce; flag a mismatch to the operator if
+  ever discovered, same as the `external_dirs` check above.

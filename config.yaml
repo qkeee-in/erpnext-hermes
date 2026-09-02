@@ -30,6 +30,30 @@ agent:
 skills:
   external_dirs:
     - skills/qkeee-erp
+  # write_approval: documented in profile.md ("Local skill writes gated by
+  # skills.write_approval, no unreviewed changes") but was never actually
+  # set here — same doc/config mismatch pattern external_dirs had above,
+  # caught during the invoice-processing/connector-governance duplicate-
+  # skill review (2026-09-02). Without this key, tools/write_approval.py's
+  # write_approval_enabled() defaults False and every skill_manage(create/
+  # edit/patch/delete) — including Hermes' own autonomous "offer to save
+  # as skill" reflex after a hard session — commits straight to disk,
+  # unstaged, unreviewed. true stages every skill write (create/edit/
+  # patch/delete, any origin) to <HERMES_HOME>/pending/skills/ for
+  # foreground review via `/skills pending` instead of silent commit.
+  write_approval: true
+# curator.consolidate: OFF by default in agent/curator.py (DEFAULT_CONSOLIDATE).
+# Off means the curator's periodic pass only does the deterministic
+# inactivity prune (stale/archive) and never runs its LLM umbrella-building
+# pass that merges overlapping skills — the mechanism that should have
+# caught erpnext-invoice-processing and erpnext-connector-governance
+# duplicating qkeee-erp-associate's own references/00-conventions.md and
+# domains/accounts.md content. Turned on here so overlapping agent-created
+# skills actually get merged/absorbed instead of accumulating.
+curator:
+  consolidate: true
+  interval_hours: 24
+  min_idle_hours: 2
 web:
   backend: tavily
   use_gateway: false
