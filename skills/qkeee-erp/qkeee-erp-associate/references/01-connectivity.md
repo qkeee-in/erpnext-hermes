@@ -210,12 +210,51 @@ supported; degrade gracefully if it isn't.
 ## CLI usage
 
 `core/client.py` and each `domains/<slug>.py` module are runnable
-directly for manual/ad hoc use — `python core/client.py --tag <tag>
-health`, `python core/client.py --tag <tag> --mode read-write mutate
-<DocType> create --domain <slug> --payload '{...}' --requested-by
-<id>`. See `core/client.py`'s own `_cli()` for the full subcommand list
-(`health`, `list-envs`, `query`, `get`, `report`, `roles`, `mutate`,
-`gated-mutate`). Every invocation is relative to this
-skill's own `scripts/` directory under the active Hermes profile root —
-`cd` there first, or prefix every command with the full path; don't guess
-a shorter path.
+directly for manual/ad hoc use. See `core/client.py`'s own `_cli()` for
+the full subcommand list (`health`, `list-envs`, `query`, `get`, `report`,
+`roles`, `mutate`, `gated-mutate`).
+
+**Exact path — don't guess it.** The script lives at
+`<profile>/skills/qkeee-erp/qkeee-erp-associate/scripts/core/client.py`
+(the `qkeee-erp-associate/` segment is easy to drop — `skills/qkeee-erp/
+scripts/...` is a real, previously-observed wrong guess that costs a
+wasted round trip). `cd` into `.../qkeee-erp-associate/scripts` first, or
+prefix every command with the full path — verify with one `search_files`/
+listing at the start of a session if there's any doubt, rather than
+guessing and retrying on failure.
+
+**Copy these verbatim, substitute values, don't hand-construct flags
+from memory.** A malformed `--filters`/`--fields` argument is a
+previously-observed wasted round trip (`usage: client.py [-h] [--tag
+TAG]...` argparse error) — these four cover the overwhelming majority of
+read-only lookups:
+
+```
+# Connectivity + auth check — run first, every session
+python core/client.py --tag <tag> health
+
+# List configured environment tags
+python core/client.py --tag <tag> list-envs
+
+# Filtered, field-scoped list query — the default shape for "fetch X
+# where Y" asks. filters is a JSON list of [field, operator, value]
+# triples; fields is a JSON list of field names (see 01-connectivity.md's
+# "Query cost" section above for why to always scope fields).
+python core/client.py --tag <tag> query <DocType> \
+  --filters '[["supplier", "=", "<value>"], ["company", "=", "<value>"], ["docstatus", "=", 0]]' \
+  --fields '["name", "supplier", "company", "posting_date", "grand_total", "status"]' \
+  --limit 20
+
+# Single-resource GET — full doc including child tables (line items,
+# etc.) — use only when child-table data is actually needed, see "Query
+# cost" above.
+python core/client.py --tag <tag> get <DocType> <name>
+```
+
+`docstatus`: `0` = Draft, `1` = Submitted, `2` = Cancelled — use this in
+`--filters` for any "draft"/"submitted"/"cancelled" phrasing in the
+request rather than a status-name guess.
+
+For a write (`mutate`/`gated-mutate`), see the matching `domains/<slug>.md`
+file for the exact payload shape and required fields — don't freehand a
+`mutate` call from this connectivity file alone.

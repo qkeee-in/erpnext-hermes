@@ -3,6 +3,24 @@ model:
   provider: openrouter
   base_url: https://openrouter.ai/api/v1
   api_mode: chat_completions
+# auxiliary: added 2026-09-03 during the token-usage review. Two problems
+# observed in gateway logs:
+#   1. "Auxiliary client: PAID lane engaged..." WARNING fires on every
+#      non-:free OpenRouter fallback — free_only forces the fallback lane
+#      to stay on :free SKUs (or skip it) instead of silently spending.
+#   2. background_review (the post-turn "review conversation, update skill
+#      library" self-improvement pass) was running on the MAIN model
+#      (nex-agi/nex-n2-mini) every single turn, including trivial ones —
+#      93K/79K input tokens per run in observed logs, one landing
+#      result=none. Routing it to a dedicated free model keeps the
+#      self-improvement mechanism (now safer anyway per skills.write_
+#      approval + curator.consolidate below) without paying main-model
+#      rates for it on every turn.
+auxiliary:
+  free_only: true
+  background_review:
+    provider: openrouter
+    model: nvidia/nemotron-3-ultra-550b-a55b:free
 checkpoints:
   enabled: true
   max_snapshots: 20
@@ -89,45 +107,55 @@ onboarding:
     busy_input_prompt: true
     profile_build_offered: true
 _config_version: 33
+# compression.threshold: default 0.50 (agent/context_compressor.py). The
+# nex-agi/nex-n2-mini context window is large enough that a single turn's
+# accumulated tool-call history rarely crosses 50% before the turn ends —
+# so auto-compaction never fires, and every extra round-trip within a turn
+# resends the full growing context (observed: one turn climbed 42K->147K
+# input tokens across 18 API calls). Lowered to trigger compaction sooner,
+# capping worst-case per-turn input cost at the price of more frequent
+# summarization calls.
+compression:
+  threshold: 0.30
 session_reset:
   mode: none
 image_gen:
   provider: openrouter
   use_gateway: false
   model: openai/gpt-5.4-image-2
+# platform_toolsets: trimmed 2026-09-03 from the stock full set. Every
+# enabled toolset's tool schema is sent as input on every single API call
+# regardless of use — confirmed as a fixed per-call cost multiplier during
+# the token-usage review (input-heavy Hermes Agent rows, 300K+ tok on some
+# calls). browser/computer_use/image_gen/tts dropped — this profile never
+# drives a browser, controls a desktop, generates images, or does TTS.
+# vision kept deliberately — the doc-extraction domain
+# (qkeee-erp-associate) reads invoice PDFs/images and needs it.
 platform_toolsets:
   cli:
-    - browser
     - clarify
     - code_execution
-    - computer_use
     - cronjob
     - delegation
     - file
-    - image_gen
     - memory
     - session_search
     - skills
     - terminal
     - todo
-    - tts
     - vision
     - web
   discord:
-    - browser
     - clarify
     - code_execution
-    - computer_use
     - cronjob
     - delegation
     - file
-    - image_gen
     - memory
     - session_search
     - skills
     - terminal
     - todo
-    - tts
     - vision
     - web
 known_plugin_toolsets:

@@ -84,6 +84,16 @@ action:
    file may apply mid-conversation (e.g. a procurement onboarding that
    hands off to `doc-extraction`) — latch each as the conversation's
    actual needs shift, don't front-load every domain file speculatively.
+   **For a single-domain, read-only lookup** (the common case — "fetch
+   X for company Y," a status check, a list query): latch only
+   `00-conventions.md` + `01-connectivity.md` + the one matching
+   `domains/*.md` file. Skip `02-environment-assessment.md`,
+   `03-spec-driven-execution.md`, and `grc-audit.md` unless step 2's
+   staleness check or the intent itself actually needs them — loading
+   every reference file on every turn regardless of complexity was a
+   confirmed, measurable input-token cost in a token-usage review
+   (observed: 4-5 `skill_view` calls per turn even for a repeat, narrow
+   ask).
 5. **State scope and mode (read-only / read-write) for the session**
    before taking any action — a short, explicit statement of which
    domain(s) are in play and whether writes are possible this session,
