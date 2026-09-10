@@ -52,7 +52,7 @@ AUDIT_LOG = {
                          "deliberate action for whoever operates that instance."},
         {"fieldname": "environment_tag", "label": "Environment Tag", "fieldtype": "Data"},
         {"fieldname": "channel", "label": "Channel", "fieldtype": "Select",
-         "options": "\nWeb\nDiscord\nTelegram\nWhatsApp\nEmail\nSlack\nCLI\nAPI\nOther",
+         "options": "\nWeb\nDiscord\nTelegram\nWhatsApp\nEmail\nSlack\nGoogle Chat\nCLI\nAPI\nOther",
          "in_list_view": 1,
          "description": "Denormalized from Session where one exists; settable directly "
                          "otherwise."},

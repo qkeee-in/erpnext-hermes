@@ -1075,7 +1075,9 @@ def _now_iso() -> str:
 
 
 SESSION_FIELD_MAX_LEN = 140  # Frappe Data fieldtype default length
-CHANNEL_OPTIONS = {"Web", "Discord", "Telegram", "WhatsApp", "Email", "Slack", "CLI", "API", "Other"}
+CHANNEL_OPTIONS = {"Web", "Discord", "Telegram", "WhatsApp", "Email", "Slack", "Google Chat", "CLI", "API", "Other"}
+# lets callers pass loose forms ("google_chat", "google-chat") and still hit the canonical option
+_CHANNEL_ALIASES = {opt.lower().replace(" ", "").replace("_", "").replace("-", ""): opt for opt in CHANNEL_OPTIONS}
 
 
 def _session_or_fallback(session_id: str) -> str:
@@ -1104,7 +1106,10 @@ def _safe_channel(channel: str) -> str:
     rejects any value outside it. A stale caller-side session can hand
     back a channel string from a since-changed option set; fall back to
     'Other' rather than let that reject the whole audit row."""
-    return channel if channel in CHANNEL_OPTIONS else ("Other" if channel else "")
+    if channel in CHANNEL_OPTIONS:
+        return channel
+    normalized = _CHANNEL_ALIASES.get(channel.lower().replace(" ", "").replace("_", "").replace("-", "")) if channel else None
+    return normalized or ("Other" if channel else "")
 
 
 # qkeee-erp:write-path
