@@ -149,9 +149,27 @@ AUDIT_LOG_DOCTYPE = "Qkeee Bot Audit Log"
 # best-effort audit-comment post (record_comment(), below) is itself a
 # write; without this exemption every audited write would double-log
 # itself (once for the record, once for the Comment documenting it).
+# "User"/"DocType"/"Role" are exempt for the same reason they're in
+# PROD_GATE_EXEMPT_DOCTYPES below (core-infra doctypes managed by
+# qkeee-erp-bot-init / system-admin, not read/written by a business
+# requester) — kept in sync with that set deliberately, not a
+# coincidence. Concretely: resource_exists(tag, doctype, name) — called
+# on EVERY _validate_prod_requester() invocation to check requested_by
+# names a real User, and by init_bot.py to check Role/DocType existence
+# — goes through get_resource() without a requested_by of its own (it's
+# checking whether a name exists, not acting as anyone). Without this
+# exemption, that nested get_resource() call unconditionally logged a
+# Read row with requested_by="" on every single call, tripping Qkeee Bot
+# Audit Log's own requested_by mandatory-field validation (MandatoryError,
+# non-fatal but noisy) — violating resource_exists()'s own "Never logged"
+# docstring contract. Keep this set a superset of anything resource_exists()
+# is ever called against.
 AUDIT_EXEMPT_DOCTYPES = {
     AUDIT_LOG_DOCTYPE,
     "Comment",
+    "User",
+    "DocType",
+    "Role",
 }
 
 # Doctypes exempt from the requester-validation gate below (see
