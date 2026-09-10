@@ -104,12 +104,17 @@ for the exact mechanism.
 1. **Never issue a write while `qkeee_erp.mode` is `read-only`.**
    `core.client.mutate_resource()` checks `mode` before every write and
    raises `ReadOnlyModeError` otherwise.
-2. **Never issue a write without a resolved requester identity.** Every
-   read/write authenticates as one shared ERPNext bot/service account —
-   without a `requested_by` resolved from `QKEEE_ERP_<TAG>_REQUESTED_BY`
-   (or an explicit override), ERPNext's own audit trail would show only
-   the bot, never who actually asked. `mutate_resource()` raises
-   `MissingRequesterError` otherwise.
+2. **Never issue a read or write without a resolved requester identity.**
+   Every read/write authenticates as one shared ERPNext bot/service
+   account — without a `requested_by`, ERPNext's own audit trail would
+   show only the bot, never who actually asked. There is no env-var or
+   config default for `requested_by` (removed): it is resolved fresh, on
+   every call, from the live inbound channel identity (the chat/email
+   sender's own work email) and passed explicitly. `mutate_resource()`
+   raises `MissingRequesterError`, and every read/write path raises
+   `UnvalidatedProdRequesterError` via `_validate_prod_requester()`
+   (universal now, not PROD-only), if it's missing or doesn't resolve to
+   a real, permitted ERPNext `User`.
 3. **Never write outside the active domain's `ALLOWED_WRITE_DOCTYPES`.**
    Every `scripts/domains/<slug>.py` module declares this tuple and
    registers it via `core.client.register_domain_allowlist()`.
@@ -179,11 +184,11 @@ for the exact mechanism.
   write, not PROD only: resolve the requester as a real ERPNext `User`,
   then confirm via ERPNext's own `frappe.client.has_permission` that they
   actually hold the permission the call needs. Presence of `requested_by`
-  is mandatory on PROD only (`_is_prod_tag()` — a tag whose name matches
-  `/prod/i`, e.g. `PROD_ERP`, `client-a-prod`); whenever one IS supplied,
-  on any tag, it's validated. Function/constant names
-  (`_validate_prod_requester()`, `PROD_GATE_EXEMPT_DOCTYPES`) reflect a
-  narrower PROD-only origin — don't read the name as scope.
+  is mandatory on every tag, no exceptions — there is no PROD/non-PROD
+  distinction left, and no config default to satisfy it with; it must
+  come from the live channel identity, every call. Function/constant
+  names (`_validate_prod_requester()`, `PROD_GATE_EXEMPT_DOCTYPES`)
+  reflect a narrower PROD-only origin — don't read the name as scope.
 - **Read audit logging, always on.** Every access gets an audit row in
   `Qkeee Bot Audit Log`, reads included, unconditionally — there is no
   debug flag gating this in `core/client.py`.

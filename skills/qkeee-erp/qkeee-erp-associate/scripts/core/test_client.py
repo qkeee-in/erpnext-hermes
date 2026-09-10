@@ -17,11 +17,12 @@ import client as ec
 from confirm_token import advisory_write_token
 
 
-class GetEnvConfigRequestedByTests(unittest.TestCase):
-    """QKEEE_ERP_<TAG>_REQUESTED_BY is optional, per-tag, and must never
-    block connection like BASE_URL/API_KEY/API_SECRET do.
+class GetEnvConfigNoRequesterDefaultTests(unittest.TestCase):
+    """There is no QKEEE_ERP_<TAG>_REQUESTED_BY (removed) — requested_by is
+    always caller-supplied, resolved from the live channel identity, never
+    a config default. get_env_config() must not expose any such key.
 
-    There is no QKEEE_ERP_<TAG>_DEBUG / `debug_default`: read audit
+    There is also no QKEEE_ERP_<TAG>_DEBUG / `debug_default`: read audit
     logging is always on, so there is no debug flag to resolve."""
 
     ENV_BASE = {
@@ -30,29 +31,17 @@ class GetEnvConfigRequestedByTests(unittest.TestCase):
         "QKEEE_ERP_DEFAULT_API_SECRET": "secret",
     }
 
-    def test_defaults_when_absent(self):
+    def test_no_requested_by_default_key(self):
         with patch.dict("os.environ", self.ENV_BASE, clear=True):
             cfg = ec.get_env_config("default")
-        self.assertEqual(cfg["requested_by_default"], "")
+        self.assertNotIn("requested_by_default", cfg)
         self.assertNotIn("debug_default", cfg)
 
-    def test_resolves_per_tag_values(self):
+    def test_stray_requested_by_env_var_is_ignored(self):
         env = dict(self.ENV_BASE, QKEEE_ERP_DEFAULT_REQUESTED_BY="priya@org.com")
         with patch.dict("os.environ", env, clear=True):
             cfg = ec.get_env_config("default")
-        self.assertEqual(cfg["requested_by_default"], "priya@org.com")
-
-    def test_different_tags_are_independent(self):
-        env = dict(self.ENV_BASE,
-                    QKEEE_ERP_QA_BASE_URL="https://qa.erpnext.com",
-                    QKEEE_ERP_QA_API_KEY="qa-key",
-                    QKEEE_ERP_QA_API_SECRET="qa-secret",
-                    QKEEE_ERP_QA_REQUESTED_BY="qa-user@org.com")
-        with patch.dict("os.environ", env, clear=True):
-            default_cfg = ec.get_env_config("default")
-            qa_cfg = ec.get_env_config("qa")
-        self.assertEqual(default_cfg["requested_by_default"], "")
-        self.assertEqual(qa_cfg["requested_by_default"], "qa-user@org.com")
+        self.assertNotIn("requested_by_default", cfg)
 
 
 class SessionFallbackTests(unittest.TestCase):
@@ -168,14 +157,19 @@ class RunQueryReportTests(unittest.TestCase):
     throughout, deliberately not relying on the `ec`/`patch` aliases used
     elsewhere in this file."""
 
+    @unittest.mock.patch.object(erp_client, "verify_rbac_precheck_reliable", return_value={"reliable": True})
+    @unittest.mock.patch.object(erp_client, "check_user_permission", return_value=True)
+    @unittest.mock.patch.object(erp_client, "resource_exists", return_value=True)
     @unittest.mock.patch.object(erp_client, "_log_read")
     @unittest.mock.patch.object(erp_client, "_request")
     @unittest.mock.patch.object(erp_client, "get_env_config", return_value={"tag": "default"})
-    def test_uses_get_and_wraps_message(self, mock_get_env_config, mock_request, mock_log_read):
+    def test_uses_get_and_wraps_message(self, mock_get_env_config, mock_request, mock_log_read,
+                                         mock_resource_exists, mock_check_perm, mock_trust):
         mock_request.return_value = {
             "message": {"columns": [{"fieldname": "customer"}], "result": [{"customer": "Acme"}]}
         }
-        result = erp_client.run_query_report("default", "Sales Order Analysis", {"company": "Acme"})
+        result = erp_client.run_query_report("default", "Sales Order Analysis", {"company": "Acme"},
+                                              requested_by="user@example.com")
         method, path = mock_request.call_args[0][1:3]
         self.assertEqual(method, "GET")
         self.assertEqual(path, "/api/method/frappe.desk.query_report.run")
@@ -403,37 +397,20 @@ class QkeeeEnvFileTests(unittest.TestCase):
         self.assertEqual(cfg["api_secret"], "secret")
 
 
-class IsProdTagTests(unittest.TestCase):
-    def test_matches_various_casings_and_positions(self):
-        for tag in ("prod", "PROD", "PROD_ERP", "client-a-prod", "Production"):
-            self.assertTrue(ec._is_prod_tag(tag), tag)
-
-    def test_non_prod_tags_dont_match(self):
-        for tag in ("qa", "default", "staging", "dev", "hrms-demo"):
-            self.assertFalse(ec._is_prod_tag(tag), tag)
-
-
 class ValidateProdRequesterTests(unittest.TestCase):
-    """_validate_prod_requester(): presence of requested_by stays
-    mandatory on PROD only (no-op with a missing requester off PROD/on
-    exempt doctypes). But whenever a requested_by IS present it is
-    validated — as a real ERPNext User, with actual has_permission on the
-    doctype/action — on EVERY tag, not PROD only. Never falls back to a
-    tag default, never proceeds unverified. See
-    UniversalRequesterValidationTests below for the non-PROD-with-a-requester
-    cases."""
+    """_validate_prod_requester(): presence of requested_by is mandatory
+    on EVERY tag now — no PROD/non-PROD distinction, no tag default to
+    fall back to. Whenever a requested_by IS present it is validated — as
+    a real ERPNext User, with actual has_permission on the doctype/action
+    — on every tag. Never proceeds unverified. See
+    UniversalRequesterValidationTests below for the non-PROD-tag cases."""
 
-    def test_noop_on_non_prod_tag(self):
-        with patch.object(ec, "resource_exists") as mocked_exists:
-            ec._validate_prod_requester("qa", None, "Sales Order", "read")
-        mocked_exists.assert_not_called()
-
-    def test_noop_on_exempt_doctype_even_on_prod(self):
+    def test_noop_on_exempt_doctype_even_without_requester(self):
         with patch.object(ec, "resource_exists") as mocked_exists:
             ec._validate_prod_requester("prod", None, "User", "read")
         mocked_exists.assert_not_called()
 
-    def test_refuses_missing_requester_on_prod(self):
+    def test_refuses_missing_requester(self):
         with self.assertRaises(ec.UnvalidatedProdRequesterError) as ctx:
             ec._validate_prod_requester("prod", None, "Sales Order", "read")
         self.assertIn("no requester was given", str(ctx.exception))
@@ -464,23 +441,23 @@ class ValidateProdRequesterTests(unittest.TestCase):
     def test_proceeds_when_validated_and_permitted(self, mocked_exists, mocked_perm, mocked_trust):
         ec._validate_prod_requester("prod", "priya@org.com", "Sales Order", "read")  # no raise
 
-    def test_prod_tag_name_matching_is_substring_based(self):
-        # "client-a-prod" must gate too, not just an exact "prod" tag.
+    def test_missing_requester_refused_regardless_of_tag_name(self):
+        # No more PROD/non-PROD carve-out — a tag name like "client-a-prod"
+        # (or any other) gates identically now.
         with self.assertRaises(ec.UnvalidatedProdRequesterError):
             ec._validate_prod_requester("client-a-prod", None, "Sales Order", "read")
 
 
 class UniversalRequesterValidationTests(unittest.TestCase):
-    """RBAC pre-check, every environment: supplying a requested_by on a
-    NON-PROD tag gets the same real-User + has_permission validation PROD
-    always gets, so a bogus requester is never silently accepted, PROD or
-    not."""
+    """RBAC pre-check, every environment: a requested_by on ANY tag gets
+    the same real-User + has_permission validation, and its absence is
+    refused the same way, so a bogus or missing requester is never
+    silently accepted on any tag."""
 
-    def test_noop_on_non_prod_with_no_requester(self):
-        # Presence stays optional off PROD.
-        with patch.object(ec, "resource_exists") as mocked_exists:
+    def test_missing_requester_refused_on_non_prod_tag_too(self):
+        # Presence is mandatory everywhere now — no tag gets a pass.
+        with self.assertRaises(ec.UnvalidatedProdRequesterError):
             ec._validate_prod_requester("qa", None, "Sales Order", "read")
-        mocked_exists.assert_not_called()
 
     @patch.object(ec, "resource_exists", return_value=False)
     def test_non_prod_refuses_unknown_user(self, mocked_exists):
@@ -511,18 +488,16 @@ class UniversalRequesterValidationTests(unittest.TestCase):
 
 
 class ResolveRequestedByTests(unittest.TestCase):
-    def test_cli_value_always_wins(self):
-        self.assertEqual(ec.resolve_requested_by("qa", "priya@org.com", "default@org.com"), "priya@org.com")
-        self.assertEqual(ec.resolve_requested_by("prod", "priya@org.com", "default@org.com"), "priya@org.com")
+    """Thin pass-through now — no tag default exists anywhere to fall
+    back to. See GetEnvConfigNoRequesterDefaultTests for the config side
+    of this removal."""
 
-    def test_non_prod_falls_back_to_tag_default(self):
-        self.assertEqual(ec.resolve_requested_by("qa", None, "default@org.com"), "default@org.com")
-        self.assertEqual(ec.resolve_requested_by("qa", "", "default@org.com"), "default@org.com")
+    def test_cli_value_passes_through(self):
+        self.assertEqual(ec.resolve_requested_by("priya@org.com"), "priya@org.com")
 
-    def test_prod_never_falls_back_to_tag_default(self):
-        self.assertEqual(ec.resolve_requested_by("prod", None, "default@org.com"), "")
-        self.assertEqual(ec.resolve_requested_by("PROD_ERP", "", "default@org.com"), "")
-        self.assertEqual(ec.resolve_requested_by("client-a-prod", None, "default@org.com"), "")
+    def test_absent_value_resolves_to_empty_string(self):
+        self.assertEqual(ec.resolve_requested_by(None), "")
+        self.assertEqual(ec.resolve_requested_by(""), "")
 
 
 class RedactPiiTests(unittest.TestCase):
@@ -857,40 +832,6 @@ class ProdGateWiringTests(unittest.TestCase):
                                     mode="read-write", requested_by="priya@org.com")
             mocked_do_mutate.assert_not_called()
             mocked_start.assert_not_called()
-
-
-class IsProdTagEnvClassOverrideTests(unittest.TestCase):
-    """QKEEE_ERP_<TAG>_ENV_CLASS lets an operator declare prod/non-prod
-    explicitly instead of relying on the tag name containing "prod" —
-    see 01-connectivity.md's rationale (a naming-only signal is easy to
-    miss on a tag like "LIVE_ERP")."""
-
-    def setUp(self):
-        import os
-        self._patcher = unittest.mock.patch.dict(os.environ, {}, clear=True)
-        self._patcher.start()
-        self.addCleanup(self._patcher.stop)
-        ec._QKEEE_ENV_FILE_CACHE = None
-        self.addCleanup(setattr, ec, "_QKEEE_ENV_FILE_CACHE", None)
-
-    def test_explicit_prod_override_wins_over_non_matching_name(self):
-        import os
-        os.environ["QKEEE_ERP_LIVE_ERP_ENV_CLASS"] = "prod"
-        self.assertTrue(ec._is_prod_tag("LIVE_ERP"))
-
-    def test_explicit_nonprod_override_wins_over_matching_name(self):
-        import os
-        os.environ["QKEEE_ERP_PROD_ERP_ENV_CLASS"] = "staging"
-        self.assertFalse(ec._is_prod_tag("PROD_ERP"))
-
-    def test_unset_falls_back_to_name_based_regex(self):
-        self.assertTrue(ec._is_prod_tag("client-a-prod"))
-        self.assertFalse(ec._is_prod_tag("qa"))
-
-    def test_unrecognized_override_value_falls_back_to_name(self):
-        import os
-        os.environ["QKEEE_ERP_QA_ENV_CLASS"] = "banana"
-        self.assertFalse(ec._is_prod_tag("qa"))
 
 
 class DomainTokenGateTests(unittest.TestCase):

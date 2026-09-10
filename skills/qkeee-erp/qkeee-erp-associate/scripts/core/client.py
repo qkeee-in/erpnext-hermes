@@ -13,17 +13,20 @@ Env/credential model (tagged, not fixed dev/test/qa/prod):
   QKEEE_ERP_<TAG>_BASE_URL
   QKEEE_ERP_<TAG>_API_KEY
   QKEEE_ERP_<TAG>_API_SECRET
-  QKEEE_ERP_<TAG>_REQUESTED_BY   (optional, no default — mutate errors
-                                   without it unless overridden per call)
 
 <TAG> defaults to "DEFAULT" if the user didn't name one at install.
-REQUESTED_BY is per-tag deliberately — a profile juggling `hrms-demo` and
-`prod` can attribute writes to a different requester per environment,
-without one global default bleeding across both. Active tag + read-only/
-read-write mode stay non-secret and live in metadata.hermes.config
-(qkeee_erp.active_env, qkeee_erp.mode) — those two are deliberately still
-global: an environment switch should never silently also change write
-access.
+Active tag + read-only/read-write mode stay non-secret and live in
+metadata.hermes.config (qkeee_erp.active_env, qkeee_erp.mode) — those two
+are deliberately still global: an environment switch should never silently
+also change write access.
+
+There is deliberately no env-var or config default for `requested_by`
+(no `QKEEE_ERP_<TAG>_REQUESTED_BY`, no metadata.hermes.config key). A
+standing default is a stale-identity trap — it silently attributes every
+call to whoever configured it, long after they've stopped being the
+person actually asking. `requested_by` is resolved fresh, every call,
+from the live inbound channel identity instead — see "Requester identity
+comes from the channel, never from config" below.
 
 Non-negotiable: never issue a write call while mode == "read-only". This is
 enforced in mutate_resource() below, not just in the calling domain's
@@ -36,6 +39,18 @@ id/email of the human who asked for the change) and, on success, posts a
 best-effort audit Comment on the affected record naming that requester — so
 ERPNext's own audit trail shows who asked, not just that the bot acted. See
 record_comment()/mutate_resource() below.
+
+Requester identity comes from the channel, never from config: the CALLER
+(the Hermes agent driving this CLI, not this module) is responsible for
+resolving `requested_by` on every single call from the inbound message's
+own identity — the Google Chat/Teams/Slack sender's work email, the
+email channel's From address, whatever the platform actually hands over
+for "who sent this." That resolved identity is passed explicitly via
+`--requested-by` / `requested_by=`. This module never stores, caches, or
+falls back to a previous call's value across calls — resolve_requested_by()
+below is a thin pass-through, not a lookup. `_validate_prod_requester()`
+independently re-validates whatever's passed as a real ERPNext `User` with
+the right permission before any read or write proceeds — see below.
 
 Every write is additionally logged to the `Qkeee Bot Audit Log` doctype
 (two-phase: an `Attempted` row inserted before the real write, updated to
@@ -274,10 +289,11 @@ class MissingRequesterError(ConnectorError):
 
 
 class UnvalidatedProdRequesterError(ConnectorError):
-    """Raised on a PROD tag (see _is_prod_tag()) when requested_by is
-    missing, isn't a real ERPNext User, or lacks the permission this call
-    needs per ERPNext's own frappe.client.has_permission check. See
-    _validate_prod_requester()."""
+    """Raised, on every tag (name reflects a narrower PROD-only origin —
+    the gate is now universal, see _validate_prod_requester()), when
+    requested_by is missing, isn't a real ERPNext User, or lacks the
+    permission this call needs per ERPNext's own
+    frappe.client.has_permission check."""
 
 
 class StaleConfirmationError(ConnectorError):
@@ -308,54 +324,20 @@ def _tag_env_var(tag: str, suffix: str) -> str:
     return f"QKEEE_ERP_{sanitized}_{suffix}"
 
 
-_PROD_ENV_CLASS_VALUES = {"prod", "production"}
-_NONPROD_ENV_CLASS_VALUES = {"nonprod", "non-prod", "non_prod", "dev", "test", "qa", "staging", "uat"}
-
-
-def _is_prod_tag(tag: str) -> bool:
-    """A tag counts as PRODUCTION if EITHER of these says so:
-
-    1. QKEEE_ERP_<TAG>_ENV_CLASS is explicitly set to "prod"/"production"
-       (or explicitly to a recognized non-prod value, which forces False
-       regardless of the tag's name) — the belt to the name-based regex's
-       suspenders, for an operator who wants this declared rather than
-       inferred, or whose tag name doesn't happen to contain "prod".
-    2. Falling back to the tag's own name matching /prod/i anywhere
-       ("PROD_ERP", "prod", "client-a-prod" all match) when ENV_CLASS is
-       unset or holds a value this module doesn't recognize.
-
-    A tag named without "prod" in it AND with no ENV_CLASS override will
-    NOT get the requester-validation gate below — name new production
-    tags accordingly, or set ENV_CLASS explicitly. See
-    _validate_prod_requester()."""
-    override = (_qkeee_env().get(_tag_env_var(tag, "ENV_CLASS")) or "").strip().lower()
-    if override in _PROD_ENV_CLASS_VALUES:
-        return True
-    if override in _NONPROD_ENV_CLASS_VALUES:
-        return False
-    return bool(re.search(r"prod", tag, re.IGNORECASE))
-
-
-def resolve_requested_by(tag: str, cli_value: str, tag_default: str) -> str:
+def resolve_requested_by(cli_value: str) -> str:
     """CLI-level requested_by resolution, called from `_cli()`.
 
-    `cli_value` (an explicit --requested-by on this call) always wins
-    when present. On a non-PROD tag, `tag_default` (the tag's own
-    QKEEE_ERP_<TAG>_REQUESTED_BY) is used as a fallback when `cli_value`
-    is absent — existing behavior, preserved. On a PROD tag
-    (_is_prod_tag()), that fallback is refused entirely: this returns
-    `cli_value` as-is (possibly empty), NEVER `tag_default` — so a caller
-    with no explicit --requested-by on PROD ends up with an empty
-    requester and _validate_prod_requester() (independently re-checked
-    inside query_resource()/get_resource()/run_query_report()/
-    mutate_resource(), regardless of what the CLI resolved) fails closed
-    with a clear error, rather than the call silently proceeding on a
-    standing env-var default the caller must not rely on for PROD."""
-    if cli_value:
-        return cli_value
-    if _is_prod_tag(tag):
-        return ""
-    return tag_default or ""
+    Thin pass-through, deliberately: `cli_value` (--requested-by on THIS
+    call) is the only source. There is no tag-level or config default to
+    fall back to — every prior fallback (QKEEE_ERP_<TAG>_REQUESTED_BY,
+    any metadata.hermes.config key) has been removed. The caller (the
+    Hermes agent driving this CLI) must resolve the real requester fresh
+    from the inbound channel identity before calling — see the module
+    docstring's "Requester identity comes from the channel, never from
+    config". An absent value here is returned as "" and caught downstream
+    by `_validate_prod_requester()` / `mutate_resource()`, which fail
+    closed rather than silently proceeding unattributed."""
+    return cli_value or ""
 
 
 # SSN-shaped (###-##-####) and Luhn-valid 13-19 digit runs (spaces/dashes
@@ -576,20 +558,16 @@ def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_typ
     No-op for any doctype in PROD_GATE_EXEMPT_DOCTYPES, on every tag.
     Otherwise:
 
-    - Presence of `requested_by` is mandatory ONLY on a PROD tag (see
-      _is_prod_tag()): the QKEEE_ERP_<TAG>_REQUESTED_BY
-      env-var default is REFUSED here even if configured, a PROD call
-      must pass an explicit, freshly-validated requester every time,
-      never fall back to a standing default. On a non-PROD tag a missing
-      `requested_by` is still a no-op — presence stays optional there
-      (e.g. a core-level/admin call with no business requester), matching
-      existing non-PROD behavior.
-    - Whenever `requested_by` IS present — on ANY tag, PROD or not — it is
-      validated: (1) a real ERPNext User (resource_exists check), and (2)
-      actually holds `perm_type` on `doctype`/`docname` per ERPNext's own
-      permission check (check_user_permission()). Any supplied requester
-      gets checked on every tag, so a bogus/unauthorized requester is never
-      silently accepted, PROD or not.
+    - Presence of `requested_by` is mandatory on EVERY tag, no exceptions.
+      There is no env-var or config default to fall back to (removed —
+      see the module docstring); a caller must resolve the live inbound
+      channel identity and pass it explicitly on every call.
+    - Whenever `requested_by` is present it is validated: (1) a real
+      ERPNext User (resource_exists check), and (2) actually holds
+      `perm_type` on `doctype`/`docname` per ERPNext's own permission
+      check (check_user_permission()). Every supplied requester gets
+      checked, on every tag, so a bogus/unauthorized requester is never
+      silently accepted.
 
     Raises UnvalidatedProdRequesterError on any failure — fails closed,
     never proceeds unverified. Called from query_resource()/get_resource()/
@@ -597,16 +575,14 @@ def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_typ
     if doctype in PROD_GATE_EXEMPT_DOCTYPES:
         return
     if not requested_by:
-        if not _is_prod_tag(tag):
-            return
         raise UnvalidatedProdRequesterError(
-            f"Refusing this call against '{doctype}' on tag '{tag}': it looks like a "
-            f"PRODUCTION environment (tag name matches /prod/i) and no requester was "
-            f"given. A validated, explicit requester is mandatory on PROD — the "
-            f"{_tag_env_var(tag, 'REQUESTED_BY')} env-var default is refused here even "
-            f"if configured. Look the inbound channel identity (e.g. the Google Chat/"
-            f"Teams user's own work email) up as a real ERPNext User first, then pass "
-            f"it explicitly via --requested-by / requested_by= on this call."
+            f"Refusing this call against '{doctype}' on tag '{tag}': no requester was "
+            f"given. A validated, explicit requester is mandatory on every call, on "
+            f"every environment — there is no env-var or config default to fall back "
+            f"to. Resolve the inbound channel identity (the Google Chat/Teams/Slack "
+            f"sender's own work email, the email channel's From address, etc.) as a "
+            f"real ERPNext User first, then pass it explicitly via --requested-by / "
+            f"requested_by= on this call."
         )
     if not resource_exists(tag, "User", requested_by):
         raise UnvalidatedProdRequesterError(
@@ -754,10 +730,10 @@ def get_env_config(tag: str = "default") -> dict:
     wire in the clear. Set QKEEE_ERP_<TAG>_ALLOW_INSECURE=1 to override
     for a genuine local/dev http instance.
 
-    Also resolves an OPTIONAL per-tag value — QKEEE_ERP_<TAG>_REQUESTED_BY
-    — as `requested_by_default` on the returned dict. Unlike BASE_URL/
-    API_KEY/API_SECRET this is never required and never raises if absent
-    (default "").
+    Does NOT resolve a requester default — there is no
+    QKEEE_ERP_<TAG>_REQUESTED_BY (removed). `requested_by` is always
+    supplied by the caller, resolved fresh from the inbound channel
+    identity; see resolve_requested_by() / the module docstring.
     """
     env = _qkeee_env()
     base_url = env.get(_tag_env_var(tag, "BASE_URL"))
@@ -794,7 +770,6 @@ def get_env_config(tag: str = "default") -> dict:
         "base_url": base_url,
         "api_key": api_key,
         "api_secret": api_secret,
-        "requested_by_default": env.get(_tag_env_var(tag, "REQUESTED_BY"), ""),
     }
 
 
@@ -1405,9 +1380,11 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
         )
     if not requested_by:
         raise MissingRequesterError(
-            f"Refusing {action} on '{doctype}': requested_by is missing. "
-            f"Set {_tag_env_var(tag, 'REQUESTED_BY')} in this profile's .env (per-tag default), "
-            f"or pass --requested-by for this call only."
+            f"Refusing {action} on '{doctype}': requested_by is missing. There is no "
+            f"env-var or config default for it — resolve the inbound channel identity "
+            f"(the requesting user's own work email/chat identity) as a real ERPNext "
+            f"User and pass it explicitly via --requested-by / requested_by= for this "
+            f"call."
         )
     if domain is not None:
         allowed = DOMAIN_WRITE_ALLOWLISTS.get(domain)
@@ -1692,7 +1669,9 @@ def _cli():
                    help="from qkeee_erp.mode (required for mutate/gated-mutate)")
     p.add_argument("--requested-by",
                    help="ERPNext user id/email of the human requesting the change, for THIS call "
-                        "only — overrides QKEEE_ERP_<TAG>_REQUESTED_BY, doesn't replace it")
+                        "only — resolve it from the live inbound channel identity (chat/email "
+                        "sender) before passing it here; there is no env-var or config default "
+                        "to fall back on, mandatory on every read/write")
     p.add_argument("--session-id", help="plain string correlator threaded into Qkeee Bot Audit Log rows")
     p.add_argument("--domain-code", help="e.g. qkeee-erp-associate — threaded into audit rows")
     p.add_argument("--channel", help="conversation surface, e.g. Discord/Telegram/WhatsApp/Email/Web/Slack/CLI/API/Other")
@@ -1754,31 +1733,17 @@ def _cli():
     if args.command in ("query", "get", "report", "mutate", "gated-mutate") and not args.session_id:
         args.session_id = _session_or_fallback(None)
 
-    # effective_requested_by is only resolved for commands that actually
-    # need a tag — `list-envs`/`health` never set --tag, and unconditionally
-    # calling resolve_requested_by(args.tag, ...) would hit
-    # _is_prod_tag(None) -> a TypeError from re.search(pattern, None).
-    tag_requested_by_default = ""
-    effective_requested_by = ""
-    if args.command in ("query", "get", "report", "mutate", "gated-mutate"):
-        try:
-            _tag_cfg = get_env_config(args.tag)
-            tag_requested_by_default = _tag_cfg["requested_by_default"]
-        except ConnectorError:
-            pass
-        effective_requested_by = resolve_requested_by(args.tag, args.requested_by, tag_requested_by_default)
+    # requested_by is mandatory on every read/write, on every tag — no
+    # env-var or config default exists to fall back to, so this is a
+    # pure pass-through of --requested-by. See resolve_requested_by().
+    effective_requested_by = resolve_requested_by(args.requested_by)
 
-    if (args.command in ("query", "get", "report", "mutate", "gated-mutate") and _is_prod_tag(args.tag)
-            and not effective_requested_by):
+    if args.command in ("query", "get", "report", "mutate", "gated-mutate") and not effective_requested_by:
         p.error(
-            f"--requested-by is required for '{args.command}' on PROD tag '{args.tag}' "
-            f"(tag name matches /prod/i) - the {_tag_env_var(args.tag, 'REQUESTED_BY')} "
-            f"env-var default is refused on PROD, even if configured."
-        )
-    if args.command in ("mutate", "gated-mutate") and not effective_requested_by:
-        p.error(
-            f"--requested-by is required for '{args.command}' (or set "
-            f"{_tag_env_var(args.tag, 'REQUESTED_BY')} in this profile's .env)"
+            f"--requested-by is required for '{args.command}' — there is no env-var or "
+            f"config default. Resolve the inbound channel identity (the requesting "
+            f"user's own work email/chat identity) as a real ERPNext User and pass it "
+            f"explicitly."
         )
 
     try:

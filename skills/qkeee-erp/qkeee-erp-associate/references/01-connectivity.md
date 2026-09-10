@@ -39,12 +39,13 @@ naming and var-setting, it doesn't declare the vars for them:
 | `QKEEE_ERP_<TAG>_API_KEY` | API key for that site/user |
 | `QKEEE_ERP_<TAG>_API_SECRET` | API secret for that site/user |
 | `QKEEE_ERP_<TAG>_ALLOW_INSECURE` | OPTIONAL. Set `1` to allow a non-`https://` base URL (local/dev only — `get_env_config()` refuses plaintext by default since credentials go in the clear otherwise) |
-| `QKEEE_ERP_<TAG>_REQUESTED_BY` | OPTIONAL, no default. Per-tag requester identity fallback — never used on a PROD-tagged environment, see below |
-| `QKEEE_ERP_<TAG>_ENV_CLASS` | OPTIONAL. `prod`/`production` forces PROD rules regardless of the tag's name; `nonprod`/`dev`/`test`/`qa`/`staging`/`uat` forces non-PROD even if the name matches `/prod/i`. Unset falls back to the name-based rule below. Set this explicitly rather than relying on naming discipline when the tag name won't reliably contain "prod" |
 
 There is no `_DEBUG` var — read audit logging is unconditional (every
 read logs to `Qkeee Bot Audit Log`, no per-tag opt-in), so there is no
 debug flag to resolve. See `00-conventions.md`'s GRC baseline.
+
+There is also no `_REQUESTED_BY` or `_ENV_CLASS` var (removed) — see
+below.
 
 `<TAG>` is uppercased/sanitized from whatever the user names it (`qa`,
 `client-a-prod`, etc). Adding a second/third environment is a runtime
@@ -55,17 +56,20 @@ global `metadata.hermes.config` values — switching environments should
 never silently also change write access, so `mode` requires its own
 explicit confirmation independent of which tag is active.
 
-**PROD tags get a stricter requester rule.** A tag counts as PRODUCTION if
-`QKEEE_ERP_<TAG>_ENV_CLASS` explicitly says so, or — absent that override —
-its name matches `/prod/i` anywhere (`PROD_ERP`, `client-a-prod`,
-`Production` all match). Set `ENV_CLASS` explicitly for a production tag
-whose name won't reliably contain "prod"; don't rely on naming discipline
-alone for something this consequential. On a PROD tag, `QKEEE_ERP_<TAG>_REQUESTED_BY`'s
-env-var default is refused even if configured — a PROD call must pass an
-explicit, freshly-validated `--requested-by` every time. Before any read
-or write on a PROD tag, resolve the inbound channel identity (the user's
-own work email/chat identity) as a real ERPNext user id and pass it
-explicitly; never invent or guess a requester to work around this.
+**Requester identity: one rule, every tag, no config.** There used to be a
+PROD-only strict rule and a `QKEEE_ERP_<TAG>_REQUESTED_BY`/`_ENV_CLASS`
+pair backing it; both are gone. `requested_by` now has exactly one source
+on every tag, PROD or not: the live inbound channel identity of whoever
+sent the message this call is answering — the Google Chat/Teams/Slack
+sender's own work email, the email channel's From address, whatever the
+platform actually hands over for "who sent this." Resolve it fresh on
+every single call (never cache or reuse a value from an earlier call in
+the same conversation), confirm it as a real ERPNext `User` (this is
+already enforced in code — `_validate_prod_requester()` in
+`core/client.py` refuses a call outright without a validated requester,
+on every tag), and pass it explicitly via `--requested-by` /
+`requested_by=`. Never invent, guess, or fall back to any standing
+default to get past this — there is no default left to fall back to.
 
 ## Env resolution — why `qkeee-erp.env`, not native frontmatter passthrough
 

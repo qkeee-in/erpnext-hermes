@@ -84,7 +84,9 @@ def ensure_qkeee_env_file_skeleton() -> bool:
         "#   QKEEE_ERP_<TAG>_BASE_URL=https://org.erpnext.com\n"
         "#   QKEEE_ERP_<TAG>_API_KEY=...\n"
         "#   QKEEE_ERP_<TAG>_API_SECRET=...\n"
-        "# Optional per-tag: QKEEE_ERP_<TAG>_DEBUG, QKEEE_ERP_<TAG>_REQUESTED_BY.\n"
+        "# Optional per-tag: QKEEE_ERP_<TAG>_ALLOW_INSECURE.\n"
+        "# There is no REQUESTED_BY var — requested_by is never a config\n"
+        "# default, it's resolved fresh per call from the live channel identity.\n"
         "# Never committed, never read back by this tooling — you paste values in\n"
         "# yourself, once, after generating/rotating a key.\n"
     )

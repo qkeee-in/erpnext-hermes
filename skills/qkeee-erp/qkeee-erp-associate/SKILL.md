@@ -74,11 +74,14 @@ action:
    for the exact content shape this produces.
 3. **Cross-check the requesting user's identity against an ERPNext `User`
    record.** Resolve the inbound chat/email identity to a real ERPNext
-   user id/email — refuse to proceed on a requester this skill cannot
-   resolve, most strictly on a PROD-tagged environment (see
-   `01-connectivity.md`'s PROD tag rule), but as a matter of practice on
-   every environment per `00-conventions.md`'s GRC baseline. Never invent
-   or guess a requester identity to get past this.
+   user id/email — on every environment, every call, no exceptions (see
+   `01-connectivity.md`'s requester-identity rule and
+   `00-conventions.md`'s GRC baseline). There is no env-var or config
+   default for `requested_by` — it does not exist as a fallback, so
+   there is nothing to fall back to. Refuse to proceed on a requester
+   this skill cannot resolve. Never invent or guess a requester identity,
+   and never reuse a value resolved for an earlier call/turn — resolve it
+   fresh from the message actually being handled right now.
 4. **Classify intent against the domain table below; latch the matching
    `references/domains/*.md` file into context.** More than one domain
    file may apply mid-conversation (e.g. a procurement onboarding that
