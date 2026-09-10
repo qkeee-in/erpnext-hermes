@@ -44,7 +44,7 @@ Domain modules import the shared core directly (same-skill imports) — there is
 ERPNext instance credentials (`QKEEE_ERP_*`) live in their own file at `$HERMES_HOME/qkeee-erp.env`, deliberately **outside** the profile's main `.env`. `scripts/core/client.py` reads this file directly, bypassing Hermes' sandbox env-stripping (`execute_code`/`terminal` sandboxes strip env vars by default; only statically-declared `required_environment_variables` for the DEFAULT tag survive) and the `env_passthrough` allowlist. This also keeps ERPNext secrets physically separate from any LLM-provider key in the main `.env`.
 
 - Copy `skills/qkeee-erp/qkeee-erp-associate/qkeee-erp-associate.env.example` to `$HERMES_HOME/qkeee-erp.env` and fill in real values out-of-band — never by having the agent read/cat this file or echo the values back.
-- One file holds every environment **tag** (`qkeee_erp.active_env`): `QKEEE_ERP_<TAG>_BASE_URL` / `_API_KEY` / `_API_SECRET` (required), plus optional `_ALLOW_INSECURE`, `_REQUESTED_BY`, `_ENV_CLASS` per tag. Add a new ERPNext instance by appending another tag's trio, never by creating a second file.
+- One file holds every environment **tag** (`qkeee_erp.active_env`): `QKEEE_ERP_<TAG>_BASE_URL` / `_API_KEY` / `_API_SECRET` (required), plus optional `_ALLOW_INSECURE`, `_ENV_CLASS` per tag. There is deliberately **no** `_REQUESTED_BY` var — `client.py` ignores it if set (see `test_client.py`'s `test_stray_requested_by_env_var_is_ignored`); `requested_by` is resolved fresh on every call from the live inbound channel identity and passed explicitly via `--requested-by` / `requested_by=`, never from config. Add a new ERPNext instance by appending another tag's trio, never by creating a second file.
 - See `qkeee-erp-associate/references/01-connectivity.md`'s "Env resolution" section for the full rationale.
 - Read audit logging is unconditional on every `query_resource()`/`get_resource()`/`run_query_report()` call — there is no debug flag to gate it.
 
@@ -116,12 +116,12 @@ Other profile commands (not specific to this repo, general Hermes usage): `herme
 - **Save-draft-then-review-then-submit, always:** every docstatus-bearing document requires a review-before-submit step with explicit human confirmation, defined in `profile.md` — and code-enforced for submit/cancel via a fresh confirmation token, not prompt discipline alone (see `references/00-conventions.md`'s Non-negotiable 5).
 - **No auth fallbacks:** token auth (`QKEEE_ERP_*` env vars) only — no session-cookie/password workarounds that drop audit attribution.
 - **RBAC pre-check + read audit logging, every tag:** `scripts/core/client.py`'s requester-permission check and audit logging both run unconditionally on every environment and every read/write — no PROD-only or debug-only carve-out.
-- **Audit log & tracing:** every ERPNext access goes through `scripts/core/client.py`, which stamps audit-log entries with the acting bot's session id, `_REQUESTED_BY`, and the calling domain — no audit-log row is written without them.
+- **Audit log & tracing:** every ERPNext access goes through `scripts/core/client.py`, which stamps audit-log entries with the acting bot's session id, `requested_by` (resolved fresh per call, never from a `_REQUESTED_BY` env var — see above), and the calling domain — no audit-log row is written without them.
 
 ## Open items
 
 There are many openitems, lacunas to be worked upon, below is just a short list from top of our mind -
-- **`requested_by` identity:** establish true caller identity for `requested_by` (currently denormalized from session/env config) rather than a config-level default.
+- **`requested_by` identity:** resolved per-call from `--requested-by`/`requested_by=` only (no config/env-var default, by design — see `01-connectivity.md`); remaining gap is verifying the *caller* actually resolved it from a live inbound channel identity rather than passing a stale or invented value.
 - **ERPNext/Frappe MCP tooling:** pending a comprehensive MCP adapter for Frappe/ERPNext — REST connector (`scripts/core/client.py`) is the interim approach.
 - **Other ERPs:** extend beyond ERPNext with connector/client handlers for other popular ERPs.
 - **Efficiency transparency:** task-level efficiency and token-consumption scoring/visibility.

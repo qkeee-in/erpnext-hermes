@@ -180,8 +180,9 @@ def destructive_mutate(tag: str, doctype: str, action: str, name: str, reason: s
         raise ConnectorError("destructive_mutate requires a non-empty reason.")
     if not requested_by:
         raise MissingRequesterError(
-            "Refusing destructive_mutate: requested_by is missing. Set qkeee_erp.requested_by "
-            "to the ERPNext user id/email of the person requesting this change."
+            "Refusing destructive_mutate: requested_by is missing. There is no config "
+            "default — resolve the requester's ERPNext user id/email from the live "
+            "inbound channel identity and pass it explicitly via requested_by= on this call."
         )
     if not confirmation_token or issued_at is None:
         raise ConnectorError(
@@ -294,7 +295,9 @@ def call_permission_manager(tag: str, action: str, doctype: str, role: str, perm
     if not requested_by:
         raise MissingRequesterError(
             f"Refusing permission {action} on '{doctype}'/'{role}': requested_by is missing. "
-            f"Set qkeee_erp.requested_by to the ERPNext user id/email of the person requesting this change."
+            f"There is no config default — resolve the requester's ERPNext user id/email "
+            f"from the live inbound channel identity and pass it explicitly via requested_by= "
+            f"on this call."
         )
     if action in TOKEN_REQUIRED_PERMISSION_ACTIONS:
         if not confirmation_token or issued_at is None:
@@ -417,8 +420,9 @@ def gated_config_mutate(tag: str, kind: str, doctype: str, identifier: str, reas
         raise ConnectorError("gated_config_mutate requires a non-empty reason.")
     if not requested_by:
         raise MissingRequesterError(
-            "Refusing gated_config_mutate: requested_by is missing. Set qkeee_erp.requested_by "
-            "to the ERPNext user id/email of the person requesting this change."
+            "Refusing gated_config_mutate: requested_by is missing. There is no config "
+            "default — resolve the requester's ERPNext user id/email from the live "
+            "inbound channel identity and pass it explicitly via requested_by= on this call."
         )
     if not confirmation_token or issued_at is None:
         raise ConnectorError(

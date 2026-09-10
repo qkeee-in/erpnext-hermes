@@ -191,8 +191,9 @@ def call_whitelisted_method(tag: str, method: str, body: dict, mode: str = "read
         )
     if not requested_by:
         raise MissingRequesterError(
-            f"Refusing '{method}': requested_by is missing. Set qkeee_erp.requested_by to the "
-            f"ERPNext user id/email of the person requesting this change."
+            f"Refusing '{method}': requested_by is missing. There is no config default — "
+            f"resolve the requester's ERPNext user id/email from the live inbound channel "
+            f"identity and pass it explicitly via requested_by= on this call."
         )
     if method in TOKEN_REQUIRED_METHODS:
         if not confirmation_token:
