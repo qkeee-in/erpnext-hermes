@@ -15,7 +15,7 @@ env_requires: []
 # user-owned/customizable, not replaced on `profile update`.
 distribution_owned:
   - SOUL.md
-  - skills/qkeee-erp/            # only ERPNext related skills; other installed skills stay
+  - skills/            # only ERPNext related skills; other installed skills stay
   - cron/jobs.json
   - config.yaml
   - mcp.json
