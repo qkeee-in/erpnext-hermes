@@ -1130,6 +1130,48 @@ class RequesterRoleFallbackWiringTests(unittest.TestCase):
                                          docname="SO-0001", domain="sales")
 
 
+class NeverSubstituteRequesterGuardrailTests(unittest.TestCase):
+    """F10, .scratch/hermes-erp-bot-reliability/spec.md — live-observed:
+    an agent facing a permission-denied requester offered to re-run the
+    same call as a DIFFERENT requested_by instead of reporting the gap.
+    Every requester-permission-denial message must carry an explicit
+    instruction against that, baked into the exception text itself (not
+    just documented in 00-conventions.md, which an agent mid-incident may
+    not re-read) — see _NEVER_SUBSTITUTE_REQUESTER."""
+
+    _UNRELIABLE = {"reliable": False, "bot_user": "Administrator", "bot_roles": [],
+                   "privileged_identity": True, "precheck_discriminates": True}
+
+    @patch.object(ec, "_requester_has_role_permission", return_value=False)
+    @patch.object(ec, "verify_rbac_precheck_reliable", return_value=_UNRELIABLE)
+    @patch.object(ec, "check_user_permission")
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_false_role_verdict_message_carries_guardrail(
+            self, mocked_exists, mocked_perm, mocked_trust, mocked_role_verdict):
+        with self.assertRaises(ec.UnvalidatedProdRequesterError) as ctx:
+            ec._validate_prod_requester("tag-nsr1", "priya@org.com", "Employee", "read")
+        self.assertIn("Do not retry this call with a different requested_by", str(ctx.exception))
+
+    @patch.object(ec, "_requester_has_role_permission", return_value=None)
+    @patch.object(ec, "verify_rbac_precheck_reliable", return_value=_UNRELIABLE)
+    @patch.object(ec, "check_user_permission")
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_none_role_verdict_message_carries_guardrail(
+            self, mocked_exists, mocked_perm, mocked_trust, mocked_role_verdict):
+        with self.assertRaises(ec.UnvalidatedProdRequesterError) as ctx:
+            ec._validate_prod_requester("tag-nsr2", "priya@org.com", "Employee", "read")
+        self.assertIn("Do not retry this call with a different requested_by", str(ctx.exception))
+
+    @patch.object(ec, "verify_rbac_precheck_reliable", return_value={"reliable": True})
+    @patch.object(ec, "check_user_permission", return_value=False)
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_reliable_rpc_denial_message_carries_guardrail(
+            self, mocked_exists, mocked_perm, mocked_trust):
+        with self.assertRaises(ec.UnvalidatedProdRequesterError) as ctx:
+            ec._validate_prod_requester("tag-nsr3", "priya@org.com", "Employee", "read")
+        self.assertIn("Do not retry this call with a different requested_by", str(ctx.exception))
+
+
 class ProdGateWiringTests(unittest.TestCase):
     """Confirms the gate is actually called from every read/write entry
     point, with the right doctype/perm_type/docname — not just that the

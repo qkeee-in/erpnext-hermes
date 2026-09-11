@@ -56,7 +56,7 @@ if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
 from core import client as core_client
-from core.client import ConnectorError, _qkeee_env_file_path
+from core.client import ConnectorError, _qkeee_env_file_path, _audit_insert, _audit_submit, _now_iso
 from core.confirm_token import compute_token, is_fresh, DEFAULT_TOKEN_TTL_SECONDS
 from doctype_defs import ALL_DOCTYPES, ROLE_NAME, ROLE_PAYLOAD
 
@@ -162,6 +162,65 @@ def ensure_doctype(tag: str, doctype_def: dict, requested_by: str, approval_note
     return True
 
 
+def log_role_provisioning(tag: str, requested_by: str, role_created: bool, approval_note: str) -> None:
+    """Manual Qkeee Bot Audit Log entries for the Role provisioning step
+    that already happened in ensure_role() above.
+
+    `Role` is in core.client.AUDIT_EXEMPT_DOCTYPES — never auto-logged
+    this way, same recursion-avoidance reasoning the Audit Log doctype
+    itself gets (it's "managed by qkeee-erp-bot-init... under its own
+    elevated-credential/confirm-token controls, not read/written by a
+    business requester"). This function deliberately bypasses that
+    exemption, once, for exactly this one bootstrap event: it calls the
+    raw `_audit_insert()`/`_audit_submit()` primitives directly instead
+    of `_log_read()`/`record_audit_log_start()` (both of which check
+    AUDIT_EXEMPT_DOCTYPES themselves and would silently no-op for
+    "Role" — that's the whole reason this can't just reuse them).
+
+    Only meaningful AFTER the Qkeee Bot Audit Log DocType itself exists
+    — call this from run_real() only after the DocType-creation loop,
+    never before (the row has nowhere to land otherwise). Because Role
+    is a hard dependency of that DocType's own `permissions` table
+    (live-confirmed: a DocPerm row's `role` is a validated Link — create
+    fails with `LinkValidationError` if the role doesn't already exist),
+    Role is necessarily created FIRST, before the DocType — these audit
+    rows are inserted after the fact, timestamped now, not backdated to
+    when the Role check/creation actually happened.
+
+    Logs a Read row unconditionally (the existence check ensure_role()
+    always performs, whether or not a Create followed) and a Create row
+    ONLY when `role_created` is True — logging a fabricated Create event
+    for a Role that already existed would misrepresent what happened."""
+    cfg = core_client.get_env_config(tag)
+    common = {
+        "session": "init_bot", "domain_code": "qkeee-erp-associate/init_bot",
+        "environment_tag": tag, "channel": "CLI",
+        "reference_doctype": "Role", "reference_name": ROLE_NAME,
+        "requested_by": requested_by,
+    }
+
+    read_name = _audit_insert(cfg, {
+        **common, "action": "Read", "timestamp": _now_iso(), "status": "Success",
+        "user_approved": "Not Required",
+    })
+    _audit_submit(cfg, read_name)
+    print(f"Logged Read of Role '{ROLE_NAME}' to Qkeee Bot Audit Log"
+          + (f" ({read_name})." if read_name else " — insert failed, see WARN above."))
+
+    if not role_created:
+        print(f"Role '{ROLE_NAME}' already existed — skipping the Create audit entry "
+              f"(nothing to record).")
+        return
+
+    create_name = _audit_insert(cfg, {
+        **common, "action": "Create", "timestamp": _now_iso(), "status": "Success",
+        "user_approved": "Approved", "approval_note": approval_note,
+    })
+    _audit_submit(cfg, create_name)
+    print(f"Logged Create of Role '{ROLE_NAME}' to Qkeee Bot Audit Log"
+          + (f" ({create_name})." if create_name else " — insert failed, see WARN above."))
+
+
 def run_dry_run(tag: str, requested_by: str) -> dict:
     _step("Health check")
     print(json.dumps(core_client.health_check(tag), indent=2))
@@ -235,6 +294,9 @@ def run_real(tag: str, requested_by: str, confirm_token: str, issued_at: int) ->
     for doctype_def in ALL_DOCTYPES:
         _step(f"DocType: {doctype_def['name']}")
         results[doctype_def["name"]] = ensure_doctype(tag, doctype_def, requested_by, approval_note)
+
+    _step("Qkeee Bot Audit Log: recording Role provisioning")
+    log_role_provisioning(tag, requested_by, role_created, approval_note)
 
     _step("qkeee-erp.env")
     env_created = ensure_qkeee_env_file_skeleton()
