@@ -48,12 +48,20 @@ import system_admin  # noqa: E402
 _DISALLOWED_DOCTYPE = "Qkeee Bot Audit Log"
 
 # (module, one doctype genuinely in its ALLOWED_WRITE_DOCTYPES)
+#
+# procurement uses "Purchase Order", not ALLOWED_WRITE_DOCTYPES[0]
+# ("Supplier"): Supplier 'create' carries its own extra KYC-completeness
+# gate on top of the allowlist gate (F2, .scratch/hermes-erp-bot-
+# reliability/spec.md's IncompleteSupplierKYCError) — genuinely a
+# different, domain-specific concern from what this file tests (the
+# allowlist gate in isolation), covered on its own in
+# domains/test_procurement.py instead.
 _WRITER_DOMAINS = [
     (accounts, accounts.ALLOWED_WRITE_DOCTYPES[0]),
     (fixed_assets, fixed_assets.ALLOWED_WRITE_DOCTYPES[0]),
     (hr_payroll, hr_payroll.ALLOWED_WRITE_DOCTYPES[0]),
     (inventory, inventory.ALLOWED_WRITE_DOCTYPES[0]),
-    (procurement, procurement.ALLOWED_WRITE_DOCTYPES[0]),
+    (procurement, "Purchase Order"),
     (sales, sales.ALLOWED_WRITE_DOCTYPES[0]),
     (system_admin, system_admin.ALLOWED_WRITE_DOCTYPES[0]),
 ]

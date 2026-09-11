@@ -129,9 +129,9 @@ from datetime import datetime, timezone
 # core's PARENT — on sys.path first; see domains/*.py's own import
 # preamble). Avoids hardcoding either sys.path shape.
 try:
-    from confirm_token import advisory_write_token, is_fresh
+    from confirm_token import advisory_write_token, confirmation_code, is_fresh
 except ImportError:
-    from core.confirm_token import advisory_write_token, is_fresh
+    from core.confirm_token import advisory_write_token, confirmation_code, is_fresh
 
 # Default attribution label for audit Comments when no domain-specific
 # label is supplied — see mutate_resource()'s `domain`/`skill_label` params.
@@ -317,6 +317,21 @@ class UnvalidatedProdRequesterError(ConnectorError):
 class StaleConfirmationError(ConnectorError):
     """Raised when a confirmation_token's issued_at is too old (or implausibly
     future) — re-render the draft against current data and reconfirm."""
+
+
+class UnconfirmedByUserError(ConnectorError):
+    """Raised by gated_mutate_resource() when user_confirmation_text is
+    missing, or doesn't contain the confirmation_token's derived
+    confirmation_code — see confirm_token.confirmation_code()'s own
+    docstring for what this does and doesn't prove (F5, .scratch/
+    hermes-erp-bot-reliability/spec.md). A matching confirmation_token
+    alone (the pre-existing check) proves the payload wasn't tampered
+    with since render; it does NOT prove the render was ever shown to
+    the actual requester — the same process can compute and verify that
+    token in one turn. This is the additional check for gated_mutate_
+    resource()'s domain-less write path specifically (a doctype no
+    named domain's own mutate() has a chance to layer a stricter rule
+    onto, unlike e.g. procurement's Supplier-KYC gate, F2)."""
 
 
 class DoctypeNotAllowedError(ConnectorError):
@@ -1539,6 +1554,7 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
 def gated_mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
                            name: str = None, mode: str = "read-only", requested_by: str = None,
                            *, confirmation_token: str = None, issued_at: int = None,
+                           user_confirmation_text: str = None,
                            session_id: str = None, domain_code: str = None,
                            channel: str = None, channel_metadata: dict = None,
                            approval_note: str = None,
@@ -1558,6 +1574,18 @@ def gated_mutate_resource(tag: str, doctype: str, action: str, payload: dict = N
     tries to skip the render step (e.g. passing a token computed ad hoc,
     or an old one) is refused here, in code, not just by prompt
     discipline.
+
+    `user_confirmation_text` (F5, .scratch/hermes-erp-bot-reliability/
+    spec.md): the literal text of the user's own reply confirming the
+    rendered draft. Required, and must contain
+    `confirm_token.confirmation_code(confirmation_token)` (the short code
+    the render step is expected to have shown the user) — see
+    UnconfirmedByUserError and confirmation_code()'s own docstring for
+    exactly what this does and doesn't prove. This check is additional
+    to, not instead of, the confirmation_token match below: the token
+    proves the payload matches what was rendered, this proves (within
+    this skill's existing trust model — see confirmation_code()'s
+    docstring) that a reply from the user actually referenced it.
     """
     if not confirmation_token or issued_at is None:
         raise ConnectorError(
@@ -1576,6 +1604,23 @@ def gated_mutate_resource(tag: str, doctype: str, action: str, payload: dict = N
             "confirmation_token does not match the (action, doctype, name, payload, "
             "requested_by, issued_at) facts — re-render the draft against the current data "
             "and use that token; don't hand-construct one."
+        )
+    expected_code = confirmation_code(confirmation_token)
+    if not user_confirmation_text:
+        raise UnconfirmedByUserError(
+            f"Refusing {action} on '{doctype}': gated_mutate_resource now requires "
+            f"user_confirmation_text — the literal text of the user's own reply. Show them "
+            f"confirmation_code {expected_code!r} in the rendered draft, ask them to include "
+            f"it in their confirmation, and pass their actual reply text here. Do not "
+            f"construct this string yourself — see confirm_token.confirmation_code()'s "
+            f"docstring for why that would defeat the point of this check."
+        )
+    if expected_code not in user_confirmation_text.upper():
+        raise UnconfirmedByUserError(
+            f"Refusing {action} on '{doctype}': user_confirmation_text does not contain "
+            f"confirmation_code {expected_code!r} — either the user replied to a different/"
+            f"stale draft, or this code was never actually shown to them. Re-render and "
+            f"reconfirm; never fabricate a reply that happens to contain the right code."
         )
 
     return mutate_resource(
@@ -1790,6 +1835,10 @@ def _cli():
     gm.add_argument("--name", help="record name, required for update/submit/cancel/delete")
     gm.add_argument("--confirmation-token", required=True)
     gm.add_argument("--issued-at", type=int, required=True)
+    gm.add_argument("--user-confirmation-text", required=True,
+                     help="literal text of the user's own reply confirming the rendered draft "
+                          "— must contain confirm_token.confirmation_code(confirmation_token); "
+                          "see gated_mutate_resource()'s docstring (F5)")
 
     args = p.parse_args()
 
@@ -1868,6 +1917,7 @@ def _cli():
                                        args.mode, effective_requested_by,
                                        confirmation_token=args.confirmation_token,
                                        issued_at=args.issued_at,
+                                       user_confirmation_text=args.user_confirmation_text,
                                        session_id=args.session_id, domain_code=args.domain_code,
                                        channel=args.channel, channel_metadata=channel_metadata,
                                        approval_note=args.approval_note,

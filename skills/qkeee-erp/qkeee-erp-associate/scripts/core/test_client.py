@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import client as erp_client
 import client as ec
-from confirm_token import advisory_write_token
+from confirm_token import advisory_write_token, confirmation_code
 
 
 class GetEnvConfigNoRequesterDefaultTests(unittest.TestCase):
@@ -265,6 +265,65 @@ class TestGatedMutateResource(unittest.TestCase):
                                           confirmation_token=token, issued_at=issued_at)
             mocked_request.assert_not_called()
 
+    def test_refuses_without_user_confirmation_text(self):
+        """F5, .scratch/hermes-erp-bot-reliability/spec.md: a matching
+        token alone is no longer enough — a self-computed-and-self-
+        verified token proves payload integrity, never that a human saw
+        the render."""
+        issued_at = int(time.time())
+        token = advisory_write_token("create", "CRM Lead", None, {"x": 1}, "priya@org.com", issued_at)
+        with patch.object(ec, "_request") as mocked_request:
+            with self.assertRaises(ec.UnconfirmedByUserError):
+                ec.gated_mutate_resource("qa", "CRM Lead", "create", {"x": 1}, mode="read-write",
+                                          requested_by="priya@org.com",
+                                          confirmation_token=token, issued_at=issued_at)
+            mocked_request.assert_not_called()
+
+    def test_refuses_when_confirmation_text_lacks_the_code(self):
+        issued_at = int(time.time())
+        token = advisory_write_token("create", "CRM Lead", None, {"x": 1}, "priya@org.com", issued_at)
+        with patch.object(ec, "_request") as mocked_request:
+            with self.assertRaises(ec.UnconfirmedByUserError):
+                ec.gated_mutate_resource("qa", "CRM Lead", "create", {"x": 1}, mode="read-write",
+                                          requested_by="priya@org.com",
+                                          confirmation_token=token, issued_at=issued_at,
+                                          user_confirmation_text="yes, go ahead")
+            mocked_request.assert_not_called()
+
+    def test_confirmation_text_check_is_case_insensitive(self):
+        issued_at = int(time.time())
+        payload = {"lead_name": "Acme"}
+        token = advisory_write_token("create", "CRM Lead", None, payload, "priya@org.com", issued_at)
+        code = confirmation_code(token)  # already uppercase
+        with patch.object(ec, "record_comment"), \
+                patch.object(ec, "_audit_insert", return_value=None), \
+                patch.object(ec, "_audit_update", return_value=False), \
+                patch.object(ec, "_audit_submit", return_value=False), \
+                patch.object(ec, "resource_exists", return_value=True), \
+                patch.object(ec, "check_user_permission", return_value=True), \
+                patch.object(ec, "verify_rbac_precheck_reliable", return_value={"reliable": True}), \
+                patch.dict("os.environ", self.QA_ENV, clear=True), \
+                patch.object(ec, "_request", return_value={"data": {"name": "CRM-LEAD-0001"}}):
+            result = ec.gated_mutate_resource("qa", "CRM Lead", "create", payload, mode="read-write",
+                                               requested_by="priya@org.com",
+                                               confirmation_token=token, issued_at=issued_at,
+                                               user_confirmation_text=f"yes {code.lower()} confirmed")
+        self.assertEqual(result["data"]["name"], "CRM-LEAD-0001")
+
+    def test_confirmation_text_for_a_different_tokens_code_is_refused(self):
+        """A reply confirming a DIFFERENT rendered draft's code must not
+        satisfy this gate — the code has to match THIS write's token."""
+        issued_at = int(time.time())
+        token = advisory_write_token("create", "CRM Lead", None, {"x": 1}, "priya@org.com", issued_at)
+        other_token = advisory_write_token("create", "CRM Lead", None, {"x": 999}, "priya@org.com", issued_at)
+        with patch.object(ec, "_request") as mocked_request:
+            with self.assertRaises(ec.UnconfirmedByUserError):
+                ec.gated_mutate_resource("qa", "CRM Lead", "create", {"x": 1}, mode="read-write",
+                                          requested_by="priya@org.com",
+                                          confirmation_token=token, issued_at=issued_at,
+                                          user_confirmation_text=f"yes {confirmation_code(other_token)}")
+            mocked_request.assert_not_called()
+
     def test_succeeds_with_matching_fresh_token(self):
         # The requester-permission check runs on every tag, not PROD only
         # — a write on non-PROD 'qa' with a requested_by present still gets
@@ -284,7 +343,8 @@ class TestGatedMutateResource(unittest.TestCase):
                 patch.object(ec, "_request", return_value={"data": {"name": "CRM-LEAD-0001"}}) as mocked:
             result = ec.gated_mutate_resource("qa", "CRM Lead", "create", payload, mode="read-write",
                                                requested_by="priya@org.com",
-                                               confirmation_token=token, issued_at=issued_at)
+                                               confirmation_token=token, issued_at=issued_at,
+                                               user_confirmation_text=f"yes {confirmation_code(token)}")
         self.assertEqual(result["data"]["name"], "CRM-LEAD-0001")
         mocked.assert_called_once()
 
@@ -312,21 +372,24 @@ class TestGatedMutateResource(unittest.TestCase):
                 patch.object(ec, "_request", return_value={"data": {"name": "DVSISTEMS"}}) as mocked:
             result = ec.gated_mutate_resource("qa", "Company", "create", payload, mode="read-write",
                                                requested_by="priya@org.com",
-                                               confirmation_token=token, issued_at=issued_at)
+                                               confirmation_token=token, issued_at=issued_at,
+                                               user_confirmation_text=f"confirmed, code {confirmation_code(token)}")
         self.assertEqual(result["data"]["name"], "DVSISTEMS")
         mocked.assert_called_once()
         mocked_perm.assert_not_called()  # never trust a permission answer we know is meaningless
 
     def test_still_refuses_read_only_even_with_valid_token(self):
-        """The token gate is additive, not a replacement for the
-        mode/requested_by gate mutate_resource() already enforces."""
+        """The token gate (and the user_confirmation_text gate alongside
+        it) is additive, not a replacement for the mode/requested_by gate
+        mutate_resource() already enforces."""
         issued_at = int(time.time())
         token = advisory_write_token("create", "CRM Lead", None, {"x": 1}, "priya@org.com", issued_at)
         with patch.object(ec, "_request") as mocked_request:
             with self.assertRaises(ec.ReadOnlyModeError):
                 ec.gated_mutate_resource("qa", "CRM Lead", "create", {"x": 1}, mode="read-only",
                                           requested_by="priya@org.com",
-                                          confirmation_token=token, issued_at=issued_at)
+                                          confirmation_token=token, issued_at=issued_at,
+                                          user_confirmation_text=f"yes {confirmation_code(token)}")
             mocked_request.assert_not_called()
 
 

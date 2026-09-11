@@ -106,6 +106,37 @@ def advisory_write_token(action: str, doctype: str, name: str, payload: dict,
     )
 
 
+def confirmation_code(token: str) -> str:
+    """A short, human-typeable code derived from an advisory_write_token()
+    — 6 uppercase hex characters, e.g. "3F0A9C".
+
+    What this closes, and what it deliberately doesn't (F5, .scratch/
+    hermes-erp-bot-reliability/spec.md): advisory_write_token() alone is
+    unsalted and computable by anyone, including the same process that
+    then verifies it — it proves a payload matches what was rendered,
+    never that a human actually reviewed that render. This code is not
+    cryptographically secret either (deriving it from the token an
+    agent already holds is trivial) — it does not defend against an
+    agent that deliberately fabricates a user reply. What it does do:
+    it turns "pass the token back" (something an agent can do purely
+    from its own state, with no human involved at any point) into "get
+    this specific short code into an actual inbound message from the
+    user" — a concrete, checkable discipline point, the same kind of
+    convention this skill already leans on for `requested_by` (sourced
+    from the channel's own authenticated sender, never reconstructed
+    conversationally — 00-conventions.md's GRC baseline). Whatever
+    renders the draft for the user MUST display this code (not just the
+    raw token) and ask them to include it in their reply, e.g. "reply
+    'yes 3F0A9C' to confirm" — see `gated_mutate_resource()`'s
+    `user_confirmation_text` parameter.
+
+    Deliberately short and separate from the token itself (not just
+    `token[:6]` used ad hoc at each call site) so every caller derives it
+    the same way, and so a future change to the derivation only has one
+    place to change."""
+    return token[:6].upper()
+
+
 def _cli():
     """Manual/agent-facing CLI: compute an advisory_write_token() over the
     exact facts just shown to and confirmed by the user, for domains that
@@ -146,7 +177,16 @@ def _cli():
         raise SystemExit("--payload must be a JSON object")
 
     token = advisory_write_token(args.action, args.doctype, args.name, payload, args.requested_by, issued_at)
-    print(json.dumps({"confirmation_token": token, "issued_at": issued_at}, indent=2))
+    print(json.dumps({
+        "confirmation_token": token,
+        "issued_at": issued_at,
+        "confirmation_code": confirmation_code(token),
+        "_note": "For a gated_mutate_resource() (domain-less) write: show confirmation_code to "
+                 "the user in the rendered draft and ask them to include it in their reply — "
+                 "gated_mutate_resource() additionally requires that code to appear in "
+                 "user_confirmation_text now (F5). Not required for a domain's own "
+                 "submit/cancel/delete token gate.",
+    }, indent=2))
 
 
 if __name__ == "__main__":

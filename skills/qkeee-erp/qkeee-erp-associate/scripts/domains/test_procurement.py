@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""Regression tests for procurement.py's Supplier-KYC gate (F2, .scratch/
+hermes-erp-bot-reliability/spec.md). Run alongside test_allowlist_gates.py
+(same directory/import convention: `cd scripts/domains && python -m
+pytest -q`, or the whole suite via `python -m pytest scripts` from the
+skill root).
+
+Live-observed failure this gate exists to close: a Supplier was created
+with GSTIN retried as a Supplier field (wrong doctype — belongs on
+Address, linked via Dynamic Link) and no Address/Contact created at all,
+despite procurement.md's own non-negotiable that this domain's KYC bar
+is stricter than ERPNext's own. That was prompt discipline alone; this
+file tests the code-level backstop."""
+
+import os
+import sys
+import unittest
+from unittest.mock import patch
+
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_SCRIPTS_DIR = os.path.dirname(_THIS_DIR)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+if _THIS_DIR not in sys.path:
+    sys.path.insert(0, _THIS_DIR)
+
+from core import client as core_client  # noqa: E402
+
+import procurement  # noqa: E402
+
+
+def _patched_connector(created_name="GNR Solution Private Limited"):
+    """Common patch set: allowlist/RBAC/audit-log machinery no-op'd,
+    _do_mutate stubbed to return a Supplier-shaped create response. Mirrors
+    test_allowlist_gates.py's AllowedDoctypeClearsTheGateTests pattern."""
+    return (
+        patch.object(core_client, "get_env_config", return_value={"tag": "test"}),
+        patch.object(core_client, "_validate_prod_requester"),
+        patch.object(core_client, "record_audit_log_start", return_value="AUDITLOG-TEST"),
+        patch.object(core_client, "record_audit_log_finish"),
+        patch.object(core_client, "record_comment", return_value=True),
+        patch.object(core_client, "_do_mutate", return_value={"data": {"name": created_name}}),
+    )
+
+
+class SupplierCreateRequiresKycOrWaiverTests(unittest.TestCase):
+    def test_neither_kyc_nor_waiver_refuses_before_any_write(self):
+        patches = _patched_connector()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5] as mocked_do_mutate:
+            with self.assertRaises(procurement.IncompleteSupplierKYCError):
+                procurement.mutate(
+                    "test", "Supplier", "create",
+                    payload={"supplier_name": "Acme", "supplier_type": "Company"},
+                    mode="read-write", requested_by="tester@example.com",
+                )
+            mocked_do_mutate.assert_not_called()
+
+    def test_kyc_without_address_key_still_refuses(self):
+        # A kyc dict with only e.g. {"contact": {...}} and no "address" is
+        # still incomplete per this domain's own bar (tax ID lives on
+        # Address) — must not be treated as satisfying the gate.
+        patches = _patched_connector()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5] as mocked_do_mutate:
+            with self.assertRaises(procurement.IncompleteSupplierKYCError):
+                procurement.mutate(
+                    "test", "Supplier", "create",
+                    payload={"supplier_name": "Acme", "supplier_type": "Company"},
+                    kyc={"contact": {"first_name": "Priya"}},
+                    mode="read-write", requested_by="tester@example.com",
+                )
+            mocked_do_mutate.assert_not_called()
+
+
+class SupplierCreateWithWaiverTests(unittest.TestCase):
+    def test_waiver_proceeds_and_is_marked_on_the_result(self):
+        patches = _patched_connector()
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5] as mocked_do_mutate:
+            result = procurement.mutate(
+                "test", "Supplier", "create",
+                payload={"supplier_name": "Acme", "supplier_type": "Company"},
+                kyc_waiver_confirmed=True,
+                mode="read-write", requested_by="tester@example.com",
+            )
+        mocked_do_mutate.assert_called_once()
+        self.assertTrue(result["_kyc"]["waived"])
+        self.assertIsNone(result["_kyc"]["address"])
+
+
+class SupplierCreateWithKycTests(unittest.TestCase):
+    def test_kyc_address_creates_linked_address_with_dynamic_link(self):
+        patches = _patched_connector(created_name="Acme")
+        with patches[0], patches[1], patches[2], patches[3], patches[4], \
+             patch.object(core_client, "_do_mutate") as mocked_do_mutate:
+            mocked_do_mutate.side_effect = [
+                {"data": {"name": "Acme"}},  # Supplier create
+                {"data": {"name": "ADDR-0001"}},  # Address create
+            ]
+            result = procurement.mutate(
+                "test", "Supplier", "create",
+                payload={"supplier_name": "Acme", "supplier_type": "Company"},
+                kyc={"address": {"address_line1": "1 Main St", "gstin": "27AAECG2483J1ZE"}},
+                mode="read-write", requested_by="tester@example.com",
+            )
+        self.assertEqual(mocked_do_mutate.call_count, 2)
+        address_payload = mocked_do_mutate.call_args_list[1].kwargs.get("payload") \
+            or mocked_do_mutate.call_args_list[1].args[3]
+        self.assertEqual(address_payload["gstin"], "27AAECG2483J1ZE")
+        self.assertIn({"link_doctype": "Supplier", "link_name": "Acme"}, address_payload["links"])
+        self.assertFalse(result["_kyc"]["waived"])
+        self.assertEqual(result["_kyc"]["address"]["data"]["name"], "ADDR-0001")
+
+    def test_kyc_address_and_contact_creates_both(self):
+        patches = _patched_connector(created_name="Acme")
+        with patches[0], patches[1], patches[2], patches[3], patches[4], \
+             patch.object(core_client, "_do_mutate") as mocked_do_mutate:
+            mocked_do_mutate.side_effect = [
+                {"data": {"name": "Acme"}},
+                {"data": {"name": "ADDR-0001"}},
+                {"data": {"name": "CONT-0001"}},
+            ]
+            result = procurement.mutate(
+                "test", "Supplier", "create",
+                payload={"supplier_name": "Acme", "supplier_type": "Company"},
+                kyc={"address": {"gstin": "27AAECG2483J1ZE"},
+                     "contact": {"first_name": "Priya"}},
+                mode="read-write", requested_by="tester@example.com",
+            )
+        self.assertEqual(mocked_do_mutate.call_count, 3)
+        self.assertEqual(result["_kyc"]["contact"]["data"]["name"], "CONT-0001")
+
+    def test_existing_links_on_kyc_payload_are_preserved_not_overwritten(self):
+        patches = _patched_connector(created_name="Acme")
+        with patches[0], patches[1], patches[2], patches[3], patches[4], \
+             patch.object(core_client, "_do_mutate") as mocked_do_mutate:
+            mocked_do_mutate.side_effect = [
+                {"data": {"name": "Acme"}},
+                {"data": {"name": "ADDR-0001"}},
+            ]
+            procurement.mutate(
+                "test", "Supplier", "create",
+                payload={"supplier_name": "Acme", "supplier_type": "Company"},
+                kyc={"address": {"gstin": "X", "links": [{"link_doctype": "Company", "link_name": "DEMO LLP"}]}},
+                mode="read-write", requested_by="tester@example.com",
+            )
+        address_payload = mocked_do_mutate.call_args_list[1].kwargs.get("payload") \
+            or mocked_do_mutate.call_args_list[1].args[3]
+        self.assertEqual(len(address_payload["links"]), 2)
+        self.assertIn({"link_doctype": "Company", "link_name": "DEMO LLP"}, address_payload["links"])
+        self.assertIn({"link_doctype": "Supplier", "link_name": "Acme"}, address_payload["links"])
+
+
+class SupplierUpdateIsNotGatedTests(unittest.TestCase):
+    """Onboarding-time bar only — see mutate()'s own docstring for why
+    'update' is deliberately excluded."""
+
+    def test_update_proceeds_without_kyc(self):
+        patches = _patched_connector(created_name="Acme")
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5] as mocked_do_mutate, \
+             patch.object(core_client, "get_resource", return_value={"data": None}):
+            procurement.mutate(
+                "test", "Supplier", "update", name="Acme",
+                payload={"email_id": "accounts@acme.example"},
+                mode="read-write", requested_by="tester@example.com",
+            )
+        mocked_do_mutate.assert_called_once()
+
+
+class AddressAndContactAreAllowlistedTests(unittest.TestCase):
+    def test_address_and_contact_in_allowed_write_doctypes(self):
+        self.assertIn("Address", procurement.ALLOWED_WRITE_DOCTYPES)
+        self.assertIn("Contact", procurement.ALLOWED_WRITE_DOCTYPES)
+
+    def test_address_create_works_standalone_not_only_via_supplier_kyc(self):
+        # Backfilling KYC onto an already-onboarded supplier — see
+        # mutate()'s docstring's "update is not gated" note.
+        patches = _patched_connector(created_name="ADDR-0002")
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5] as mocked_do_mutate:
+            procurement.mutate(
+                "test", "Address", "create",
+                payload={"gstin": "27AAECG2483J1ZE",
+                         "links": [{"link_doctype": "Supplier", "link_name": "Acme"}]},
+                mode="read-write", requested_by="tester@example.com",
+            )
+        mocked_do_mutate.assert_called_once()
+
+
+if __name__ == "__main__":
+    unittest.main()

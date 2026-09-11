@@ -216,8 +216,20 @@ for the exact mechanism.
   detection field for later scanning (did every write really get
   confirmed), not a second gate; omitting it logs `"Not Confirmed"` rather
   than blocking the write.
-- **`session_id` — regenerate per platform session, never carry forward
-  indefinitely.** Live-observed: a Discord/Slack/etc conversation resumed
+- **`session_id`, `channel_metadata`, `latest_prompt` — resolve once per
+  logical session, pass on every write, never leave blank because the
+  write "feels routine."** Live-observed (F1, `.scratch/
+  hermes-erp-bot-reliability/spec.md`): hand-writing a fresh one-off
+  Python script per write is exactly how these three keep getting left
+  blank — `session_id` hardcoded to `""`, `channel_metadata` never built
+  at all, `latest_prompt` never passed (only a paraphrased
+  `prompt_summary`), even when the real platform thread id was sitting in
+  context the whole time. `execute_write.py` (`01-connectivity.md`) is
+  the fix: it's the one write entry point, and it WARNs loudly on stderr
+  before firing if any of the three is missing — use it instead of
+  hand-writing a write script, and don't route around its warning.
+- **`session_id` specifically — regenerate per platform session, never
+  carry forward indefinitely.** Live-observed: a Discord/Slack/etc conversation resumed
   across a long gap (a day, a context-compaction event) can end up handing
   the connector a `session_id` that's drifted stale or malformed — unlike
   `requested_by`/`reference_doctype`, this value is never validated
@@ -287,6 +299,22 @@ for the exact mechanism.
   approved it. Never render a confirmation and consume its token in the
   same turn; `confirmation_token`/`issued_at` are only used after the
   user's own reply affirmatively confirms that specific rendered draft.
+- **`gated_mutate_resource()` additionally requires `user_confirmation_text`
+  — the literal text of the user's own reply (F5, `.scratch/
+  hermes-erp-bot-reliability/spec.md`).** This is the domain-less
+  advisory-token path (a doctype no named domain's `mutate()` has a
+  chance to layer a stricter rule onto, e.g. Item — see F3/issue 01); a
+  matching `confirmation_token` alone is computable and verifiable by the
+  same process in the same turn, proving only that the payload wasn't
+  altered since render, same limit as the paragraph above. The render
+  step must show the user `confirm_token.confirmation_code()`'s short
+  code (not just say "confirmed?") and the execute step must pass their
+  actual reply text — never a string this skill's own process
+  constructs itself, which would defeat the point (see
+  `confirmation_code()`'s own docstring for the honest limits of what
+  this does and doesn't prove). Not required for a domain's own
+  submit/cancel/delete token gate (`register_domain_token_gate()`) —
+  scoped to `gated_mutate_resource()` specifically.
 - **Non-ERPNext systems** — see `references/non-erpnext-adapter.md`:
   explicitly request API docs, a user guide, or a URL before attempting
   any action against a system that isn't ERPNext.
