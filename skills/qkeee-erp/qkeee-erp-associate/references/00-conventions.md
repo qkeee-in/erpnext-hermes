@@ -129,6 +129,14 @@ for the exact mechanism.
    ERPNext; they don't confirm what a specific org's instance has
    customized, added, or removed. An honest "I don't see that field on
    this DocType" beats a guessed field name that happens to resolve.
+   Code-enforced for every `create`/`update`, not left to `discover.py`
+   being called by hand: `execute_write.py` runs every payload through
+   `schema_mapping.map_payload_for_write()` before dispatch (issue 01,
+   `.scratch/hermes-erp-bot-reliability/issues/01-schema-first-attribute-
+   mapping.md`), which fetches the live schema and maps fields against it
+   instead of relying on a domain doc's hand-curated field list. See
+   `schema_mapping.py`'s own module docstring for the fuzzy-match
+   confirmation story and the fetch-failure degrade path.
 5. **Save-draft-then-review-then-submit, always three distinct steps —
    code-enforced, not just sequencing discipline.** `create`/`update` and
    `submit` are always separate `mutate` calls. Re-fetch the record by its

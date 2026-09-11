@@ -20,6 +20,16 @@ import execute_write
 from core.client import DOMAIN_WRITE_ALLOWLISTS
 
 
+def _passthrough_schema_mapping(tag, doctype, payload, **kwargs):
+    """Stand-in for schema_mapping.map_payload_for_write() in tests that
+    aren't exercising issue 01's mapping behavior itself (see
+    SchemaMappingDispatchTests below for those) — returns the payload
+    unchanged with status "ok", so tests written before issue 01 landed
+    don't need a live/mocked ERPNext schema fetch just to keep dispatching."""
+    return {"payload": dict(payload or {}), "status": "ok", "detail": None,
+            "suggested_mappings": [], "unmatched": [], "high_risk": []}
+
+
 def _run_cli(argv):
     """Shared by DispatchTests and PurchaseSourcedItemFlagTests — runs
     execute_write._cli() against a given argv, capturing stdout/stderr
@@ -100,6 +110,7 @@ class DispatchTests(unittest.TestCase):
 
     _run = staticmethod(_run_cli)
 
+    @patch.object(execute_write.schema_mapping, "map_payload_for_write", new=_passthrough_schema_mapping)
     @patch.object(execute_write.sales, "mutate")
     def test_domain_given_routes_to_that_domains_own_mutate(self, mock_mutate):
         mock_mutate.return_value = {"data": {"name": "SO-0001"}, "_audit_log_status": "ok"}
@@ -115,6 +126,7 @@ class DispatchTests(unittest.TestCase):
         self.assertNotIn("domain", mock_mutate.call_args.kwargs)  # sales.mutate() bakes its own domain in
         self.assertIn("SO-0001", out)
 
+    @patch.object(execute_write.schema_mapping, "map_payload_for_write", new=_passthrough_schema_mapping)
     @patch.object(execute_write.procurement, "mutate")
     def test_supplier_create_forwards_kyc_flags_to_procurement_mutate(self, mock_mutate):
         mock_mutate.return_value = {"data": {"name": "Acme Supplies"},
@@ -142,6 +154,7 @@ class DispatchTests(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("only apply to --domain procurement --doctype Supplier --action create", err)
 
+    @patch.object(execute_write.schema_mapping, "map_payload_for_write", new=_passthrough_schema_mapping)
     def test_domain_omitted_without_token_refuses_cleanly(self):
         code, out, err = self._run([
             "--tag", "DEMO_ERP", "--mode", "read-write", "--requested-by", "user@org.com",
@@ -151,6 +164,7 @@ class DispatchTests(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("--confirmation-token and --issued-at are required", err)
 
+    @patch.object(execute_write.schema_mapping, "map_payload_for_write", new=_passthrough_schema_mapping)
     def test_domain_omitted_with_token_but_no_user_confirmation_text_refuses_cleanly(self):
         code, out, err = self._run([
             "--tag", "DEMO_ERP", "--mode", "read-write", "--requested-by", "user@org.com",
@@ -161,6 +175,7 @@ class DispatchTests(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("--user-confirmation-text is required", err)
 
+    @patch.object(execute_write.schema_mapping, "map_payload_for_write", new=_passthrough_schema_mapping)
     @patch.object(execute_write, "gated_mutate_resource")
     def test_domain_omitted_with_token_and_confirmation_text_routes_to_gated_mutate(self, mock_gated):
         mock_gated.return_value = {"data": {"name": "APPLE-IPAD"}, "_audit_log_status": "ok"}
@@ -195,6 +210,7 @@ class PurchaseSourcedItemFlagTests(unittest.TestCase):
         self.assertNotEqual(code, 0)
         self.assertIn("--purchase-sourced-item only applies to --doctype Item --action create", err)
 
+    @patch.object(execute_write.schema_mapping, "map_payload_for_write", new=_passthrough_schema_mapping)
     @patch.object(execute_write, "gated_mutate_resource")
     def test_flag_applies_defaults_before_dispatch(self, mock_gated):
         mock_gated.return_value = {"data": {"name": "APPLE-IPAD-AIR11-128GB"}, "_audit_log_status": "ok"}
@@ -225,6 +241,7 @@ class PurchaseSourcedItemFlagTests(unittest.TestCase):
         self.assertIn("Standard SELLING", err)
         self.assertIn("build_standard_buying_item_price_payload", err)
 
+    @patch.object(execute_write.schema_mapping, "map_payload_for_write", new=_passthrough_schema_mapping)
     def test_flag_omitted_leaves_payload_untouched_standard_rate_and_all(self):
         with patch.object(execute_write, "gated_mutate_resource") as mock_gated:
             mock_gated.return_value = {"data": {"name": "X"}, "_audit_log_status": "ok"}
@@ -242,6 +259,7 @@ class PurchaseSourcedItemFlagTests(unittest.TestCase):
 
 
 class AuditStatusSurfacedTests(unittest.TestCase):
+    @patch.object(execute_write.schema_mapping, "map_payload_for_write", new=_passthrough_schema_mapping)
     @patch.object(execute_write.procurement, "mutate")
     def test_non_ok_audit_status_warns(self, mock_mutate):
         mock_mutate.return_value = {"data": {"name": "X"}, "_audit_log_status": "insert_failed"}
@@ -257,6 +275,107 @@ class AuditStatusSurfacedTests(unittest.TestCase):
                 execute_write._cli()
         self.assertIn("insert_failed", buf_err.getvalue())
         self.assertIn("NOT reliably in the audit trail", buf_err.getvalue())
+
+
+class SchemaMappingDispatchTests(unittest.TestCase):
+    """issue 01 wiring itself: _apply_schema_mapping() runs for every
+    create/update, before dispatch — mocked at schema_mapping.
+    map_payload_for_write() (the one function _apply_schema_mapping()
+    calls), never at the HTTP layer, matching this file's own convention
+    of not re-testing what core/test_client.py or test_schema_mapping.py
+    already cover."""
+
+    _run = staticmethod(_run_cli)
+
+    @patch.object(execute_write.schema_mapping, "map_payload_for_write")
+    @patch.object(execute_write, "gated_mutate_resource")
+    def test_unavailable_status_warns_and_sends_original_payload(self, mock_gated, mock_map):
+        mock_map.return_value = {"payload": {"item_code": "X"}, "status": "unavailable",
+                                  "detail": "ERPNext API error (403) on GET /api/resource/DocType/Item",
+                                  "suggested_mappings": [], "unmatched": [], "high_risk": []}
+        mock_gated.return_value = {"data": {"name": "X"}, "_audit_log_status": "ok"}
+        code, out, err = self._run([
+            "--tag", "DEMO_ERP", "--mode", "read-write", "--requested-by", "user@org.com",
+            "--doctype", "Item", "--action", "create",
+            "--payload", '{"item_code": "X"}',
+            "--confirmation-token", "abc123", "--issued-at", "1700000000",
+            "--user-confirmation-text", "yes ABC123",
+            "--session-id", "s", "--channel-metadata", '{"space": "x"}', "--latest-prompt", "p",
+        ])
+        self.assertEqual(code, 0)
+        self.assertIn("schema-first field mapping unavailable", err)
+        self.assertEqual(mock_gated.call_args.kwargs.get("payload"), {"item_code": "X"})
+
+    @patch.object(execute_write.schema_mapping, "map_payload_for_write")
+    @patch.object(execute_write, "gated_mutate_resource")
+    def test_suggested_and_unmatched_fields_warn_but_still_dispatch(self, mock_gated, mock_map):
+        mock_map.return_value = {
+            "payload": {"item_code": "X"}, "status": "ok", "detail": None,
+            "suggested_mappings": [{"candidate_key": "HSN", "suggested_fieldname": "gst_hsn_code",
+                                     "value": "84713090"}],
+            "unmatched": ["warranty_period"], "high_risk": [],
+        }
+        mock_gated.return_value = {"data": {"name": "X"}, "_audit_log_status": "ok"}
+        code, out, err = self._run([
+            "--tag", "DEMO_ERP", "--mode", "read-write", "--requested-by", "user@org.com",
+            "--doctype", "Item", "--action", "create",
+            "--payload", '{"item_code": "X", "HSN": "84713090", "warranty_period": "12 months"}',
+            "--confirmation-token", "abc123", "--issued-at", "1700000000",
+            "--user-confirmation-text", "yes ABC123",
+            "--session-id", "s", "--channel-metadata", '{"space": "x"}', "--latest-prompt", "p",
+        ])
+        self.assertEqual(code, 0)
+        self.assertIn("matched a live schema field only via a synonym hint", err)
+        self.assertIn("warranty_period", err)
+        mock_gated.assert_called_once()
+        self.assertEqual(mock_gated.call_args.kwargs.get("payload"), {"item_code": "X"})
+
+    @patch.object(execute_write.schema_mapping, "map_payload_for_write")
+    def test_high_risk_status_refuses_before_dispatch(self, mock_map):
+        mock_map.return_value = {"payload": {}, "status": "high_risk", "detail": None,
+                                  "suggested_mappings": [], "unmatched": [], "high_risk": ["HSN"]}
+        with patch.object(execute_write, "gated_mutate_resource") as mock_gated:
+            code, out, err = self._run([
+                "--tag", "DEMO_ERP", "--mode", "read-write", "--requested-by", "user@org.com",
+                "--doctype", "Item", "--action", "create",
+                "--staged-fields", '[{"field": "HSN", "value": "84713090", "confidence": "low"}]',
+                "--confirmation-token", "abc123", "--issued-at", "1700000000",
+                "--user-confirmation-text", "yes ABC123",
+                "--session-id", "s", "--channel-metadata", '{"space": "x"}', "--latest-prompt", "p",
+            ])
+            mock_gated.assert_not_called()
+        self.assertNotEqual(code, 0)
+        self.assertIn("BOTH low-confidence AND unmatched", err)
+
+    def test_staged_fields_rejected_for_non_create_update_action(self):
+        code, out, err = self._run([
+            "--tag", "DEMO_ERP", "--mode", "read-write", "--requested-by", "user@org.com",
+            "--doctype", "Item", "--action", "submit", "--name", "X",
+            "--staged-fields", '[{"field": "HSN", "value": "1", "confidence": "high"}]',
+            "--confirmation-token", "abc123", "--issued-at", "1700000000",
+        ])
+        self.assertNotEqual(code, 0)
+        self.assertIn("only apply to --action create/update", err)
+
+    @patch.object(execute_write.schema_mapping, "map_payload_for_write")
+    def test_staged_fields_and_confirmed_mappings_forwarded(self, mock_map):
+        mock_map.return_value = {"payload": {"item_code": "X"}, "status": "ok", "detail": None,
+                                  "suggested_mappings": [], "unmatched": [], "high_risk": []}
+        with patch.object(execute_write, "gated_mutate_resource") as mock_gated:
+            mock_gated.return_value = {"data": {"name": "X"}, "_audit_log_status": "ok"}
+            self._run([
+                "--tag", "DEMO_ERP", "--mode", "read-write", "--requested-by", "user@org.com",
+                "--doctype", "Item", "--action", "create",
+                "--payload", '{"item_code": "X"}',
+                "--staged-fields", '[{"field": "item_code", "value": "X", "confidence": "high"}]',
+                "--confirmed-mappings", '{"HSN": "gst_hsn_code"}',
+                "--confirmation-token", "abc123", "--issued-at", "1700000000",
+                "--user-confirmation-text", "yes ABC123",
+                "--session-id", "s", "--channel-metadata", '{"space": "x"}', "--latest-prompt", "p",
+            ])
+        self.assertEqual(mock_map.call_args.kwargs.get("staged_fields"),
+                          [{"field": "item_code", "value": "X", "confidence": "high"}])
+        self.assertEqual(mock_map.call_args.kwargs.get("confirmed_mappings"), {"HSN": "gst_hsn_code"})
 
 
 if __name__ == "__main__":

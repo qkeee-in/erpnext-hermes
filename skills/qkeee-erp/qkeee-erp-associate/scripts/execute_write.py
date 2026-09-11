@@ -84,6 +84,23 @@ refuses a bare `standard_rate` key outright (F6: that auto-creates a
 Standard SELLING Item Price from what was actually a purchase cost — see
 `item_write_helpers.py`'s own docstring for the fix). See that file
 rather than this one for the actual logic.
+
+## Schema-first attribute mapping (issue 01, F3/F4 fold-in)
+
+Every `--action create`/`update`, for every `--doctype`, unconditionally
+(not opt-in the way `--purchase-sourced-item` is): before dispatch,
+`_apply_schema_mapping()` runs the payload (or `--staged-fields`, when
+doc-extraction's confidence-rated output is being written directly)
+through `schema_mapping.map_payload_for_write()` against that doctype's
+live field schema, so a field only gets left out because it genuinely
+isn't on the instance — never because a domain doc's curated field list
+didn't happen to mention it. Degrades to the payload as given (warn, not
+refuse) if the schema fetch itself fails; hard-refuses only when a
+`--staged-fields` entry is both low-confidence and unmatched against the
+live schema. See `schema_mapping.py`'s own module docstring for the full
+design rationale (why this lives here and not inside
+`mutate_resource()`/`gated_mutate_resource()`, the fuzzy-match
+confirmation story, the F2/F4 interaction decisions).
 """
 
 import argparse
@@ -121,6 +138,7 @@ from item_write_helpers import (
     BareStandardRateOnPurchaseSourcedItemError,
     apply_purchase_sourced_item_defaults,
 )
+import schema_mapping
 
 # name -> module, so --domain dispatches to that domain's OWN mutate() —
 # never core.client.mutate_resource() directly — see module docstring.
@@ -139,6 +157,49 @@ _KNOWN_DOMAINS = set(_DOMAIN_MODULES)
 
 def _warn(msg: str) -> None:
     print(f"WARN: {msg}", file=sys.stderr)
+
+
+def _apply_schema_mapping(args, payload: dict, effective_requested_by: str, channel_metadata: dict,
+                           staged_fields: list, confirmed_mappings: dict) -> dict:
+    """issue 01 (schema-first attribute mapping, .scratch/hermes-erp-bot-
+    reliability/issues/01-schema-first-attribute-mapping.md) — runs before
+    every create/update dispatch below. See schema_mapping.py's own module
+    docstring for why this lives here rather than inside
+    mutate_resource()/gated_mutate_resource(). Loud-not-blocking for a
+    schema-fetch failure or a suggested/unmatched field (mirrors
+    `_preflight_context_check()`'s posture); hard-refuses only on a
+    `high_risk` field — a staged field that's both low-confidence and
+    unmatched against the live schema (F4's fold-in) — via ConnectorError,
+    caught by this file's existing top-level ConnectorError handler."""
+    mapping = schema_mapping.map_payload_for_write(
+        args.tag, args.doctype, payload, requested_by=effective_requested_by,
+        staged_fields=staged_fields, confirmed_mappings=confirmed_mappings,
+        session_id=args.session_id, domain_code=args.domain_code,
+        channel=args.channel, channel_metadata=channel_metadata,
+        prompt_summary=args.prompt_summary, latest_prompt=args.latest_prompt,
+    )
+    if mapping["status"] == "unavailable":
+        _warn(f"schema-first field mapping unavailable for '{args.doctype}' on tag '{args.tag}' "
+              f"({mapping['detail']}) — proceeding with the payload as given, unmapped. See "
+              f"issue 01, .scratch/hermes-erp-bot-reliability/issues/"
+              f"01-schema-first-attribute-mapping.md.")
+        return payload
+    if mapping["suggested_mappings"]:
+        _warn(f"{len(mapping['suggested_mappings'])} field(s) matched a live schema field only "
+              f"via a synonym hint, NOT applied without confirmation: {mapping['suggested_mappings']!r} "
+              f"— re-run with --confirmed-mappings including the ones the user confirms.")
+    if mapping["unmatched"]:
+        _warn(f"field(s) with no matching live schema field on '{args.doctype}', dropped from "
+              f"the payload actually sent: {mapping['unmatched']!r}")
+    if mapping["status"] == "high_risk":
+        raise ConnectorError(
+            f"Refusing {args.action} on '{args.doctype}': staged field(s) "
+            f"{mapping['high_risk']!r} are BOTH low-confidence AND unmatched against the live "
+            f"schema — the highest-risk combination (issue 01's F4 fold-in). Resolve manually "
+            f"with the user (correct the source value, or supply the right live fieldname via "
+            f"--confirmed-mappings) before retrying."
+        )
+    return mapping["payload"]
 
 
 def _preflight_context_check(args) -> None:
@@ -219,6 +280,17 @@ def _cli():
                         "apply_purchase_sourced_item_defaults() to --payload before writing — "
                         "defaults is_purchase_item=1/is_sales_item=0 (F9) and refuses a bare "
                         "standard_rate key (F6). See item_write_helpers.py.")
+    p.add_argument("--staged-fields",
+                   help="issue 01 (schema-first attribute mapping), --action create/update only: "
+                        "JSON array of doc-extraction's staged-report entries, e.g. "
+                        '\'[{"field": "HSN", "value": "84713090", "confidence": "high"}]\' — '
+                        "matched against the live doctype schema instead of --payload's own keys "
+                        "when given. See schema_mapping.py.")
+    p.add_argument("--confirmed-mappings",
+                   help="issue 01: JSON object {candidate_key: live_fieldname} confirming one or "
+                        "more schema_mapping.py suggested_mappings entries the user has explicitly "
+                        "signed off on — the only way a fuzzy/synonym-matched field ever reaches "
+                        "the payload actually sent.")
 
     args = p.parse_args()
 
@@ -236,6 +308,8 @@ def _cli():
         payload = _parse_json_arg("--payload", args.payload, dict)
         channel_metadata = _parse_json_arg("--channel-metadata", args.channel_metadata, dict)
         kyc = _parse_json_arg("--kyc", args.kyc, dict)
+        staged_fields = _parse_json_arg("--staged-fields", args.staged_fields, list)
+        confirmed_mappings = _parse_json_arg("--confirmed-mappings", args.confirmed_mappings, dict)
         if args.purchase_sourced_item:
             payload = apply_purchase_sourced_item_defaults(payload or {})
     except ConnectorError as e:
@@ -247,6 +321,17 @@ def _cli():
 
     effective_requested_by = resolve_requested_by(args.requested_by)
     _preflight_context_check(args)
+
+    if args.action in ("create", "update"):
+        try:
+            payload = _apply_schema_mapping(args, payload, effective_requested_by, channel_metadata,
+                                             staged_fields, confirmed_mappings)
+        except ConnectorError as e:
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.staged_fields or args.confirmed_mappings:
+        p.error("--staged-fields/--confirmed-mappings only apply to --action create/update — "
+                "they'd be silently ignored here otherwise.")
 
     common = dict(
         payload=payload, name=args.name, mode=args.mode, requested_by=effective_requested_by,

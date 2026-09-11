@@ -86,6 +86,23 @@ or not.
    own field (`field: "reconciliation_check"`) so it's visible in the
    report itself, not just something the agent is trusted to remember to
    mention.
+
+   **Known gap (F4, .scratch/hermes-erp-bot-reliability/spec.md):** no
+   dedicated `render_*.py` staged-report script exists in this tree yet —
+   this step has historically been done inline, which is exactly how F4
+   happened (the confidence-rating/reconciliation-check requirement
+   documented here simply never ran). The confidence/value-key refusal
+   rule IS code-enforced now, one step downstream: when this domain's
+   output is handed to a write path via `execute_write.py --staged-fields`,
+   `schema_mapping.match_staged_report()` (issue 01,
+   `.scratch/hermes-erp-bot-reliability/issues/01-schema-first-attribute-
+   mapping.md`) refuses with `MalformedStagedReportError` on any field
+   missing `confidence` or `value`, and additionally flags a field that's
+   both `confidence: "low"` and unmatched against the live doctype schema
+   as high-risk before any write can proceed. That does not replace a real
+   render step for the report itself (still owed) — it means a downstream
+   write can no longer silently consume a malformed staged report even
+   though nothing currently code-enforces the report's own construction.
 7. **Hand the staged report back** to the user, or to the calling domain
    if invoked mid-task (e.g. from `domains/procurement.md`'s supplier
    onboarding). The receiving domain is responsible for its own Confirm →

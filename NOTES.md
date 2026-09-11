@@ -10,3 +10,4 @@
 8. End of day summary grouped by different users who assigned or requested a task execution.
 9. End of week performance report auto emailed to mentor/manager.
 10. Thoroughly test and ensure all channel chat ids and email message ids persis in Audit Log entry.
+11. ERP workflows to enhance checks and approvals in case of bot initiated actions.
