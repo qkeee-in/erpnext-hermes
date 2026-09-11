@@ -348,13 +348,15 @@ class TestGatedMutateResource(unittest.TestCase):
         self.assertEqual(result["data"]["name"], "CRM-LEAD-0001")
         mocked.assert_called_once()
 
-    def test_succeeds_despite_unreliable_precheck_via_verified_token(self):
-        # Company (or any doctype no domain owns) has no ALLOWED_WRITE_DOCTYPES
-        # to fall back on — but a real, freshly-rendered advisory token IS
-        # itself a design-time-reviewed control (see Option D follow-up:
-        # `advisory_token_verified` in client.py), so this must still
-        # proceed even when the RBAC precheck can't be trusted, the same
-        # way a domain-scoped write does.
+    def test_verified_token_alone_no_longer_rescues_an_unreliable_precheck(self):
+        # 2026-09-11 decision (F7 reinforcement): a verified advisory
+        # token attests the write's SHAPE was reviewed ahead of time, but
+        # no longer counts as proof requested_by specifically can do it
+        # once has_permission itself is known unreliable — a role_verdict
+        # of None (couldn't be locally confirmed either) now refuses
+        # outright, even for a domain-less write with a genuinely fresh,
+        # freshly-verified token. Supersedes this test's old name/premise
+        # ("succeeds despite unreliable precheck via verified token").
         issued_at = int(time.time())
         payload = {"company_name": "DVSISTEMS"}
         token = advisory_write_token("create", "Company", None, payload, "priya@org.com", issued_at)
@@ -364,6 +366,37 @@ class TestGatedMutateResource(unittest.TestCase):
                 patch.object(ec, "_audit_submit", return_value=False), \
                 patch.object(ec, "resource_exists", return_value=True), \
                 patch.object(ec, "check_user_permission") as mocked_perm, \
+                patch.object(ec, "_requester_has_role_permission", return_value=None), \
+                patch.object(ec, "verify_rbac_precheck_reliable",
+                              return_value={"reliable": False, "bot_user": "Administrator",
+                                            "bot_roles": [], "privileged_identity": True,
+                                            "precheck_discriminates": True}), \
+                patch.dict("os.environ", self.QA_ENV, clear=True), \
+                patch.object(ec, "_request", return_value={"data": {"name": "DVSISTEMS"}}) as mocked:
+            with self.assertRaises(ec.UnvalidatedProdRequesterError):
+                ec.gated_mutate_resource("qa", "Company", "create", payload, mode="read-write",
+                                          requested_by="priya@org.com",
+                                          confirmation_token=token, issued_at=issued_at,
+                                          user_confirmation_text=f"confirmed, code {confirmation_code(token)}")
+        mocked.assert_not_called()  # refused before the actual write ever fired
+        mocked_perm.assert_not_called()  # never trust a permission answer we know is meaningless
+
+    def test_succeeds_when_role_verdict_confirms_it_alongside_a_verified_token(self):
+        # The companion case: a verified token PLUS a locally-confirmed
+        # role grant (True) does still succeed — the token proves the
+        # payload wasn't tampered with, the role/DocPerm check proves
+        # requested_by can actually do it; together that's real evidence,
+        # unlike the token alone above.
+        issued_at = int(time.time())
+        payload = {"company_name": "DVSISTEMS"}
+        token = advisory_write_token("create", "Company", None, payload, "priya@org.com", issued_at)
+        with patch.object(ec, "record_comment"), \
+                patch.object(ec, "_audit_insert", return_value=None), \
+                patch.object(ec, "_audit_update", return_value=False), \
+                patch.object(ec, "_audit_submit", return_value=False), \
+                patch.object(ec, "resource_exists", return_value=True), \
+                patch.object(ec, "check_user_permission") as mocked_perm, \
+                patch.object(ec, "_requester_has_role_permission", return_value=True), \
                 patch.object(ec, "verify_rbac_precheck_reliable",
                               return_value={"reliable": False, "bot_user": "Administrator",
                                             "bot_roles": [], "privileged_identity": True,
@@ -607,6 +640,40 @@ class RecordCommentRedactsPiiTests(unittest.TestCase):
         self.assertEqual(payload["content"], "please update, my SSN is [REDACTED-SSN]")
 
 
+class RecordCommentEmailAndByFieldsTests(unittest.TestCase):
+    """Live-confirmed against a real Frappe 16 instance (2026-09-11):
+    frappe.desk.form.utils.add_comment now requires comment_email/
+    comment_by as positional args with no default (worked without them
+    on the Frappe 15 instance this connector was originally built
+    against) — omitting them 500s with a TypeError, and record_comment()
+    swallows that as a silent False (best-effort), so this bug shipped
+    invisibly: every write's attribution Comment silently failed to
+    post."""
+
+    def setUp(self):
+        ec._BOT_IDENTITY_CACHE.clear()
+        self.addCleanup(ec._BOT_IDENTITY_CACHE.clear)
+
+    @patch.object(ec, "_bot_identity", return_value={"user": "dev-erp-hermes@qkeee.in", "roles": []})
+    @patch.object(ec, "_request", return_value={})
+    def test_comment_email_and_by_sent_as_bot_identity(self, mocked_request, mocked_identity):
+        ec.record_comment({"tag": "qa"}, "Item", "ITEM-0001", "created via bot")
+        payload = mocked_request.call_args[1]["payload"]
+        self.assertEqual(payload["comment_email"], "dev-erp-hermes@qkeee.in")
+        self.assertEqual(payload["comment_by"], "dev-erp-hermes@qkeee.in")
+        mocked_identity.assert_called_once_with("qa")
+
+    @patch.object(ec, "_bot_identity", return_value={"user": "", "roles": []})
+    @patch.object(ec, "_request", return_value={})
+    def test_falls_back_to_skill_label_when_bot_identity_unresolved(self, mocked_request, mocked_identity):
+        # An empty string here would just move the TypeError somewhere
+        # else (or a different Frappe-side rejection) -- never send it.
+        ec.record_comment({"tag": "qa"}, "Item", "ITEM-0001", "created via bot")
+        payload = mocked_request.call_args[1]["payload"]
+        self.assertEqual(payload["comment_email"], ec.SKILL_LABEL)
+        self.assertEqual(payload["comment_by"], ec.SKILL_LABEL)
+
+
 class CheckUserPermissionTests(unittest.TestCase):
     @patch.object(ec, "_request", return_value={"message": True})
     @patch.object(ec, "get_env_config", return_value={"tag": "prod"})
@@ -712,6 +779,21 @@ class RbacPrecheckReliabilityTests(unittest.TestCase):
         self.assertFalse(trust["precheck_discriminates"])
         self.assertFalse(trust["reliable"])
 
+    # The four tests below all share one scenario: RBAC precheck is
+    # unreliable AND the local role/DocPerm check can't reach a verdict
+    # either (none of tag-i/i2/i3/i4/j have env configured, so
+    # _requester_has_role_permission()'s own get_user_roles() call fails
+    # fast with a ConnectorError and returns None — see that function's
+    # own tests for the True/False cases). Per the 2026-09-11 decision,
+    # an inconclusive local verdict refuses OUTRIGHT now, uniformly,
+    # regardless of `domain`, `advisory_token_verified`, or read-vs-write
+    # — none of those rescue it anymore. These four used to demonstrate
+    # the opposite (domain-scoped/token-verified/read all proceeding on a
+    # warning) before that decision; kept as four separate cases
+    # specifically to confirm the override truly applies uniformly across
+    # what used to be four differently-treated paths, not just the one
+    # that was already a hard block.
+
     @patch.object(ec, "verify_rbac_precheck_reliable",
                    return_value={"reliable": False, "bot_user": "Administrator",
                                   "bot_roles": [], "privileged_identity": True,
@@ -719,7 +801,7 @@ class RbacPrecheckReliabilityTests(unittest.TestCase):
     @patch.object(ec, "check_user_permission")
     @patch.object(ec, "resource_exists", return_value=True)
     def test_write_refused_when_precheck_unreliable(self, mocked_exists, mocked_perm, mocked_trust):
-        with self.assertRaises(ec.PrivilegedBotAccountError) as ctx:
+        with self.assertRaises(ec.UnvalidatedProdRequesterError) as ctx:
             ec._validate_prod_requester("tag-i", "priya@org.com", "Sales Order", "write", docname="SO-0001")
         self.assertIn("Administrator", str(ctx.exception))
         mocked_perm.assert_not_called()  # never trust a permission answer we know is meaningless
@@ -730,14 +812,16 @@ class RbacPrecheckReliabilityTests(unittest.TestCase):
                                   "precheck_discriminates": True})
     @patch.object(ec, "check_user_permission")
     @patch.object(ec, "resource_exists", return_value=True)
-    def test_domain_scoped_write_proceeds_when_precheck_unreliable(self, mocked_exists, mocked_perm, mocked_trust):
-        # A write with `domain=` set has already cleared mutate_resource()'s
-        # ALLOWED_WRITE_DOCTYPES gate (+ confirmation-token where
-        # registered) before this function ever runs — that's a
-        # design-time-reviewed safety net an unscoped write doesn't have,
-        # so it's allowed to proceed on a warning instead of hard-blocking.
-        ec._validate_prod_requester("tag-i2", "priya@org.com", "Sales Order", "write",
-                                     docname="SO-0001", domain="sales")  # no raise
+    def test_domain_scoped_write_also_refused_when_role_verdict_inconclusive(
+            self, mocked_exists, mocked_perm, mocked_trust):
+        # A `domain=`-scoped write has cleared mutate_resource()'s
+        # ALLOWED_WRITE_DOCTYPES gate before this function ever runs —
+        # that used to be enough to proceed on a warning; per the
+        # 2026-09-11 decision it no longer is, once the local role check
+        # itself can't reach a verdict either.
+        with self.assertRaises(ec.UnvalidatedProdRequesterError):
+            ec._validate_prod_requester("tag-i2", "priya@org.com", "Sales Order", "write",
+                                         docname="SO-0001", domain="sales")
         mocked_perm.assert_not_called()  # still never trust a meaningless permission answer
 
     @patch.object(ec, "verify_rbac_precheck_reliable",
@@ -746,15 +830,15 @@ class RbacPrecheckReliabilityTests(unittest.TestCase):
                                   "precheck_discriminates": True})
     @patch.object(ec, "check_user_permission")
     @patch.object(ec, "resource_exists", return_value=True)
-    def test_advisory_token_verified_write_proceeds_when_precheck_unreliable(
+    def test_advisory_token_verified_write_also_refused_when_role_verdict_inconclusive(
             self, mocked_exists, mocked_perm, mocked_trust):
-        # No `domain` at all (e.g. Company — a doctype no domain's
-        # ALLOWED_WRITE_DOCTYPES claims) but advisory_token_verified=True
-        # (only ever set by gated_mutate_resource() after its own
-        # confirmation_token check already passed) — still a
-        # design-time-reviewed control, so this proceeds too.
-        ec._validate_prod_requester("tag-i3", "priya@org.com", "Company", "write",
-                                     advisory_token_verified=True)  # no raise
+        # advisory_token_verified=True (only ever set by
+        # gated_mutate_resource() after its own confirmation_token check
+        # already passed) used to be its own sufficient fallback here too
+        # — same 2026-09-11 change applies: it isn't anymore.
+        with self.assertRaises(ec.UnvalidatedProdRequesterError):
+            ec._validate_prod_requester("tag-i3", "priya@org.com", "Company", "write",
+                                         advisory_token_verified=True)
         mocked_perm.assert_not_called()
 
     @patch.object(ec, "verify_rbac_precheck_reliable",
@@ -765,8 +849,10 @@ class RbacPrecheckReliabilityTests(unittest.TestCase):
     @patch.object(ec, "resource_exists", return_value=True)
     def test_neither_domain_nor_advisory_token_still_refused(self, mocked_exists, mocked_perm, mocked_trust):
         # Belt-and-suspenders: explicit domain=None, advisory_token_verified=False
-        # (the true "nothing reviewed this" case) is still a hard block.
-        with self.assertRaises(ec.PrivilegedBotAccountError):
+        # (the true "nothing reviewed this" case) is still a hard block —
+        # same outcome as the two tests above, different (already-hard-
+        # blocked) starting point.
+        with self.assertRaises(ec.UnvalidatedProdRequesterError):
             ec._validate_prod_requester("tag-i4", "priya@org.com", "Company", "write",
                                          domain=None, advisory_token_verified=False)
         mocked_perm.assert_not_called()
@@ -777,23 +863,30 @@ class RbacPrecheckReliabilityTests(unittest.TestCase):
                                   "precheck_discriminates": True})
     @patch.object(ec, "check_user_permission")
     @patch.object(ec, "resource_exists", return_value=True)
-    def test_read_warns_but_does_not_raise_when_precheck_unreliable(self, mocked_exists, mocked_perm, mocked_trust):
-        ec._validate_prod_requester("tag-j", "priya@org.com", "Sales Order", "read")  # no raise
+    def test_read_also_refused_when_role_verdict_inconclusive(self, mocked_exists, mocked_perm, mocked_trust):
+        # Reads get the exact same treatment as writes now — a read used
+        # to warn-and-proceed unconditionally once precheck was unreliable;
+        # per the 2026-09-11 decision it refuses too when the local check
+        # can't reach a verdict, uniformly with every write case above.
+        with self.assertRaises(ec.UnvalidatedProdRequesterError):
+            ec._validate_prod_requester("tag-j", "priya@org.com", "Sales Order", "read")
         mocked_perm.assert_not_called()
 
     @patch.object(ec, "verify_rbac_precheck_reliable",
                    return_value={"reliable": False, "bot_user": "Administrator",
                                   "bot_roles": [], "privileged_identity": True,
                                   "precheck_discriminates": True})
+    @patch.object(ec, "_requester_has_role_permission", return_value=None)
     @patch.object(ec, "check_user_permission")
     @patch.object(ec, "resource_exists", return_value=True)
-    def test_mutate_resource_refuses_write_when_precheck_unreliable(self, mocked_exists, mocked_perm, mocked_trust):
+    def test_mutate_resource_refuses_write_when_precheck_unreliable(
+            self, mocked_exists, mocked_perm, mocked_role_verdict, mocked_trust):
         with patch.dict("os.environ", {
             "QKEEE_ERP_TAGK_BASE_URL": "https://example.com",
             "QKEEE_ERP_TAGK_API_KEY": "key",
             "QKEEE_ERP_TAGK_API_SECRET": "secret",
         }, clear=True):
-            with self.assertRaises(ec.PrivilegedBotAccountError):
+            with self.assertRaises(ec.UnvalidatedProdRequesterError):
                 ec.mutate_resource("tagk", "Sales Order", "create", payload={"x": 1},
                                     mode="read-write", requested_by="priya@org.com")
 
@@ -801,17 +894,17 @@ class RbacPrecheckReliabilityTests(unittest.TestCase):
                    return_value={"reliable": False, "bot_user": "Administrator",
                                   "bot_roles": [], "privileged_identity": True,
                                   "precheck_discriminates": True})
+    @patch.object(ec, "_requester_has_role_permission", return_value=None)
     @patch.object(ec, "check_user_permission")
     @patch.object(ec, "resource_exists", return_value=True)
-    @patch.object(ec, "record_comment")
-    @patch.object(ec, "_audit_insert", return_value=None)
-    def test_mutate_resource_proceeds_for_domain_scoped_write_when_precheck_unreliable(
-            self, mocked_audit_insert, mocked_comment, mocked_exists, mocked_perm, mocked_trust):
-        # Same broken-precheck scenario as test_mutate_resource_refuses_write_when_precheck_unreliable
-        # above, but with `domain=` set to an allowlisted, registered domain
-        # — mutate_resource()'s own ALLOWED_WRITE_DOCTYPES gate has already
-        # reviewed this doctype into scope, so the write proceeds on that
-        # (+ a warning) instead of hard-blocking like the unscoped case.
+    def test_mutate_resource_also_refuses_domain_scoped_write_when_role_verdict_inconclusive(
+            self, mocked_exists, mocked_perm, mocked_role_verdict, mocked_trust):
+        # Same broken-precheck scenario as
+        # test_mutate_resource_refuses_write_when_precheck_unreliable
+        # above, but with `domain=` set to an allowlisted, registered
+        # domain — used to proceed on that allowlist alone (+ a warning);
+        # per the 2026-09-11 decision it no longer does once the local
+        # role/DocPerm check itself can't reach a verdict either.
         fake_domain = "test_fake_domain_kk"
         ec.register_domain_allowlist(fake_domain, ("Sales Order",))
         self.addCleanup(ec.DOMAIN_WRITE_ALLOWLISTS.pop, fake_domain, None)
@@ -819,11 +912,39 @@ class RbacPrecheckReliabilityTests(unittest.TestCase):
             "QKEEE_ERP_TAGKK_BASE_URL": "https://example.com",
             "QKEEE_ERP_TAGKK_API_KEY": "key",
             "QKEEE_ERP_TAGKK_API_SECRET": "secret",
+        }, clear=True):
+            with self.assertRaises(ec.UnvalidatedProdRequesterError):
+                ec.mutate_resource("tagkk", "Sales Order", "create", payload={"x": 1},
+                                    mode="read-write", requested_by="priya@org.com", domain=fake_domain)
+        mocked_perm.assert_not_called()
+
+    @patch.object(ec, "verify_rbac_precheck_reliable",
+                   return_value={"reliable": False, "bot_user": "Administrator",
+                                  "bot_roles": [], "privileged_identity": True,
+                                  "precheck_discriminates": True})
+    @patch.object(ec, "_requester_has_role_permission", return_value=True)
+    @patch.object(ec, "check_user_permission")
+    @patch.object(ec, "resource_exists", return_value=True)
+    @patch.object(ec, "record_comment")
+    @patch.object(ec, "_audit_insert", return_value=None)
+    def test_mutate_resource_proceeds_for_domain_scoped_write_when_role_verdict_confirms_it(
+            self, mocked_audit_insert, mocked_comment, mocked_exists, mocked_perm,
+            mocked_role_verdict, mocked_trust):
+        # The success companion: same broken-precheck, same domain-scoped
+        # write, but the local role/DocPerm check DOES reach a positive
+        # verdict this time — that's real evidence, so it proceeds.
+        fake_domain = "test_fake_domain_kk2"
+        ec.register_domain_allowlist(fake_domain, ("Sales Order",))
+        self.addCleanup(ec.DOMAIN_WRITE_ALLOWLISTS.pop, fake_domain, None)
+        with patch.dict("os.environ", {
+            "QKEEE_ERP_TAGKK2_BASE_URL": "https://example.com",
+            "QKEEE_ERP_TAGKK2_API_KEY": "key",
+            "QKEEE_ERP_TAGKK2_API_SECRET": "secret",
         }, clear=True), \
                 patch.object(ec, "_do_mutate", return_value={"data": {"name": "SO-0001"}}), \
                 patch.object(ec, "record_audit_log_start", return_value="AUDITLOG-0002"), \
                 patch.object(ec, "record_audit_log_finish"):
-            ec.mutate_resource("tagkk", "Sales Order", "create", payload={"x": 1},
+            ec.mutate_resource("tagkk2", "Sales Order", "create", payload={"x": 1},
                                 mode="read-write", requested_by="priya@org.com", domain=fake_domain)  # no raise
         mocked_perm.assert_not_called()
 
@@ -845,6 +966,168 @@ class RbacPrecheckReliabilityTests(unittest.TestCase):
             result = ec.health_check("tag-m")
         self.assertFalse(result["rbac_precheck_reliable"])
         self.assertIn("rbac_precheck_warning", result)
+
+
+class RequesterRoleFallbackTests(unittest.TestCase):
+    """F7 reinforcement: _requester_has_role_permission()/
+    _fetch_doctype_role_permissions() — the local, RPC-independent
+    corroborating check consulted from _validate_prod_requester() only
+    when verify_rbac_precheck_reliable() already says the has_permission
+    RPC can't be trusted. See _requester_has_role_permission()'s own
+    docstring for what this can and can't see."""
+
+    def setUp(self):
+        ec._DOCTYPE_PERMISSIONS_CACHE.clear()
+        self.addCleanup(ec._DOCTYPE_PERMISSIONS_CACHE.clear)
+
+    @patch.object(ec, "get_resource")
+    def test_fetch_permissions_filters_to_permlevel_zero(self, mocked_get):
+        mocked_get.return_value = {"data": {"permissions": [
+            {"role": "Accounts User", "read": 1, "write": 1, "permlevel": 0},
+            {"role": "Accounts Manager", "write": 1, "permlevel": 1},  # field-level, excluded
+        ]}}
+        rows, err = ec._fetch_doctype_role_permissions("tag-n", "Sales Invoice")
+        self.assertIsNone(err)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["role"], "Accounts User")
+
+    @patch.object(ec, "get_resource", side_effect=ec.ConnectorError("ERPNext API error (403)"))
+    def test_fetch_permissions_failure_is_cached_not_retried(self, mocked_get):
+        rows1, err1 = ec._fetch_doctype_role_permissions("tag-o", "Sales Invoice")
+        rows2, err2 = ec._fetch_doctype_role_permissions("tag-o", "Sales Invoice")
+        self.assertIsNone(rows1)
+        self.assertIn("403", err1)
+        self.assertIsNone(rows2)
+        mocked_get.assert_called_once()
+
+    @patch.object(ec, "_fetch_doctype_role_permissions",
+                   return_value=([{"role": "Sales User", "write": 1, "permlevel": 0}], None))
+    @patch.object(ec, "get_user_roles", return_value={"user": "priya@org.com", "roles": ["Sales User"]})
+    def test_matching_unconditional_role_grant_is_true(self, mocked_roles, mocked_perms):
+        self.assertTrue(ec._requester_has_role_permission("tag-p", "Quotation", "write", "priya@org.com"))
+
+    @patch.object(ec, "_fetch_doctype_role_permissions",
+                   return_value=([{"role": "Sales User", "write": 1, "permlevel": 0}], None))
+    @patch.object(ec, "get_user_roles", return_value={"user": "priya@org.com", "roles": ["HR User"]})
+    def test_no_matching_role_is_false(self, mocked_roles, mocked_perms):
+        self.assertFalse(ec._requester_has_role_permission("tag-q", "Quotation", "write", "priya@org.com"))
+
+    @patch.object(ec, "_fetch_doctype_role_permissions",
+                   return_value=([{"role": "Sales User", "read": 1, "permlevel": 0}], None))
+    @patch.object(ec, "get_user_roles", return_value={"user": "priya@org.com", "roles": ["Sales User"]})
+    def test_role_matches_but_wrong_perm_type_is_false(self, mocked_roles, mocked_perms):
+        # Holds "Sales User", which can read Quotation, but this asks about write.
+        self.assertFalse(ec._requester_has_role_permission("tag-r", "Quotation", "write", "priya@org.com"))
+
+    @patch.object(ec, "_fetch_doctype_role_permissions",
+                   return_value=([{"role": "Sales User", "write": 1, "permlevel": 0, "if_owner": 1}], None))
+    @patch.object(ec, "get_user_roles", return_value={"user": "priya@org.com", "roles": ["Sales User"]})
+    def test_if_owner_only_match_never_counts_as_true(self, mocked_roles, mocked_perms):
+        # Ownership can't be cheaply verified here (and is meaningless for
+        # create) -- an if_owner-only row must not be treated as a grant.
+        self.assertFalse(ec._requester_has_role_permission("tag-s", "Quotation", "write", "priya@org.com"))
+
+    @patch.object(ec, "get_user_roles", side_effect=ec.ConnectorError("unreachable"))
+    def test_requester_role_fetch_failure_is_inconclusive(self, mocked_roles):
+        self.assertIsNone(ec._requester_has_role_permission("tag-t", "Quotation", "write", "priya@org.com"))
+
+    @patch.object(ec, "get_user_roles", return_value={"user": "priya@org.com", "roles": []})
+    def test_empty_requester_roles_is_inconclusive_not_false(self, mocked_roles):
+        # get_user_roles()'s own docstring: empty could mean "genuinely no
+        # role" or "the lookup came back thin" -- never treated as a verdict.
+        self.assertIsNone(ec._requester_has_role_permission("tag-u", "Quotation", "write", "priya@org.com"))
+
+    @patch.object(ec, "_fetch_doctype_role_permissions", return_value=(None, "ERPNext API error (403)"))
+    @patch.object(ec, "get_user_roles", return_value={"user": "priya@org.com", "roles": ["Sales User"]})
+    def test_doctype_permission_fetch_failure_is_inconclusive(self, mocked_roles, mocked_perms):
+        # Same F7/F8-acknowledged constraint as schema-mapping: a
+        # correctly least-privileged bot can lack System-Manager-level
+        # DocType read too -- degrades to "couldn't check," not a verdict.
+        self.assertIsNone(ec._requester_has_role_permission("tag-v", "Quotation", "write", "priya@org.com"))
+
+
+class RequesterRoleFallbackWiringTests(unittest.TestCase):
+    """_validate_prod_requester()'s own consumption of the above. Per the
+    2026-09-11 decision: only `True` (a locally-confirmed grant) lets a
+    call through — `False` (a confirmed non-grant) and `None`
+    (inconclusive: the local check itself couldn't complete) both refuse
+    outright now, regardless of `domain`/`advisory_token_verified`/
+    read-vs-write. A `domain` allowlist or a verified advisory token no
+    longer rescues either case — they attest a write's shape was
+    reviewed, never that requested_by specifically can do it."""
+
+    def setUp(self):
+        ec._PRECHECK_WARNED_TAGS.clear()
+        self.addCleanup(ec._PRECHECK_WARNED_TAGS.clear)
+
+    _UNRELIABLE = {"reliable": False, "bot_user": "Administrator", "bot_roles": [],
+                   "privileged_identity": True, "precheck_discriminates": True}
+
+    @patch.object(ec, "_requester_has_role_permission", return_value=False)
+    @patch.object(ec, "verify_rbac_precheck_reliable", return_value=_UNRELIABLE)
+    @patch.object(ec, "check_user_permission")
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_false_verdict_refuses_even_a_domain_scoped_write(
+            self, mocked_exists, mocked_perm, mocked_trust, mocked_role_verdict):
+        with self.assertRaises(ec.UnvalidatedProdRequesterError) as ctx:
+            ec._validate_prod_requester("tag-w", "priya@org.com", "Sales Order", "write",
+                                         docname="SO-0001", domain="sales")
+        self.assertIn("holds no role", str(ctx.exception))
+        mocked_perm.assert_not_called()
+
+    @patch.object(ec, "_requester_has_role_permission", return_value=False)
+    @patch.object(ec, "verify_rbac_precheck_reliable", return_value=_UNRELIABLE)
+    @patch.object(ec, "check_user_permission")
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_false_verdict_refuses_even_an_advisory_token_verified_write(
+            self, mocked_exists, mocked_perm, mocked_trust, mocked_role_verdict):
+        with self.assertRaises(ec.UnvalidatedProdRequesterError):
+            ec._validate_prod_requester("tag-x", "priya@org.com", "Company", "write",
+                                         advisory_token_verified=True)
+
+    @patch.object(ec, "_requester_has_role_permission", return_value=False)
+    @patch.object(ec, "verify_rbac_precheck_reliable", return_value=_UNRELIABLE)
+    @patch.object(ec, "check_user_permission")
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_false_verdict_refuses_a_read_too(
+            self, mocked_exists, mocked_perm, mocked_trust, mocked_role_verdict):
+        with self.assertRaises(ec.UnvalidatedProdRequesterError):
+            ec._validate_prod_requester("tag-y", "priya@org.com", "Sales Order", "read")
+
+    @patch.object(ec, "_requester_has_role_permission", return_value=True)
+    @patch.object(ec, "verify_rbac_precheck_reliable", return_value=_UNRELIABLE)
+    @patch.object(ec, "check_user_permission")
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_true_verdict_proceeds_with_no_domain_and_no_token(
+            self, mocked_exists, mocked_perm, mocked_trust, mocked_role_verdict):
+        # The whole point: a locally-confirmed role grant is itself
+        # sufficient, even for an unscoped write that would otherwise be
+        # PrivilegedBotAccountError'd outright.
+        ec._validate_prod_requester("tag-z", "priya@org.com", "Company", "write")  # no raise
+        mocked_perm.assert_not_called()
+
+    @patch.object(ec, "_requester_has_role_permission", return_value=None)
+    @patch.object(ec, "verify_rbac_precheck_reliable", return_value=_UNRELIABLE)
+    @patch.object(ec, "check_user_permission")
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_none_verdict_refuses_an_unscoped_write(
+            self, mocked_exists, mocked_perm, mocked_trust, mocked_role_verdict):
+        with self.assertRaises(ec.UnvalidatedProdRequesterError):
+            ec._validate_prod_requester("tag-z2", "priya@org.com", "Company", "write")
+
+    @patch.object(ec, "_requester_has_role_permission", return_value=None)
+    @patch.object(ec, "verify_rbac_precheck_reliable", return_value=_UNRELIABLE)
+    @patch.object(ec, "check_user_permission")
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_none_verdict_also_refuses_a_domain_scoped_write(
+            self, mocked_exists, mocked_perm, mocked_trust, mocked_role_verdict):
+        # Per the 2026-09-11 decision, a `domain` allowlist no longer
+        # rescues an inconclusive local verdict either -- same refusal as
+        # the unscoped case above, despite this write having cleared the
+        # allowlist gate.
+        with self.assertRaises(ec.UnvalidatedProdRequesterError):
+            ec._validate_prod_requester("tag-z3", "priya@org.com", "Sales Order", "write",
+                                         docname="SO-0001", domain="sales")
 
 
 class ProdGateWiringTests(unittest.TestCase):

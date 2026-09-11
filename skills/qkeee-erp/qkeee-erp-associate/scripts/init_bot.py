@@ -27,8 +27,9 @@ Administrator or hold System Manager once it's created and switched to.**
 Live-confirmed: under a privileged bot identity, ERPNext's
 frappe.client.has_permission doesn't reliably discriminate by the `user=`
 param it's given, which makes core.client's RBAC pre-check
-(_validate_prod_requester()) a no-op — see core/client.py's
-verify_rbac_precheck_reliable() / PrivilegedBotAccountError. This script
+(_validate_prod_requester()) fall back to a local, RPC-independent role/
+DocPerm check instead (F7) — see core/client.py's
+verify_rbac_precheck_reliable() / _requester_has_role_permission(). This script
 runs under a DIFFERENT (elevated) identity than that steady-state account
 and has no way to provision or verify the steady-state account's own key
 directly (no --bot-email path exists here yet). Once that account's
@@ -261,8 +262,11 @@ def run_real(tag: str, requested_by: str, confirm_token: str, issued_at: int) ->
         "and does NOT hold System Manager.\n"
         "  2. Run `python core/client.py --tag " + tag + " health` under THOSE "
         "credentials and confirm the output's rbac_precheck_reliable is true. "
-        "If it's false, every write on this tag will be refused "
-        "(PrivilegedBotAccountError) until the bot account's roles are fixed."
+        "If it's false, most writes on this tag will now be refused outright "
+        "(UnvalidatedProdRequesterError) unless the requester's own live roles "
+        "happen to positively confirm the exact permission needed — see F7's "
+        "_requester_has_role_permission() reinforcement in core/client.py — "
+        "until the bot account's roles are fixed."
     )
     return summary
 

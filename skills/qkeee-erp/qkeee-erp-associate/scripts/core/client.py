@@ -70,21 +70,24 @@ origin; the check itself is now universal).
 Known limitation, confirmed live and structural (not instance-specific —
 `frappe.client.has_permission` has no `user=` parameter in stock Frappe at
 all; it always answers for the calling session, never a named other user):
-per-requester permission can't actually be verified this way. When
-`verify_rbac_precheck_reliable()` detects this, a write proceeds anyway
-(on a warning, not silently) if it has EITHER of two design-time-reviewed
-controls ahead of it: a `domain=` allowlist (doctype already reviewed into
-that domain's ALLOWED_WRITE_DOCTYPES, +confirmation-token where
-registered), or a verified advisory-draft token
-(`advisory_token_verified=True`, set only by gated_mutate_resource() after
-its own unconditional confirmation_token check already passed — covers a
-doctype no domain owns, e.g. Company). Either way the theory is the same:
-the allowlist/token-gate/draft-confirm flow + mandatory human
-review-before-submit are themselves a sufficient reviewed safety net, even
-when this specific per-requester check can't run. A write with NEITHER
-control is still refused outright (`PrivilegedBotAccountError`) — this
-does not verify the requester actually holds the permission in either
-case, only that the call sits inside a reviewed capability boundary.
+per-requester permission can't actually be verified via that RPC this way.
+
+**2026-09-11 reinforcement (F7):** when `verify_rbac_precheck_reliable()`
+detects this, `_validate_prod_requester()` no longer leans on a `domain=`
+allowlist or a verified advisory-draft token to let the write through —
+`_requester_has_role_permission()` asks the same question a different
+way instead: locally, from the requester's own live role list and the
+doctype's own live DocPerm rows, never through the broken RPC. Only a
+positively-confirmed grant proceeds; an inconclusive or negative local
+verdict refuses outright (`UnvalidatedProdRequesterError`), REGARDLESS of
+`domain`/`advisory_token_verified` status — those still attest a write's
+*shape* was reviewed ahead of time, they just no longer get treated as
+proof `requested_by` specifically can do it, once the one RPC that would
+otherwise confirm that is already known unreliable. See
+`_requester_has_role_permission()`'s own docstring for what this local
+check can and can't see (User Permissions and `if_owner` scoping are
+invisible to it), and `_validate_prod_requester()`'s docstring for the
+full decision tree.
 
 Write-allowlist gate: domain modules under `scripts/domains/*.py` each
 declare an ALLOWED_WRITE_DOCTYPES tuple and register it via
@@ -341,15 +344,25 @@ class DoctypeNotAllowedError(ConnectorError):
 
 
 class PrivilegedBotAccountError(ConnectorError):
-    """Raised when a write is attempted while this connector's OWN
-    authenticated bot identity (not requested_by) is Administrator or holds
-    a role in _BOT_FORBIDDEN_ROLES, or when a live probe shows ERPNext's
-    frappe.client.has_permission doesn't actually discriminate by the
-    `user=` param on this instance. Either way, _validate_prod_requester()'s
-    RBAC pre-check would silently rubber-stamp any requested_by rather than
-    checking it — see verify_rbac_precheck_reliable() below. Provision a
-    genuinely narrow-role dedicated bot account instead (see init_bot.py /
-    00-conventions.md's bot-account requirement)."""
+    """Historical: was raised when a write was attempted while this
+    connector's OWN authenticated bot identity (not requested_by) is
+    Administrator or holds a role in _BOT_FORBIDDEN_ROLES, or when a live
+    probe shows ERPNext's frappe.client.has_permission doesn't actually
+    discriminate by the `user=` param on this instance — see
+    verify_rbac_precheck_reliable() below, which still detects and warns
+    on exactly this condition.
+
+    No longer raised anywhere as of the 2026-09-11 F7 reinforcement:
+    _validate_prod_requester() now refuses via UnvalidatedProdRequesterError
+    in this situation instead (whether the local role/DocPerm fallback
+    check — see _requester_has_role_permission() — comes back with a
+    confirmed non-grant or couldn't be completed at all), since the
+    underlying problem is the same either way ("requested_by's real
+    permission can't be trusted") and deserves one exception type, not
+    two. Kept defined, not raised, in case anything outside this module
+    still catches it specifically. Provision a genuinely narrow-role
+    dedicated bot account instead (see init_bot.py / 00-conventions.md's
+    bot-account requirement)."""
 
 
 def _tag_env_var(tag: str, suffix: str) -> str:
@@ -543,11 +556,12 @@ def verify_rbac_precheck_reliable(tag: str) -> dict:
     check_user_permission()) can actually be trusted right now — combines
     the static identity check (bot account isn't Administrator or
     System Manager) with the live discrimination probe above. Never raises
-    on its own; callers decide what to do with an unreliable result
-    (_validate_prod_requester() fails closed only on an unscoped write —
-    no `domain` allowlist to fall back on — and proceeds-with-warning on
-    a domain-scoped write; health_check() just surfaces it as a warning).
-    Called from `hermes qkeee-erp health`
+    on its own; callers decide what to do with an unreliable result —
+    _validate_prod_requester() falls back to a local, RPC-independent
+    role/DocPerm check instead (F7) and requires a positively-confirmed
+    grant to proceed, regardless of `domain`/advisory-token status (see
+    that function's own docstring); health_check() just surfaces it as a
+    warning. Called from `hermes qkeee-erp health`
     and internally before every write — safe to call repeatedly, both
     underlying checks are cached per tag."""
     identity = _bot_identity(tag)
@@ -564,6 +578,103 @@ def verify_rbac_precheck_reliable(tag: str) -> dict:
     }
 
 
+# Per-(tag, doctype) cache for _fetch_doctype_role_permissions() below —
+# mirrors _BOT_IDENTITY_CACHE's shape: a cached failure (tuple sentinel)
+# is stored too, so a doctype this bot can't read DocType-level metadata
+# for doesn't retry that fetch on every subsequent read/write in the same
+# process. DocType metadata doesn't change mid-process.
+_DOCTYPE_PERMISSIONS_CACHE: dict = {}
+
+# DocPerm child-table keys kept — mirrors discover.py's _META_FIELD_KEYS
+# filter, just for the `permissions` table instead of `fields`.
+_PERM_FIELD_KEYS = {"role", "permlevel", "read", "write", "create",
+                     "submit", "cancel", "delete", "if_owner"}
+
+
+def _fetch_doctype_role_permissions(tag: str, doctype: str):
+    """Live DocPerm rows (permlevel 0 only — see _requester_has_role_
+    permission()'s docstring for why) for `doctype`, fetched directly via
+    get_resource() rather than through discover.py: discover.py already
+    imports FROM this module, so this module importing discover.py back
+    would be circular. Returns `(rows_or_None, error_message_or_None)`,
+    cached per (tag, doctype) including a cached failure — same shape and
+    reasoning as schema_mapping.py's get_doctype_schema()."""
+    cache_key = (tag, doctype)
+    if cache_key not in _DOCTYPE_PERMISSIONS_CACHE:
+        try:
+            result = get_resource(tag, "DocType", doctype, requested_by="")
+            doc = result.get("data") or {}
+            rows = [
+                {k: p.get(k) for k in _PERM_FIELD_KEYS if k in p}
+                for p in doc.get("permissions", [])
+                if not p.get("permlevel")
+            ]
+            _DOCTYPE_PERMISSIONS_CACHE[cache_key] = rows
+        except ConnectorError as e:
+            _DOCTYPE_PERMISSIONS_CACHE[cache_key] = ("__error__", str(e))
+    cached = _DOCTYPE_PERMISSIONS_CACHE[cache_key]
+    if isinstance(cached, tuple) and cached and cached[0] == "__error__":
+        return None, cached[1]
+    return cached, None
+
+
+def _requester_has_role_permission(tag: str, doctype: str, perm_type: str, requested_by: str):
+    """Independent corroborating signal for whether `requested_by` holds
+    `perm_type` on `doctype`, computed LOCALLY from two plain doc reads —
+    the requester's own assigned roles (`get_user_roles()`) and the
+    doctype's own live DocPerm rows (`_fetch_doctype_role_permissions()`
+    above) — instead of trusting `frappe.client.has_permission`'s `user=`
+    param, which `verify_rbac_precheck_reliable()` has already confirmed
+    doesn't reliably discriminate under a privileged bot identity (F7).
+    Only ever consulted from `_validate_prod_requester()` when that RPC
+    is already known unreliable — see the call site for why this isn't
+    run unconditionally (a reliable `has_permission` already gives the
+    authoritative, fully-Frappe-native answer; this is a narrower
+    approximation, not a strictly better check).
+
+    Returns `True`/`False` when both reads succeed and a verdict can
+    actually be reached; `None` when either read fails — e.g. this bot
+    ALSO lacks the System-Manager-level DocType read F7/F8 already flag
+    as a real gap on a correctly least-privileged bot — or when
+    `get_user_roles()`'s own result is empty (its own docstring: an empty
+    roles list is ambiguous, never a confirmed "holds nothing"). Callers
+    must treat `None` as "couldn't check," never as either verdict.
+
+    Known, deliberate limitations — a corroborating signal, not a
+    reimplementation of Frappe's permission engine:
+    - **User Permissions** (a per-record Link-based restriction, e.g.
+      "only this user's own territory/company") are invisible here — a
+      role can look unconditionally permitted at the DocPerm level while
+      a User Permission still narrows it further, server-side, in ways
+      this function can't see.
+    - **`if_owner`-scoped DocPerm rows are never counted toward `True`.**
+      Ownership can't be cheaply verified without an extra fetch of the
+      specific record (and is meaningless for `create`, which has no
+      owner yet) — an if_owner-only match is treated as inconclusive
+      (falls through to `False` here only if no OTHER, unconditional row
+      matches; never silently upgraded to a confirmed grant)."""
+    try:
+        roles_result = get_user_roles(tag, requested_by)
+    except ConnectorError:
+        return None
+    requester_roles = set(roles_result.get("roles") or [])
+    if not requester_roles:
+        return None
+
+    perm_rows, _fetch_error = _fetch_doctype_role_permissions(tag, doctype)
+    if perm_rows is None:
+        return None
+
+    for row in perm_rows:
+        if row.get("role") not in requester_roles:
+            continue
+        if row.get("if_owner"):
+            continue
+        if row.get(perm_type):
+            return True
+    return False
+
+
 def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_type: str,
                               docname: str = None, *, domain: str = None,
                               advisory_token_verified: bool = False) -> None:
@@ -571,22 +682,19 @@ def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_typ
     (Name reflects a narrower PROD-only origin; the check itself is
     universal.)
 
-    `domain`/`advisory_token_verified`: only consulted when the RBAC
-    pre-check is unreliable (see below) — together they decide whether an
-    un-verifiable write still has *some* design-time-reviewed safety net
-    to fall back on. `domain` is the calling domain module's name (as
-    passed to mutate_resource(..., domain=...)) — None for a read call or
-    for gated_mutate_resource()'s domain-less path.
-    `advisory_token_verified` is True only when mutate_resource() is being
-    called from INSIDE gated_mutate_resource(), after that function's own
-    unconditional confirmation_token/issued_at verification already
-    passed — never a caller-settable flag otherwise (not exposed on any
-    domain mutate() wrapper or the CLI). Covers a write on a doctype no
-    domain owns (e.g. Company, a cross-cutting master no single domain's
-    ALLOWED_WRITE_DOCTYPES claims) that still went through the mandatory
-    advisory-first draft-then-confirm flow — that flow IS the
-    design-time-reviewed control for exactly this "doctype not known in
-    advance" case, same spirit as a domain's allowlist.
+    `domain`/`advisory_token_verified` are still accepted (mutate_resource()/
+    gated_mutate_resource() still thread them through — the allowlist and
+    advisory-token-confirm checks that produce them remain real, valuable,
+    INDEPENDENT controls at their own gates: allowlist scopes which
+    doctypes a domain may touch at all, advisory-token-confirm proves a
+    payload matches what was actually shown to and confirmed by a human)
+    but, per an explicit 2026-09-11 decision, NEITHER rescues an
+    unreliable-RBAC-precheck write on its own anymore — see the "not
+    reliable" branch below. They attest a write's SHAPE was reviewed
+    ahead of time; neither one confirms `requested_by` specifically can
+    do it, and once `frappe.client.has_permission` itself can't be
+    trusted, that distinction stopped being good enough to rescue this
+    gate by itself.
 
     No-op for any doctype in PROD_GATE_EXEMPT_DOCTYPES, on every tag.
     Otherwise:
@@ -595,12 +703,16 @@ def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_typ
       There is no env-var or config default to fall back to (removed —
       see the module docstring); a caller must resolve the live inbound
       channel identity and pass it explicitly on every call.
-    - Whenever `requested_by` is present it is validated: (1) a real
-      ERPNext User (resource_exists check), and (2) actually holds
-      `perm_type` on `doctype`/`docname` per ERPNext's own permission
-      check (check_user_permission()). Every supplied requester gets
-      checked, on every tag, so a bogus/unauthorized requester is never
-      silently accepted.
+    - Whenever `requested_by` is present it is validated as a real
+      ERPNext User (resource_exists check), then checked for `perm_type`
+      on `doctype`/`docname` — via ERPNext's own `has_permission` RPC
+      when `verify_rbac_precheck_reliable()` says that RPC can be
+      trusted; otherwise via `_requester_has_role_permission()`'s local,
+      RPC-independent role/DocPerm check instead (F7) — see that
+      function's own docstring, and the "not reliable" branch below, for
+      exactly what changed and why. Every supplied requester gets
+      checked, on every tag, one way or the other — a bogus/unauthorized/
+      unverifiable requester is never silently accepted.
 
     Raises UnvalidatedProdRequesterError on any failure — fails closed,
     never proceeds unverified. Called from query_resource()/get_resource()/
@@ -632,49 +744,72 @@ def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_typ
                 f"WARN: RBAC pre-check is NOT reliable on tag '{tag}' — bot identity "
                 f"{trust['bot_user']!r} is privileged ({trust['privileged_identity']}) "
                 f"and/or the live has_permission probe didn't discriminate a bogus user "
-                f"({not trust['precheck_discriminates']}). Per-requester permission "
-                f"can no longer be individually verified on this tag. A domain-scoped "
-                f"write (allowlisted doctype, +confirmation-token where registered) or "
-                f"a gated_mutate_resource() write (confirmation_token verified against a "
-                f"rendered advisory draft) is allowed to proceed on that reviewed control "
-                f"+ mandatory review-before-submit as the safety net instead; a write with "
-                f"NEITHER a `domain` allowlist NOR a verified advisory token has no such "
-                f"fallback and is still refused outright. Provision a narrow-role dedicated "
-                f"bot account and re-run health() to clear this properly.",
+                f"({not trust['precheck_discriminates']}). Per-requester permission is now "
+                f"verified locally instead (role list + doctype DocPerm rows, F7) — a "
+                f"confirmed grant is required to proceed; a `domain` allowlist or a verified "
+                f"advisory token no longer rescues this on their own (2026-09-11 decision — "
+                f"see _requester_has_role_permission()'s docstring). Provision a narrow-role "
+                f"dedicated bot account and re-run health() to restore the has_permission RPC "
+                f"itself instead of depending on this fallback.",
                 file=sys.stderr,
             )
-        if perm_type != "read":
-            if domain is None and not advisory_token_verified:
-                raise PrivilegedBotAccountError(
-                    f"Refusing {perm_type} on '{doctype}' for tag '{tag}': this connector's "
-                    f"own bot identity ({trust['bot_user']!r}) is privileged, or ERPNext's "
-                    f"has_permission RPC doesn't discriminate by user= on this instance — "
-                    f"either way requester '{requested_by}''s permission for this write can't "
-                    f"be verified, and this call has neither a `domain` allowlist nor a "
-                    f"verified advisory-draft token to fall back on (unreviewed write path — "
-                    f"route it through a domain module's mutate() or through "
-                    f"gated_mutate_resource() with a real rendered draft instead). Provision a "
-                    f"narrow-role dedicated bot account (see init_bot.py / 00-conventions.md), "
-                    f"confirm health() reports rbac_precheck_reliable=true, then retry."
-                )
-            # Either domain-scoped (mutate_resource() already enforced
-            # DOMAIN_WRITE_ALLOWLISTS[domain] and, where registered via
-            # register_domain_token_gate(), the confirmation-token gate)
-            # or advisory-token-verified (gated_mutate_resource() already
-            # verified a fresh confirmation_token against a rendered
-            # draft, unconditionally, before ever calling here) — either
-            # way this call has a design-time-reviewed control ahead of
-            # it, so it proceeds rather than hard-blocking every write on
-            # this tag. This does NOT verify requester 'requested_by'
-            # actually holds 'perm_type' in ERPNext — only that the call
-            # is inside a reviewed capability boundary. See profile.md's
-            # mandatory review-before-submit step for the remaining human
-            # check on anything docstatus-bearing.
+        # F7 reinforcement: has_permission's user= param is known
+        # unreliable here, so ask the same question a different way —
+        # locally, from the requester's own live role list and the
+        # doctype's own live DocPerm rows (never through the broken RPC).
+        # Per explicit 2026-09-11 decision: ONLY a locally-CONFIRMED grant
+        # (True) proceeds. A `domain` allowlist or a verified advisory
+        # token attests this write's shape was reviewed ahead of time —
+        # neither confirms requested_by specifically can do it, so
+        # neither rescues an inconclusive (None) or negative (False)
+        # local verdict anymore; both fail closed the same way. Applies
+        # uniformly to read and write — see _requester_has_role_
+        # permission()'s own docstring for exactly what this can and
+        # can't see.
+        role_verdict = _requester_has_role_permission(tag, doctype, perm_type, requested_by)
+        if role_verdict is True:
             return
-        # Read: warned above, proceed without a permission gate that's
-        # already been proven not to discriminate — a meaningless "allowed"
-        # here would be worse than no check at all.
-        return
+        if role_verdict is False:
+            raise UnvalidatedProdRequesterError(
+                f"Refusing this call on tag '{tag}': requester '{requested_by}' holds no role "
+                f"with '{perm_type}' permission on '{doctype}' per that doctype's own live "
+                f"DocPerm rows — computed locally (role list + DocPerm rows) since "
+                f"frappe.client.has_permission's user= param is known unreliable on this tag "
+                f"(F7). This is independent, corroborating evidence, not a full "
+                f"reimplementation of Frappe's permission engine (User Permissions / if_owner "
+                f"scoping aren't checked — see _requester_has_role_permission()'s docstring) — "
+                f"but a positive 'no role grants this' verdict overrides even a `domain` "
+                f"allowlist or a verified advisory token, since those exist to cover 'can't "
+                f"verify,' not 'verified, and it's a no.'"
+            )
+        # role_verdict is None: the local check itself couldn't complete
+        # (failed to resolve requester roles, or this doctype's live
+        # DocPerm rows — commonly this bot ALSO lacking System-Manager-
+        # level DocType read, the same F7/F8-acknowledged gap on a
+        # correctly least-privileged bot). Per the 2026-09-11 decision, an
+        # unverifiable requester permission is refused outright here too
+        # — a `domain` allowlist or a verified advisory token no longer
+        # rescues this either, since neither confirms requested_by's own
+        # permission, only that the write's shape was reviewed ahead of
+        # time. Trade-off, stated plainly: this makes System-Manager-
+        # level DocType read a hard requirement for ANY write once
+        # has_permission is unreliable, including a domain-scoped one
+        # that used to proceed on the allowlist alone — availability
+        # loss, in exchange for never proceeding without positive,
+        # locally-confirmed evidence.
+        raise UnvalidatedProdRequesterError(
+            f"Refusing this call on tag '{tag}': requester '{requested_by}''s '{perm_type}' "
+            f"permission on '{doctype}' could not be verified at all — this connector's own "
+            f"bot identity ({trust['bot_user']!r}) makes frappe.client.has_permission's user= "
+            f"param unreliable on this tag (F7), AND the local role/DocPerm fallback check "
+            f"couldn't complete (failed to resolve requester '{requested_by}''s live roles, or "
+            f"this doctype's live DocPerm rows). A `domain` allowlist or a verified advisory "
+            f"token attests this write's shape was reviewed ahead of time, never that "
+            f"'{requested_by}' can actually do it — neither is trusted to rescue an "
+            f"unverifiable requester permission by itself. Provision a bot account that can "
+            f"read User/DocType metadata (see init_bot.py / 00-conventions.md), or restore a "
+            f"working has_permission RPC, to unblock writes on this tag."
+        )
     allowed = check_user_permission(tag, doctype, perm_type, requested_by, docname)
     if not allowed:
         raise UnvalidatedProdRequesterError(
@@ -1067,12 +1202,29 @@ def record_comment(cfg: dict, doctype: str, name: str, content: str) -> bool:
     `content` is passed through redact_pii() first — a Comment is a
     permanent, human-visible ERPNext record; an SSN/credit-card number
     pasted into chat and echoed verbatim into a Comment would otherwise
-    persist there indefinitely."""
+    persist there indefinitely.
+
+    `comment_email`/`comment_by`: live-confirmed against a real Frappe 16
+    instance (2026-09-11) — `add_comment()`'s signature there requires
+    both as positional args with no default (`TypeError: add_comment()
+    missing 2 required positional arguments`), where the Frappe 15
+    version this connector was originally built against didn't. Sent as
+    this connector's own authenticated bot identity (resolved via
+    `_bot_identity()`, already cached per tag) — the Comment's `content`
+    string already carries the actual `requested_by` attribution, these
+    two fields are Frappe's own "commented by" metadata for the party
+    that physically made the API call, not the human being attributed
+    to. Falls back to a fixed literal if bot-identity resolution itself
+    failed, rather than sending an empty string Frappe might also
+    reject."""
     try:
+        bot_user = _bot_identity(cfg["tag"]).get("user") or SKILL_LABEL
         _request(cfg, "POST", "/api/method/frappe.desk.form.utils.add_comment", payload={
             "reference_doctype": doctype,
             "reference_name": name,
             "content": redact_pii(content),
+            "comment_email": bot_user,
+            "comment_by": bot_user,
         })
         return True
     except ConnectorError:

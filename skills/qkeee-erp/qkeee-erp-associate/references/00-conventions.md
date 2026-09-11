@@ -197,6 +197,31 @@ for the exact mechanism.
   come from the live channel identity, every call. Function/constant
   names (`_validate_prod_requester()`, `PROD_GATE_EXEMPT_DOCTYPES`)
   reflect a narrower PROD-only origin — don't read the name as scope.
+  **When that RPC is known unreliable (F7, .scratch/hermes-erp-bot-
+  reliability/spec.md — a privileged bot identity or a non-discriminating
+  `has_permission`), a second, independent, RPC-free check REPLACES the
+  domain-allowlist/advisory-token fallback (2026-09-11 decision):**
+  `_requester_has_role_permission()` computes locally, from the
+  requester's own live role list and the doctype's own live DocPerm
+  rows, whether any role they hold actually grants the permission in
+  question. Only a `True` result (a locally-confirmed grant) lets the
+  call through — a `False` result (positive evidence of no permission)
+  and an inconclusive `None` result (either live read failed — commonly
+  the same System-Manager-level DocType read F8 already flags as a real
+  gap on a correctly least-privileged bot) both refuse the call outright
+  now, uniformly, for read and write alike. A `domain` allowlist or a
+  verified advisory token no longer rescues either case: those attest a
+  write's *shape* was reviewed ahead of time, never that `requested_by`
+  specifically can do it, and that distinction stopped being good enough
+  once `has_permission` itself can't be trusted. Trade-off, stated
+  plainly: this makes System-Manager-level DocType read a hard
+  requirement for ANY write once precheck is unreliable, including a
+  domain-scoped one that used to proceed on the allowlist alone —
+  availability loss, in exchange for never proceeding without positive,
+  locally-confirmed evidence. This is a corroborating signal, not a
+  reimplementation of Frappe's permission engine — User Permissions and
+  `if_owner` scoping aren't visible to it; see
+  `_requester_has_role_permission()`'s own docstring in `core/client.py`.
 - **Read audit logging, always on.** Every access gets an audit row in
   `Qkeee Bot Audit Log`, reads included, unconditionally — there is no
   debug flag gating this in `core/client.py`.
