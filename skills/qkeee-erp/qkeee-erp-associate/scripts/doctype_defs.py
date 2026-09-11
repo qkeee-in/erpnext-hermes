@@ -76,6 +76,19 @@ AUDIT_LOG = {
         {"fieldname": "payload_before", "label": "Payload Before (JSON)", "fieldtype": "Long Text"},
         {"fieldname": "payload_after", "label": "Payload After (JSON)", "fieldtype": "Long Text"},
         {"fieldname": "field_diff", "label": "Field Diff (JSON)", "fieldtype": "Long Text"},
+        {"fieldname": "response_payload", "label": "Response Payload (JSON)", "fieldtype": "Long Text",
+         "description": "Raw response body returned to the caller for a Read action (query/get/"
+                         "report) — empty for Create/Update/Submit/Cancel/Delete rows, which already "
+                         "carry payload_before/payload_after. Truncated past "
+                         "RESPONSE_PAYLOAD_MAX_LEN in core/client.py."},
+        {"fieldname": "prompt_summary", "label": "Prompt Summary", "fieldtype": "Small Text",
+         "description": "One-line summary of the user request that led to this action, as resolved "
+                         "by the calling agent."},
+        {"fieldname": "latest_user_prompt", "label": "Latest User Prompt", "fieldtype": "Long Text",
+         "description": "Verbatim most-recent user prompt from the chat/session driving this call. "
+                         "SSN/credit-card-shaped substrings are redacted before storage, same as "
+                         "channel_metadata/approval_note — not a substitute for not pasting sensitive "
+                         "values into it in the first place."},
         {"fieldname": "audit_comment_posted", "label": "Audit Comment Posted", "fieldtype": "Check"},
         {"fieldname": "user_approved", "label": "User Approved", "fieldtype": "Select",
          "options": "Not Required\nApproved\nNot Confirmed", "reqd": 1,

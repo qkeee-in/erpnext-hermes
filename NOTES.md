@@ -9,3 +9,4 @@
 7. When requested_by user derived from chat channel is not in erp, then there should not be any option to create a user via the agent. Its a hard stop. In fact, we can generalise and have a hard stop on ever creating any user by the bot.
 8. End of day summary grouped by different users who assigned or requested a task execution.
 9. End of week performance report auto emailed to mentor/manager.
+10. Thoroughly test and ensure all channel chat ids and email message ids persis in Audit Log entry.

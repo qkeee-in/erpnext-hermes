@@ -25,10 +25,14 @@ Every write goes through `core.client.mutate_resource()`'s two-phase
 logging into `Qkeee Bot Audit Log` (`Attempted` → `Success`/`Failure`),
 carrying: `session`, `requested_by`, `action`, `reference_doctype`/
 `reference_name`, `timestamp`, `status`, `payload_before`/`payload_after`
-(Update only), `field_diff` (computed, Update only), `user_approved`, and
-`approval_note`. See `00-conventions.md`'s GRC baseline: RBAC pre-check
-runs on every environment and read logging is always on, unconditionally
-— neither is debug-gated or PROD-only.
+(Update only), `field_diff` (computed, Update only), `user_approved`,
+`approval_note`, `prompt_summary`, and `latest_user_prompt`. Every read
+(query/get/report) carries the same `prompt_summary`/`latest_user_prompt`
+plus `response_payload` — the actual response body returned to the
+caller, so the trail shows exactly what records a read exposed, not just
+that a read happened. See `00-conventions.md`'s GRC baseline: RBAC
+pre-check runs on every environment and read logging is always on,
+unconditionally — neither is debug-gated or PROD-only.
 
 **What this trail proves, and what it doesn't:**
 - Proves: which record was touched, by which domain, attributed to which

@@ -864,7 +864,8 @@ def health_check(tag: str = "default") -> dict:
 
 def query_resource(tag: str, doctype: str, filters: list = None, fields: list = None, limit: int = 20,
                     *, session_id: str = None, domain_code: str = None,
-                    requested_by: str = None, channel: str = None, channel_metadata: dict = None) -> dict:
+                    requested_by: str = None, channel: str = None, channel_metadata: dict = None,
+                    prompt_summary: str = None, latest_prompt: str = None) -> dict:
     """Generic resource query — read any DocType with filters/fields.
 
     Fetches one extra row beyond `limit` to detect truncation, then trims
@@ -887,10 +888,12 @@ def query_resource(tag: str, doctype: str, filters: list = None, fields: list = 
     result = _request(cfg, "GET", path, params=params)
     rows = result.get("data", [])
     has_more = len(rows) > limit
+    response = {"data": rows[:limit], "has_more": has_more, "limit": limit}
 
-    _log_read(cfg, doctype, None, requested_by, session_id, domain_code, channel, channel_metadata)
+    _log_read(cfg, doctype, None, requested_by, session_id, domain_code, channel, channel_metadata,
+              response_payload=response, prompt_summary=prompt_summary, latest_prompt=latest_prompt)
 
-    return {"data": rows[:limit], "has_more": has_more, "limit": limit}
+    return response
 
 
 # Fields stripped from get_resource() output: audit/system metadata and
@@ -917,7 +920,8 @@ def _strip_noise(obj):
 
 def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
                   *, session_id: str = None, domain_code: str = None,
-                  requested_by: str = None, channel: str = None, channel_metadata: dict = None) -> dict:
+                  requested_by: str = None, channel: str = None, channel_metadata: dict = None,
+                  prompt_summary: str = None, latest_prompt: str = None) -> dict:
     """Single-resource full-doc GET — the only way to get child-table rows.
 
     Confirmed live: Frappe's list endpoint (query_resource()) silently
@@ -942,7 +946,8 @@ def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
     if strip_noise and data is not None:
         data = _strip_noise(data)
 
-    _log_read(cfg, doctype, name, requested_by, session_id, domain_code, channel, channel_metadata)
+    _log_read(cfg, doctype, name, requested_by, session_id, domain_code, channel, channel_metadata,
+              response_payload={"data": data}, prompt_summary=prompt_summary, latest_prompt=latest_prompt)
 
     return {"data": data}
 
@@ -960,7 +965,8 @@ def resource_exists(tag: str, doctype: str, name: str) -> bool:
 
 def run_query_report(tag: str, report_name: str, filters: dict = None,
                       *, session_id: str = None, domain_code: str = None,
-                      requested_by: str = None, channel: str = None, channel_metadata: dict = None) -> dict:
+                      requested_by: str = None, channel: str = None, channel_metadata: dict = None,
+                      prompt_summary: str = None, latest_prompt: str = None) -> dict:
     """Run one of ERPNext's own built-in reports server-side (Query Report
     or Script Report) via frappe.desk.query_report.run, instead of hand-
     aggregating raw transactional rows into the same shape. Prefer this
@@ -985,14 +991,16 @@ def run_query_report(tag: str, report_name: str, filters: dict = None,
         params["filters"] = json.dumps(filters)
     result = _request(cfg, "GET", "/api/method/frappe.desk.query_report.run", params=params)
     message = result.get("message", {})
-
-    _log_read(cfg, "Report", report_name, requested_by, session_id, domain_code, channel, channel_metadata)
-
-    return {
+    response = {
         "report_name": report_name,
         "columns": message.get("columns", []),
         "result": message.get("result", []),
     }
+
+    _log_read(cfg, "Report", report_name, requested_by, session_id, domain_code, channel, channel_metadata,
+              response_payload=response, prompt_summary=prompt_summary, latest_prompt=latest_prompt)
+
+    return response
 
 
 def get_user_roles(tag: str, user: str = "") -> dict:
@@ -1078,6 +1086,21 @@ SESSION_FIELD_MAX_LEN = 140  # Frappe Data fieldtype default length
 CHANNEL_OPTIONS = {"Web", "Discord", "Telegram", "WhatsApp", "Email", "Slack", "Google Chat", "CLI", "API", "Other"}
 # lets callers pass loose forms ("google_chat", "google-chat") and still hit the canonical option
 _CHANNEL_ALIASES = {opt.lower().replace(" ", "").replace("_", "").replace("-", ""): opt for opt in CHANNEL_OPTIONS}
+
+# Defensive caps on the three new free-form audit fields (response_payload,
+# prompt_summary, latest_user_prompt) — all Long/Small Text (unbounded in
+# MariaDB), but a pathological caller (a huge query result, a copy-pasted
+# essay as "the prompt") shouldn't be able to bloat a single audit row
+# without limit. Same truncate-don't-reject posture as error_detail below.
+RESPONSE_PAYLOAD_MAX_LEN = 20000
+PROMPT_SUMMARY_MAX_LEN = 500
+LATEST_PROMPT_MAX_LEN = 4000
+
+
+def _truncate_str(value: str, max_len: int) -> str:
+    if value is None or len(value) <= max_len:
+        return value
+    return value[:max_len] + f"...[TRUNCATED, {len(value) - max_len} more chars]"
 
 
 def _session_or_fallback(session_id: str) -> str:
@@ -1211,13 +1234,20 @@ def _audit_submit(cfg: dict, log_name: str) -> bool:
 
 
 def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id: str, domain_code: str,
-              channel: str = None, channel_metadata: dict = None) -> None:
+              channel: str = None, channel_metadata: dict = None, response_payload=None,
+              prompt_summary: str = None, latest_prompt: str = None) -> None:
     """Best-effort insert+submit Audit Log row for a read — called
     unconditionally by query_resource()/get_resource()/run_query_report().
     Insert/update are collapsed into one status ("Success") since a read
     has no in-flight state to crash into, but submit still runs so the
     row doesn't sit as an unsubmitted Draft like two-phase write rows
-    would if left unfinished."""
+    would if left unfinished.
+
+    `response_payload` is the caller's already-built response body (the
+    'data'/'result' the CLI/caller is about to hand back) — stored so the
+    audit row shows exactly what records were returned, not just that a
+    read happened. Redacted the same way channel_metadata is, then
+    truncated (see RESPONSE_PAYLOAD_MAX_LEN)."""
     if doctype in AUDIT_EXEMPT_DOCTYPES:
         return
     log_name = _audit_insert(cfg, {
@@ -1233,6 +1263,10 @@ def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id:
         "timestamp": _now_iso(),
         "status": "Success",
         "user_approved": "Not Required",
+        "response_payload": _truncate_str(json.dumps(_redact_pii_deep(response_payload)), RESPONSE_PAYLOAD_MAX_LEN)
+                             if response_payload is not None else None,
+        "prompt_summary": _truncate_str(redact_pii(prompt_summary), PROMPT_SUMMARY_MAX_LEN) if prompt_summary else None,
+        "latest_user_prompt": _truncate_str(redact_pii(latest_prompt), LATEST_PROMPT_MAX_LEN) if latest_prompt else None,
     })
     _audit_submit(cfg, log_name)
 
@@ -1242,7 +1276,8 @@ def record_audit_log_start(cfg: dict, *, action: str, doctype: str, name: str, r
                             session_id: str = None, domain_code: str = None,
                             channel: str = None, channel_metadata: dict = None,
                             payload_before: dict = None, user_approved: bool = False,
-                            approval_note: str = None) -> str:
+                            approval_note: str = None,
+                            prompt_summary: str = None, latest_prompt: str = None) -> str:
     """Phase 1 of two-phase audit logging: insert an `Attempted` row
     BEFORE the real ERPNext write happens. If the process crashes between
     this call and record_audit_log_finish(), the orphaned `Attempted` row
@@ -1268,6 +1303,8 @@ def record_audit_log_start(cfg: dict, *, action: str, doctype: str, name: str, r
         "payload_before": json.dumps(payload_before) if payload_before else None,
         "user_approved": "Approved" if user_approved else "Not Confirmed",
         "approval_note": redact_pii(approval_note) if approval_note else approval_note,
+        "prompt_summary": _truncate_str(redact_pii(prompt_summary), PROMPT_SUMMARY_MAX_LEN) if prompt_summary else None,
+        "latest_user_prompt": _truncate_str(redact_pii(latest_prompt), LATEST_PROMPT_MAX_LEN) if latest_prompt else None,
     })
 
 
@@ -1315,7 +1352,8 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
                      channel: str = None, channel_metadata: dict = None,
                      user_approved: bool = False, approval_note: str = None,
                      confirmation_token: str = None, issued_at: int = None,
-                     advisory_token_verified: bool = False) -> dict:
+                     advisory_token_verified: bool = False,
+                     prompt_summary: str = None, latest_prompt: str = None) -> dict:
     """Generic resource mutate — create/update/submit/cancel/delete a
     DocType record. The one shared write entry point every domain module's
     own `mutate()` wrapper calls into (see scripts/domains/*.py).
@@ -1451,6 +1489,7 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
         session_id=session_id, domain_code=domain_code, channel=channel, channel_metadata=channel_metadata,
         payload_before=payload_before,
         user_approved=user_approved, approval_note=approval_note,
+        prompt_summary=prompt_summary, latest_prompt=latest_prompt,
     )
 
     try:
@@ -1502,7 +1541,8 @@ def gated_mutate_resource(tag: str, doctype: str, action: str, payload: dict = N
                            *, confirmation_token: str = None, issued_at: int = None,
                            session_id: str = None, domain_code: str = None,
                            channel: str = None, channel_metadata: dict = None,
-                           approval_note: str = None) -> dict:
+                           approval_note: str = None,
+                           prompt_summary: str = None, latest_prompt: str = None) -> dict:
     """The associate's own write entry point for whatever doesn't fit a
     named domain — wraps mutate_resource() with the token-gated advisory-first
     check every such write goes through, unconditionally. Unlike a domain
@@ -1543,6 +1583,7 @@ def gated_mutate_resource(tag: str, doctype: str, action: str, payload: dict = N
         session_id=session_id, domain_code=domain_code, channel=channel, channel_metadata=channel_metadata,
         user_approved=True, approval_note=approval_note or "gated_mutate_resource: advisory draft confirmed",
         advisory_token_verified=True,
+        prompt_summary=prompt_summary, latest_prompt=latest_prompt,
     )
 
 
@@ -1700,6 +1741,10 @@ def _cli():
     p.add_argument("--channel", help="conversation surface, e.g. Discord/Telegram/WhatsApp/Email/Web/Slack/CLI/API/Other")
     p.add_argument("--channel-metadata", help='JSON object of channel-specific tracing detail')
     p.add_argument("--approval-note", help="free text of what was confirmed (mutate only)")
+    p.add_argument("--prompt-summary", help="one-line summary of the user request that led to this "
+                                             "call — threaded into Qkeee Bot Audit Log rows")
+    p.add_argument("--latest-prompt", help="verbatim most-recent user prompt from the driving chat "
+                                            "session — threaded into Qkeee Bot Audit Log rows")
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("health")
@@ -1782,20 +1827,26 @@ def _cli():
                                              session_id=args.session_id,
                                              domain_code=args.domain_code,
                                              requested_by=effective_requested_by,
-                                             channel=args.channel, channel_metadata=channel_metadata), indent=2))
+                                             channel=args.channel, channel_metadata=channel_metadata,
+                                             prompt_summary=args.prompt_summary,
+                                             latest_prompt=args.latest_prompt), indent=2))
         elif args.command == "get":
             print(json.dumps(get_resource(args.tag, args.doctype, args.name, not args.no_strip,
                                            session_id=args.session_id,
                                            domain_code=args.domain_code,
                                            requested_by=effective_requested_by,
-                                           channel=args.channel, channel_metadata=channel_metadata), indent=2))
+                                           channel=args.channel, channel_metadata=channel_metadata,
+                                           prompt_summary=args.prompt_summary,
+                                           latest_prompt=args.latest_prompt), indent=2))
         elif args.command == "report":
             filters = _parse_json_arg("--filters", args.filters, dict)
             print(json.dumps(run_query_report(args.tag, args.report_name, filters,
                                                session_id=args.session_id,
                                                domain_code=args.domain_code,
                                                requested_by=effective_requested_by,
-                                               channel=args.channel, channel_metadata=channel_metadata), indent=2))
+                                               channel=args.channel, channel_metadata=channel_metadata,
+                                               prompt_summary=args.prompt_summary,
+                                               latest_prompt=args.latest_prompt), indent=2))
         elif args.command == "roles":
             print(json.dumps(get_user_roles(args.tag, args.user), indent=2))
         elif args.command == "mutate":
@@ -1806,7 +1857,8 @@ def _cli():
                                  session_id=args.session_id, domain_code=args.domain_code,
                                  channel=args.channel, channel_metadata=channel_metadata,
                                  user_approved=bool(args.confirmation_token), approval_note=args.approval_note,
-                                 confirmation_token=args.confirmation_token, issued_at=args.issued_at),
+                                 confirmation_token=args.confirmation_token, issued_at=args.issued_at,
+                                 prompt_summary=args.prompt_summary, latest_prompt=args.latest_prompt),
                 indent=2,
             ))
         elif args.command == "gated-mutate":
@@ -1818,7 +1870,8 @@ def _cli():
                                        issued_at=args.issued_at,
                                        session_id=args.session_id, domain_code=args.domain_code,
                                        channel=args.channel, channel_metadata=channel_metadata,
-                                       approval_note=args.approval_note),
+                                       approval_note=args.approval_note,
+                                       prompt_summary=args.prompt_summary, latest_prompt=args.latest_prompt),
                 indent=2,
             ))
     except ConnectorError as e:
