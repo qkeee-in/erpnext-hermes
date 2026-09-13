@@ -146,27 +146,34 @@ SKILL_LABEL = "qkeee-erp-associate"
 # read/write.
 AUDIT_LOG_DOCTYPE = "Qkeee Bot Audit Log"
 
-# Doctypes exempt from audit-wrapping. Mandatory, not optional: without
-# this, logging a write to Qkeee Bot Audit Log would itself be logged,
-# recursing forever. "Comment" is exempt for a related reason — the
-# best-effort audit-comment post (record_comment(), below) is itself a
-# write; without this exemption every audited write would double-log
-# itself (once for the record, once for the Comment documenting it).
-# "User"/"DocType"/"Role" are exempt for the same reason they're in
-# PROD_GATE_EXEMPT_DOCTYPES below (core-infra doctypes managed by
-# qkeee-erp-bot-init / system-admin, not read/written by a business
-# requester) — kept in sync with that set deliberately, not a
-# coincidence. Concretely: resource_exists(tag, doctype, name) — called
-# on EVERY _validate_prod_requester() invocation to check requested_by
-# names a real User, and by init_bot.py to check Role/DocType existence
-# — goes through get_resource() without a requested_by of its own (it's
-# checking whether a name exists, not acting as anyone). Without this
-# exemption, that nested get_resource() call unconditionally logged a
-# Read row with requested_by="" on every single call, tripping Qkeee Bot
-# Audit Log's own requested_by mandatory-field validation (MandatoryError,
-# non-fatal but noisy) — violating resource_exists()'s own "Never logged"
-# docstring contract. Keep this set a superset of anything resource_exists()
-# is ever called against.
+# Doctypes exempt from audit-wrapping on the WRITE path
+# (record_audit_log_start()/record_audit_log_finish(), consulted by
+# mutate_resource()). Mandatory, not optional: without this, logging a
+# write to Qkeee Bot Audit Log would itself be logged, recursing forever.
+# "Comment" is exempt for a related reason — the best-effort audit-comment
+# post (record_comment(), below) is itself a write; without this
+# exemption every audited write would double-log itself (once for the
+# record, once for the Comment documenting it). "User"/"DocType"/"Role"
+# are exempt for the same reason they're in PROD_GATE_EXEMPT_DOCTYPES
+# below (core-infra doctypes managed by qkeee-erp-bot-init / system-admin,
+# not written by a business requester) — kept in sync with that set
+# deliberately, not a coincidence: init_bot.py's Role/DocType bootstrap
+# writes rely on this exemption to stay silent so its own
+# log_role_provisioning() can be the ONE place that logs them (manually,
+# bypassing this exemption on purpose — see that function's docstring).
+# Removing "User"/"DocType"/"Role" here would double-log that bootstrap
+# sequence for no benefit — this set is scoped to the write path only.
+#
+# The READ path (_log_read(), consulted by query_resource()/get_resource()/
+# run_query_report()/get_user_roles()) does NOT use this set — see
+# _LOG_READ_RECURSION_EXEMPT_DOCTYPES below (F12,
+# .scratch/hermes-erp-bot-reliability/spec.md): a doctype-keyed exemption
+# was the wrong axis there, since it also silently swallowed a genuine
+# business-intent read of User/Role (e.g. `query User`, `roles <user>`),
+# not just the internal plumbing call it was built to stop from
+# recursing. That plumbing call (resource_exists(), and
+# _fetch_doctype_role_permissions()'s own get_resource(tag, "DocType", ...))
+# is now exempted directly via an `internal=True` kwarg instead.
 AUDIT_EXEMPT_DOCTYPES = {
     AUDIT_LOG_DOCTYPE,
     "Comment",
@@ -174,6 +181,17 @@ AUDIT_EXEMPT_DOCTYPES = {
     "DocType",
     "Role",
 }
+
+# Read-path recursion exemption (F12) — deliberately NARROWER than
+# AUDIT_EXEMPT_DOCTYPES above. Only the two doctypes that would actually
+# recurse (logging a read of the audit doctype itself, or of a Comment)
+# stay exempt by doctype. Everything else that needs to skip logging for
+# plumbing reasons (resource_exists(), _fetch_doctype_role_permissions(),
+# _bot_identity(), _requester_has_role_permission()'s own role lookup)
+# does so via get_resource()'s / get_user_roles()'s own `internal=True`
+# kwarg instead — purpose-keyed, not doctype-keyed, so a real
+# business-intent User/Role/DocType read still gets logged.
+_LOG_READ_RECURSION_EXEMPT_DOCTYPES = {AUDIT_LOG_DOCTYPE, "Comment"}
 
 # Doctypes exempt from the requester-validation gate below (see
 # _validate_prod_requester() — name reflects a narrower PROD-only origin;
@@ -542,7 +560,7 @@ def _bot_identity(tag: str) -> dict:
     identity this connector can't even resolve can't be confirmed safe."""
     if tag not in _BOT_IDENTITY_CACHE:
         try:
-            _BOT_IDENTITY_CACHE[tag] = get_user_roles(tag)
+            _BOT_IDENTITY_CACHE[tag] = get_user_roles(tag, internal=True)
         except ConnectorError:
             _BOT_IDENTITY_CACHE[tag] = {"user": "", "roles": []}
     return _BOT_IDENTITY_CACHE[tag]
@@ -621,7 +639,7 @@ def _fetch_doctype_role_permissions(tag: str, doctype: str):
     cache_key = (tag, doctype)
     if cache_key not in _DOCTYPE_PERMISSIONS_CACHE:
         try:
-            result = get_resource(tag, "DocType", doctype, requested_by="")
+            result = get_resource(tag, "DocType", doctype, requested_by="", internal=True)
             doc = result.get("data") or {}
             rows = [
                 {k: p.get(k) for k in _PERM_FIELD_KEYS if k in p}
@@ -673,7 +691,7 @@ def _requester_has_role_permission(tag: str, doctype: str, perm_type: str, reque
       (falls through to `False` here only if no OTHER, unconditional row
       matches; never silently upgraded to a confirmed grant)."""
     try:
-        roles_result = get_user_roles(tag, requested_by)
+        roles_result = get_user_roles(tag, requested_by, internal=True)
     except ConnectorError:
         return None
     requester_roles = set(roles_result.get("roles") or [])
@@ -696,7 +714,10 @@ def _requester_has_role_permission(tag: str, doctype: str, perm_type: str, reque
 
 def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_type: str,
                               docname: str = None, *, domain: str = None,
-                              advisory_token_verified: bool = False) -> None:
+                              advisory_token_verified: bool = False,
+                              session_id: str = None, domain_code: str = None,
+                              channel: str = None, channel_metadata: dict = None,
+                              prompt_summary: str = None, latest_prompt: str = None) -> None:
     """The requester-validation gate — RBAC pre-check, every environment.
     (Name reflects a narrower PROD-only origin; the check itself is
     universal.)
@@ -714,6 +735,14 @@ def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_typ
     do it, and once `frappe.client.has_permission` itself can't be
     trusted, that distinction stopped being good enough to rescue this
     gate by itself.
+
+    `session_id`/`domain_code`/`channel`/`channel_metadata`/
+    `prompt_summary`/`latest_prompt` (F11,
+    .scratch/hermes-erp-bot-reliability/spec.md): carried through purely
+    so the gate-decision Audit Log row this function now writes for every
+    branch (see _log_gate_decision()) has the same session/channel/prompt
+    context every other audit row already gets — no effect on the actual
+    decision.
 
     No-op for any doctype in PROD_GATE_EXEMPT_DOCTYPES, on every tag.
     Otherwise:
@@ -735,10 +764,22 @@ def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_typ
 
     Raises UnvalidatedProdRequesterError on any failure — fails closed,
     never proceeds unverified. Called from query_resource()/get_resource()/
-    run_query_report()/mutate_resource() — every read and write."""
+    run_query_report()/mutate_resource() — every read and write. Every
+    raise, and the final allow, is also logged to Qkeee Bot Audit Log as
+    one gate-decision row (F11) — a denial used to leave zero trace."""
     if doctype in PROD_GATE_EXEMPT_DOCTYPES:
         return
+
+    def _log(allowed: bool, detail: dict) -> None:
+        _log_gate_decision(
+            tag, perm_type=perm_type, doctype=doctype, docname=docname, requested_by=requested_by,
+            allowed=allowed, detail=detail, session_id=session_id, domain_code=domain_code,
+            channel=channel, channel_metadata=channel_metadata,
+            prompt_summary=prompt_summary, latest_prompt=latest_prompt,
+        )
+
     if not requested_by:
+        _log(False, {"reason": "no_requester_given"})
         raise UnvalidatedProdRequesterError(
             f"Refusing this call against '{doctype}' on tag '{tag}': no requester was "
             f"given. A validated, explicit requester is mandatory on every call, on "
@@ -749,6 +790,7 @@ def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_typ
             f"requested_by= on this call."
         )
     if not resource_exists(tag, "User", requested_by):
+        _log(False, {"reason": "requester_not_a_known_user"})
         raise UnvalidatedProdRequesterError(
             f"Refusing this call against '{doctype}' on tag '{tag}': requester "
             f"'{requested_by}' is not a known ERPNext User. Never proceed with an "
@@ -787,8 +829,10 @@ def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_typ
         # can't see.
         role_verdict = _requester_has_role_permission(tag, doctype, perm_type, requested_by)
         if role_verdict is True:
+            _log(True, {"path": "local_role_docperm_fallback", "reason": "rbac_precheck_unreliable"})
             return
         if role_verdict is False:
+            _log(False, {"path": "local_role_docperm_fallback", "reason": "no_granting_role"})
             raise UnvalidatedProdRequesterError(
                 f"Refusing this call on tag '{tag}': requester '{requested_by}' holds no role "
                 f"with '{perm_type}' permission on '{doctype}' per that doctype's own live "
@@ -816,6 +860,7 @@ def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_typ
         # that used to proceed on the allowlist alone — availability
         # loss, in exchange for never proceeding without positive,
         # locally-confirmed evidence.
+        _log(False, {"path": "local_role_docperm_fallback", "reason": "inconclusive"})
         raise UnvalidatedProdRequesterError(
             f"Refusing this call on tag '{tag}': requester '{requested_by}''s '{perm_type}' "
             f"permission on '{doctype}' could not be verified at all — this connector's own "
@@ -831,6 +876,7 @@ def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_typ
         )
     allowed = check_user_permission(tag, doctype, perm_type, requested_by, docname)
     if not allowed:
+        _log(False, {"path": "has_permission_rpc"})
         raise UnvalidatedProdRequesterError(
             f"Refusing this call on tag '{tag}': requester '{requested_by}' does not "
             f"have '{perm_type}' permission on '{doctype}'"
@@ -838,6 +884,7 @@ def _validate_prod_requester(tag: str, requested_by: str, doctype: str, perm_typ
             f"check (frappe.client.has_permission). Refusing rather than proceeding on "
             f"an unauthorized request. {_NEVER_SUBSTITUTE_REQUESTER}"
         )
+    _log(True, {"path": "has_permission_rpc"})
 
 
 def _qkeee_env_file_path() -> str:
@@ -1046,7 +1093,10 @@ def query_resource(tag: str, doctype: str, filters: list = None, fields: list = 
     the biggest source in the audit trail) in exchange for an audit row on
     every access, no exceptions.
     """
-    _validate_prod_requester(tag, requested_by, doctype, "read")
+    _validate_prod_requester(tag, requested_by, doctype, "read",
+                              session_id=session_id, domain_code=domain_code,
+                              channel=channel, channel_metadata=channel_metadata,
+                              prompt_summary=prompt_summary, latest_prompt=latest_prompt)
     cfg = get_env_config(tag)
     params = {"limit_page_length": limit + 1}
     if filters:
@@ -1090,7 +1140,8 @@ def _strip_noise(obj):
 def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
                   *, session_id: str = None, domain_code: str = None,
                   requested_by: str = None, channel: str = None, channel_metadata: dict = None,
-                  prompt_summary: str = None, latest_prompt: str = None) -> dict:
+                  prompt_summary: str = None, latest_prompt: str = None,
+                  internal: bool = False) -> dict:
     """Single-resource full-doc GET — the only way to get child-table rows.
 
     Confirmed live: Frappe's list endpoint (query_resource()) silently
@@ -1105,9 +1156,17 @@ def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
     presentation-only HTML fields before returning — see _NOISE_FIELDS.
 
     Every read is logged to Qkeee Bot Audit Log, unconditionally — same as
-    query_resource(), see that function's docstring.
+    query_resource(), see that function's docstring — UNLESS
+    `internal=True` (F12): pass this only when this call is the
+    connector's own plumbing (an existence/metadata check made on behalf
+    of the gate itself, not a business-intent read) — see
+    resource_exists() and _fetch_doctype_role_permissions(), the only two
+    callers that ever set it.
     """
-    _validate_prod_requester(tag, requested_by, doctype, "read", docname=name)
+    _validate_prod_requester(tag, requested_by, doctype, "read", docname=name,
+                              session_id=session_id, domain_code=domain_code,
+                              channel=channel, channel_metadata=channel_metadata,
+                              prompt_summary=prompt_summary, latest_prompt=latest_prompt)
     cfg = get_env_config(tag)
     path = f"/api/resource/{urllib.parse.quote(doctype)}/{urllib.parse.quote(name)}"
     result = _request(cfg, "GET", path)
@@ -1116,15 +1175,21 @@ def get_resource(tag: str, doctype: str, name: str, strip_noise: bool = True,
         data = _strip_noise(data)
 
     _log_read(cfg, doctype, name, requested_by, session_id, domain_code, channel, channel_metadata,
-              response_payload={"data": data}, prompt_summary=prompt_summary, latest_prompt=latest_prompt)
+              response_payload={"data": data}, prompt_summary=prompt_summary, latest_prompt=latest_prompt,
+              internal=internal)
 
     return {"data": data}
 
 
 def resource_exists(tag: str, doctype: str, name: str) -> bool:
-    """404-tolerant existence check. Never logged, never gated."""
+    """404-tolerant existence check. Never logged (internal=True — F12
+    made this actually true regardless of doctype, rather than true only
+    because every past caller happened to pass a doctype that was also in
+    AUDIT_EXEMPT_DOCTYPES), never gated (PROD_GATE_EXEMPT_DOCTYPES covers
+    "User"/"DocType"/"Role", the only doctypes this is ever called
+    against)."""
     try:
-        get_resource(tag, doctype, name, strip_noise=False)
+        get_resource(tag, doctype, name, strip_noise=False, internal=True)
         return True
     except ConnectorError as e:
         if "(404)" in str(e):
@@ -1153,7 +1218,10 @@ def run_query_report(tag: str, report_name: str, filters: dict = None,
     reference_doctype "Report" with reference_name=report_name, since a
     query report isn't itself a DocType record being read.
     """
-    _validate_prod_requester(tag, requested_by, "Report", "read", docname=report_name)
+    _validate_prod_requester(tag, requested_by, "Report", "read", docname=report_name,
+                              session_id=session_id, domain_code=domain_code,
+                              channel=channel, channel_metadata=channel_metadata,
+                              prompt_summary=prompt_summary, latest_prompt=latest_prompt)
     cfg = get_env_config(tag)
     params = {"report_name": report_name}
     if filters:
@@ -1172,7 +1240,11 @@ def run_query_report(tag: str, report_name: str, filters: dict = None,
     return response
 
 
-def get_user_roles(tag: str, user: str = "") -> dict:
+def get_user_roles(tag: str, user: str = "", *, requested_by: str = None,
+                    session_id: str = None, domain_code: str = None,
+                    channel: str = None, channel_metadata: dict = None,
+                    prompt_summary: str = None, latest_prompt: str = None,
+                    internal: bool = False) -> dict:
     """Fetch a user's assigned roles — the standard (heuristic, not
     guaranteed) signal for whether the acting user plausibly holds
     authority for a given write, when no ERPNext Workflow doctype is
@@ -1184,7 +1256,20 @@ def get_user_roles(tag: str, user: str = "") -> dict:
     currently-authenticated user's own roles via the health-check
     endpoint first — get_env_config() has no notion of "which user this
     API key belongs to" (Frappe token auth doesn't expose that directly).
-    """
+
+    Unlike query_resource()/get_resource()/run_query_report(), this
+    doesn't route through those, so it never got audited even for a
+    genuine business-intent lookup (F12,
+    .scratch/hermes-erp-bot-reliability/spec.md) — fixed here: logs to
+    Qkeee Bot Audit Log via `_log_read()` unless `internal=True`. Pass
+    `internal=True` only from this connector's own RBAC plumbing
+    (_bot_identity(), _requester_has_role_permission()) — a caller asking
+    on a requester's actual behalf (the CLI `roles` command, a domain
+    script) leaves it False and gets a real row. `requested_by` here is
+    who's ASKING to see the roles, distinct from `user` (whose roles are
+    being looked up) — attribution only, this function isn't gated by
+    _validate_prod_requester() (used, among other things, to compute the
+    very permission picture that gate depends on)."""
     cfg = get_env_config(tag)
     target = user
     if not target:
@@ -1207,6 +1292,10 @@ def get_user_roles(tag: str, user: str = "") -> dict:
         "but corroborate with the user rather than assuming the former."
         if not roles else ""
     )
+    if not internal:
+        _log_read(cfg, "User", target, requested_by, session_id, domain_code, channel, channel_metadata,
+                   response_payload={"user": target, "roles": roles},
+                   prompt_summary=prompt_summary, latest_prompt=latest_prompt)
     return {"user": target, "roles": roles, "warning": warning}
 
 
@@ -1421,20 +1510,29 @@ def _audit_submit(cfg: dict, log_name: str) -> bool:
 
 def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id: str, domain_code: str,
               channel: str = None, channel_metadata: dict = None, response_payload=None,
-              prompt_summary: str = None, latest_prompt: str = None) -> None:
+              prompt_summary: str = None, latest_prompt: str = None, internal: bool = False) -> None:
     """Best-effort insert+submit Audit Log row for a read — called
-    unconditionally by query_resource()/get_resource()/run_query_report().
-    Insert/update are collapsed into one status ("Success") since a read
-    has no in-flight state to crash into, but submit still runs so the
-    row doesn't sit as an unsubmitted Draft like two-phase write rows
-    would if left unfinished.
+    unconditionally by query_resource()/get_resource()/run_query_report()/
+    get_user_roles(). Insert/update are collapsed into one status
+    ("Success") since a read has no in-flight state to crash into, but
+    submit still runs so the row doesn't sit as an unsubmitted Draft like
+    two-phase write rows would if left unfinished.
 
     `response_payload` is the caller's already-built response body (the
     'data'/'result' the CLI/caller is about to hand back) — stored so the
     audit row shows exactly what records were returned, not just that a
     read happened. Redacted the same way channel_metadata is, then
-    truncated (see RESPONSE_PAYLOAD_MAX_LEN)."""
-    if doctype in AUDIT_EXEMPT_DOCTYPES:
+    truncated (see RESPONSE_PAYLOAD_MAX_LEN).
+
+    `internal=True` (F12, .scratch/hermes-erp-bot-reliability/spec.md):
+    skip logging regardless of doctype — set only by a caller that is
+    itself connector plumbing (an existence/metadata check made on behalf
+    of the gate, not a business-intent read on someone's behalf). This
+    replaced a blanket doctype-based exemption that used to also swallow
+    a genuine business read of User/Role (e.g. `query User`, `roles
+    <user>`) — see _LOG_READ_RECURSION_EXEMPT_DOCTYPES's own comment for
+    why that set stays deliberately narrower than AUDIT_EXEMPT_DOCTYPES."""
+    if internal or doctype in _LOG_READ_RECURSION_EXEMPT_DOCTYPES:
         return
     log_name = _audit_insert(cfg, {
         "session": _session_or_fallback(session_id),
@@ -1451,6 +1549,80 @@ def _log_read(cfg: dict, doctype: str, name: str, requested_by: str, session_id:
         "user_approved": "Not Required",
         "response_payload": _truncate_str(json.dumps(_redact_pii_deep(response_payload)), RESPONSE_PAYLOAD_MAX_LEN)
                              if response_payload is not None else None,
+        "prompt_summary": _truncate_str(redact_pii(prompt_summary), PROMPT_SUMMARY_MAX_LEN) if prompt_summary else None,
+        "latest_user_prompt": _truncate_str(redact_pii(latest_prompt), LATEST_PROMPT_MAX_LEN) if latest_prompt else None,
+    })
+    _audit_submit(cfg, log_name)
+
+
+# perm_type ("read"/"write"/"create"/"submit"/"cancel"/"delete", the
+# vocabulary _validate_prod_requester()/_MUTATE_ACTION_TO_PTYPE use)
+# mapped onto the "action" values Qkeee Bot Audit Log already accepts
+# elsewhere (_log_read()'s "Read", mutate_resource()'s action.capitalize()
+# — "Create"/"Update"/"Submit"/"Cancel"/"Delete"). Deliberately reuses
+# this existing vocabulary rather than inventing a new one (e.g. a
+# "Permission Check" action) — this doctype is provisioned live on each
+# target instance (see init_bot.py), and a novel Select value would need
+# a live schema change everywhere this ships, for a distinction
+# (gate-decision row vs. real read/write row) that response_payload's
+# `gate_check: true` marker below already makes unambiguous to a reader.
+_PTYPE_TO_ACTION = {
+    "read": "Read", "create": "Create", "write": "Update",
+    "submit": "Submit", "cancel": "Cancel", "delete": "Delete",
+}
+
+
+def _log_gate_decision(tag: str, *, perm_type: str, doctype: str, docname: str, requested_by: str,
+                        allowed: bool, detail: dict, session_id: str = None, domain_code: str = None,
+                        channel: str = None, channel_metadata: dict = None,
+                        prompt_summary: str = None, latest_prompt: str = None) -> None:
+    """Best-effort insert+submit Audit Log row for ONE requester-
+    permission-gate decision from _validate_prod_requester() (F11,
+    .scratch/hermes-erp-bot-reliability/spec.md) — covers both denials
+    and allows. Before this, a refused call left NO trace anywhere in
+    Qkeee Bot Audit Log: the gate raises before the read/write it's
+    guarding, and never logged itself either. A denial is exactly the
+    row a GRC review most wants to find.
+
+    Deliberately ONE row per gate call, not one per internal HTTP call
+    the gate makes to reach its verdict (resource_exists, the
+    has_permission RPC or the RBAC-reliability probe, the local
+    role/DocPerm fallback) — those together answer a single question
+    ("was this requester allowed to do this, and how was that decided"),
+    and logging each of them separately would multiply read-audit volume
+    roughly 5x for no added meaning. `detail` carries that single
+    decision's shape (which path was used — has_permission RPC vs. the
+    local role/DocPerm fallback vs. exempt — and why) inside
+    `response_payload`, tagged `gate_check: true` so it reads distinctly
+    from a real read/write row even though it reuses the same
+    action/status vocabulary (see _PTYPE_TO_ACTION above).
+
+    Never raises: called from inside a gate that may itself be the thing
+    failing (e.g. this tag's environment can't be resolved at all) — that
+    failure mode has no instance to log against either, so it's swallowed
+    the same way every other best-effort audit call in this module is."""
+    if doctype in AUDIT_EXEMPT_DOCTYPES:
+        return
+    try:
+        cfg = get_env_config(tag)
+    except ConnectorError:
+        return
+    log_name = _audit_insert(cfg, {
+        "session": _session_or_fallback(session_id),
+        "domain_code": (domain_code or "")[:SESSION_FIELD_MAX_LEN],
+        "environment_tag": cfg.get("tag", ""),
+        "channel": _safe_channel(channel),
+        "channel_metadata": json.dumps(_redact_pii_deep(channel_metadata)) if channel_metadata else None,
+        "action": _PTYPE_TO_ACTION.get(perm_type, perm_type.capitalize() if perm_type else "Read"),
+        "reference_doctype": doctype,
+        "reference_name": docname or "",
+        "requested_by": requested_by or "",
+        "timestamp": _now_iso(),
+        "status": "Success" if allowed else "Failure",
+        "user_approved": "Not Required",
+        "response_payload": _truncate_str(json.dumps(_redact_pii_deep(
+            {"gate_check": True, "perm_type": perm_type, "allowed": allowed, **(detail or {})}
+        )), RESPONSE_PAYLOAD_MAX_LEN),
         "prompt_summary": _truncate_str(redact_pii(prompt_summary), PROMPT_SUMMARY_MAX_LEN) if prompt_summary else None,
         "latest_user_prompt": _truncate_str(redact_pii(latest_prompt), LATEST_PROMPT_MAX_LEN) if latest_prompt else None,
     })
@@ -1654,7 +1826,10 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
                                  confirmation_token, issued_at)
     _validate_prod_requester(tag, requested_by, doctype, _MUTATE_ACTION_TO_PTYPE[action],
                               docname=name, domain=domain,
-                              advisory_token_verified=advisory_token_verified)
+                              advisory_token_verified=advisory_token_verified,
+                              session_id=session_id, domain_code=domain_code,
+                              channel=channel, channel_metadata=channel_metadata,
+                              prompt_summary=prompt_summary, latest_prompt=latest_prompt)
 
     cfg = get_env_config(tag)
     effective_skill_label = skill_label or (f"qkeee-erp-associate/{domain}" if domain else SKILL_LABEL)
@@ -1663,10 +1838,31 @@ def mutate_resource(tag: str, doctype: str, action: str, payload: dict = None,
     # doctype is actually audited (skip for any AUDIT_EXEMPT_DOCTYPES
     # entry, and skip when the doctype isn't exempt but the target
     # simply doesn't need diffing, e.g. Create has no "before").
+    #
+    # F13 (.scratch/hermes-erp-bot-reliability/spec.md), live-caught
+    # 2026-09-13 against demo.qkeee.in: this call used to omit
+    # `requested_by` entirely, so get_resource()'s own
+    # _validate_prod_requester("read") gate refused it EVERY time
+    # (missing requester is refused unconditionally, no exception) —
+    # caught here and silently discarded via `except ConnectorError`,
+    # so `payload_before` (and therefore `field_diff`) has been null on
+    # every single Update this connector has ever made against a
+    # non-exempt doctype, for this feature's entire life. Passing the
+    # write's own `requested_by` through fixes it: the pre-image read is
+    # a real, legitimate access made on the requester's behalf (not
+    # connector plumbing — no `internal=True` here), so it should be
+    # gated and logged exactly like any other read, attributed to the
+    # same requester and carrying the same context as the write it's
+    # supporting.
     payload_before = None
     if action == "update" and doctype not in AUDIT_EXEMPT_DOCTYPES and name:
         try:
-            payload_before = get_resource(tag, doctype, name, strip_noise=False).get("data")
+            payload_before = get_resource(tag, doctype, name, strip_noise=False,
+                                           requested_by=requested_by,
+                                           session_id=session_id, domain_code=domain_code,
+                                           channel=channel, channel_metadata=channel_metadata,
+                                           prompt_summary=prompt_summary, latest_prompt=latest_prompt
+                                           ).get("data")
         except ConnectorError:
             payload_before = None
 
@@ -2018,7 +2214,7 @@ def _cli():
         p.error(f"--tag is required for '{args.command}'")
     if args.command in ("mutate", "gated-mutate") and not args.mode:
         p.error(f"--mode is required for '{args.command}'")
-    if args.command in ("query", "get", "report", "mutate", "gated-mutate") and not args.session_id:
+    if args.command in ("query", "get", "report", "mutate", "gated-mutate", "roles") and not args.session_id:
         args.session_id = _session_or_fallback(None)
 
     # requested_by is mandatory on every read/write, on every tag — no
@@ -2068,7 +2264,19 @@ def _cli():
                                                prompt_summary=args.prompt_summary,
                                                latest_prompt=args.latest_prompt), indent=2))
         elif args.command == "roles":
-            print(json.dumps(get_user_roles(args.tag, args.user), indent=2))
+            # Not in the --requested-by-mandatory list above (deliberate,
+            # unchanged): this is the RBAC-computing primitive itself, so
+            # it can't depend on having already passed the gate it feeds.
+            # requested_by here is attribution only (who's asking to see
+            # the roles), threaded through so a real business-intent
+            # lookup gets a real Audit Log row (F12) — not required.
+            print(json.dumps(get_user_roles(args.tag, args.user,
+                                             requested_by=effective_requested_by,
+                                             session_id=args.session_id,
+                                             domain_code=args.domain_code,
+                                             channel=args.channel, channel_metadata=channel_metadata,
+                                             prompt_summary=args.prompt_summary,
+                                             latest_prompt=args.latest_prompt), indent=2))
         elif args.command == "mutate":
             payload = _parse_json_arg("--payload", args.payload, dict)
             print(json.dumps(

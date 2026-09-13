@@ -7,6 +7,7 @@ missing must never produce an empty `session` field on Qkeee Bot Audit Log
 (that field is mandatory, and _audit_insert() swallows the resulting
 MandatoryError silently)."""
 
+import json
 import time
 import unittest
 import unittest.mock
@@ -221,6 +222,44 @@ class GetUserRolesTests(unittest.TestCase):
         self.assertEqual(result["roles"], [])
         self.assertTrue(result["warning"])
         self.assertIn("not confirmed", result["warning"])
+
+
+class UpdatePreImageAttributionTests(unittest.TestCase):
+    """F13, .scratch/hermes-erp-bot-reliability/spec.md: mutate_resource()'s
+    Update pre-image fetch (for field_diff) used to omit `requested_by`
+    entirely, so get_resource()'s own gate refused it every single time —
+    caught and discarded by the surrounding `except ConnectorError`, so
+    `payload_before`/`field_diff` had been silently null on every past
+    Update against a non-exempt doctype. Live-caught against
+    demo.qkeee.in 2026-09-13. This locks in the fix: the pre-image call
+    must carry the write's own requested_by and context."""
+
+    @patch.object(ec, "record_comment")
+    @patch.object(ec, "record_audit_log_finish")
+    @patch.object(ec, "record_audit_log_start", return_value="AUDITLOG-PREIMG")
+    @patch.object(ec, "_do_mutate", return_value={"data": {"name": "SO-0001", "status": "Closed"}})
+    @patch.object(ec, "get_resource")
+    @patch.object(ec, "_validate_prod_requester")
+    @patch.object(ec, "get_env_config", return_value={"tag": "prod"})
+    def test_preimage_fetch_carries_requested_by_and_context(
+            self, mocked_cfg, mocked_gate, mocked_get_resource, mocked_do_mutate,
+            mocked_start, mocked_finish, mocked_comment):
+        mocked_get_resource.return_value = {"data": {"name": "SO-0001", "status": "Draft"}}
+        ec.mutate_resource("prod", "Sales Order", "update", payload={"status": "Closed"},
+                            name="SO-0001", mode="read-write", requested_by="priya@org.com",
+                            session_id="sess-1", domain_code="sales", channel="Slack",
+                            channel_metadata={"x": 1}, prompt_summary="close it",
+                            latest_prompt="please close SO-0001")
+        mocked_get_resource.assert_called_once_with(
+            "prod", "Sales Order", "SO-0001", strip_noise=False,
+            requested_by="priya@org.com", session_id="sess-1", domain_code="sales",
+            channel="Slack", channel_metadata={"x": 1},
+            prompt_summary="close it", latest_prompt="please close SO-0001",
+        )
+        # And NOT internal=True — this is a real access made on the
+        # requester's behalf, not connector plumbing, so it should be
+        # gated and logged like any other read.
+        self.assertNotIn("internal", mocked_get_resource.call_args.kwargs)
 
 
 class TestGatedMutateResource(unittest.TestCase):
@@ -879,8 +918,13 @@ class RbacPrecheckReliabilityTests(unittest.TestCase):
     @patch.object(ec, "_requester_has_role_permission", return_value=None)
     @patch.object(ec, "check_user_permission")
     @patch.object(ec, "resource_exists", return_value=True)
+    @patch.object(ec, "_audit_insert", return_value=None)
     def test_mutate_resource_refuses_write_when_precheck_unreliable(
-            self, mocked_exists, mocked_perm, mocked_role_verdict, mocked_trust):
+            self, mocked_audit_insert, mocked_exists, mocked_perm, mocked_role_verdict, mocked_trust):
+        # _audit_insert mocked (F11's gate-decision row now fires on this
+        # denial too) so this stays a real-network-free unit test — same
+        # reasoning as every other _validate_prod_requester()-exercising
+        # test in this file that configures a real-looking base_url.
         with patch.dict("os.environ", {
             "QKEEE_ERP_TAGK_BASE_URL": "https://example.com",
             "QKEEE_ERP_TAGK_API_KEY": "key",
@@ -897,8 +941,9 @@ class RbacPrecheckReliabilityTests(unittest.TestCase):
     @patch.object(ec, "_requester_has_role_permission", return_value=None)
     @patch.object(ec, "check_user_permission")
     @patch.object(ec, "resource_exists", return_value=True)
+    @patch.object(ec, "_audit_insert", return_value=None)
     def test_mutate_resource_also_refuses_domain_scoped_write_when_role_verdict_inconclusive(
-            self, mocked_exists, mocked_perm, mocked_role_verdict, mocked_trust):
+            self, mocked_audit_insert, mocked_exists, mocked_perm, mocked_role_verdict, mocked_trust):
         # Same broken-precheck scenario as
         # test_mutate_resource_refuses_write_when_precheck_unreliable
         # above, but with `domain=` set to an allowlisted, registered
@@ -1182,21 +1227,30 @@ class ProdGateWiringTests(unittest.TestCase):
     @patch.object(ec, "_request", return_value={"data": []})
     def test_query_resource_gates_with_read(self, mocked_request, mocked_cfg, mocked_gate):
         ec.query_resource("prod", "Sales Order", requested_by="priya@org.com")
-        mocked_gate.assert_called_once_with("prod", "priya@org.com", "Sales Order", "read")
+        mocked_gate.assert_called_once_with("prod", "priya@org.com", "Sales Order", "read",
+                                             session_id=None, domain_code=None,
+                                             channel=None, channel_metadata=None,
+                                             prompt_summary=None, latest_prompt=None)
 
     @patch.object(ec, "_validate_prod_requester")
     @patch.object(ec, "get_env_config", return_value={"tag": "prod"})
     @patch.object(ec, "_request", return_value={"data": {"name": "SO-0001"}})
     def test_get_resource_gates_with_read_and_docname(self, mocked_request, mocked_cfg, mocked_gate):
         ec.get_resource("prod", "Sales Order", "SO-0001", requested_by="priya@org.com")
-        mocked_gate.assert_called_once_with("prod", "priya@org.com", "Sales Order", "read", docname="SO-0001")
+        mocked_gate.assert_called_once_with("prod", "priya@org.com", "Sales Order", "read", docname="SO-0001",
+                                             session_id=None, domain_code=None,
+                                             channel=None, channel_metadata=None,
+                                             prompt_summary=None, latest_prompt=None)
 
     @patch.object(ec, "_validate_prod_requester")
     @patch.object(ec, "get_env_config", return_value={"tag": "prod"})
     @patch.object(ec, "_request", return_value={"message": {"result": []}})
     def test_run_query_report_gates_against_report_doctype(self, mocked_request, mocked_cfg, mocked_gate):
         ec.run_query_report("prod", "Sales Analytics", requested_by="priya@org.com")
-        mocked_gate.assert_called_once_with("prod", "priya@org.com", "Report", "read", docname="Sales Analytics")
+        mocked_gate.assert_called_once_with("prod", "priya@org.com", "Report", "read", docname="Sales Analytics",
+                                             session_id=None, domain_code=None,
+                                             channel=None, channel_metadata=None,
+                                             prompt_summary=None, latest_prompt=None)
 
     @patch.object(ec, "record_audit_log_finish")
     @patch.object(ec, "record_audit_log_start", return_value="AUDITLOG-0001")
@@ -1208,7 +1262,10 @@ class ProdGateWiringTests(unittest.TestCase):
         ec.mutate_resource("prod", "Sales Order", "submit", name="SO-0001", mode="read-write",
                             requested_by="priya@org.com")
         mocked_gate.assert_called_once_with("prod", "priya@org.com", "Sales Order", "submit",
-                                             docname="SO-0001", domain=None, advisory_token_verified=False)
+                                             docname="SO-0001", domain=None, advisory_token_verified=False,
+                                             session_id=None, domain_code=None,
+                                             channel=None, channel_metadata=None,
+                                             prompt_summary=None, latest_prompt=None)
 
     @patch.object(ec, "_validate_prod_requester", side_effect=ec.UnvalidatedProdRequesterError("nope"))
     @patch.object(ec, "get_env_config", return_value={"tag": "prod"})
@@ -1350,6 +1407,162 @@ class AuditFailureStreakTests(unittest.TestCase):
         self.assertEqual(ec._AUDIT_FAILURE_STREAK["streak-tag-2"], 1)
         ec._audit_insert({"tag": "streak-tag-2"}, {"session": "s1"})
         self.assertEqual(ec._AUDIT_FAILURE_STREAK["streak-tag-2"], 0)
+
+
+class GateDecisionLoggingTests(unittest.TestCase):
+    """F11, .scratch/hermes-erp-bot-reliability/spec.md: a denied
+    requester-permission check used to leave zero trace in Qkeee Bot
+    Audit Log — _validate_prod_requester() now logs one gate-decision row
+    (via _log_gate_decision()) on every branch, allow or deny."""
+
+    ENV = {
+        "QKEEE_ERP_GATELOG_BASE_URL": "https://example.com",
+        "QKEEE_ERP_GATELOG_API_KEY": "key",
+        "QKEEE_ERP_GATELOG_API_SECRET": "secret",
+    }
+
+    @patch.object(ec, "_audit_submit", return_value=True)
+    @patch.object(ec, "_audit_insert", return_value="AUDITLOG-GATE-1")
+    def test_missing_requester_denial_is_logged(self, mocked_insert, mocked_submit):
+        with patch.dict("os.environ", self.ENV, clear=True):
+            with self.assertRaises(ec.UnvalidatedProdRequesterError):
+                ec._validate_prod_requester("gatelog", None, "Sales Order", "read")
+        mocked_insert.assert_called_once()
+        fields = mocked_insert.call_args[0][1]
+        self.assertEqual(fields["status"], "Failure")
+        self.assertEqual(fields["action"], "Read")
+        self.assertEqual(fields["reference_doctype"], "Sales Order")
+        payload = json.loads(fields["response_payload"])
+        self.assertTrue(payload["gate_check"])
+        self.assertFalse(payload["allowed"])
+        mocked_submit.assert_called_once_with({"tag": "gatelog", "base_url": "https://example.com",
+                                                 "api_key": "key", "api_secret": "secret"},
+                                                "AUDITLOG-GATE-1")
+
+    @patch.object(ec, "_audit_submit", return_value=True)
+    @patch.object(ec, "_audit_insert", return_value="AUDITLOG-GATE-2")
+    @patch.object(ec, "check_user_permission", return_value=False)
+    @patch.object(ec, "verify_rbac_precheck_reliable", return_value={"reliable": True})
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_rpc_permission_denial_is_logged(self, mocked_exists, mocked_trust, mocked_perm,
+                                              mocked_insert, mocked_submit):
+        with patch.dict("os.environ", self.ENV, clear=True):
+            with self.assertRaises(ec.UnvalidatedProdRequesterError):
+                ec._validate_prod_requester("gatelog", "priya@org.com", "Sales Order", "write",
+                                             docname="SO-0001")
+        fields = mocked_insert.call_args[0][1]
+        self.assertEqual(fields["status"], "Failure")
+        self.assertEqual(fields["action"], "Update")  # write -> Update, see _PTYPE_TO_ACTION
+        payload = json.loads(fields["response_payload"])
+        self.assertEqual(payload["path"], "has_permission_rpc")
+
+    @patch.object(ec, "_audit_submit", return_value=True)
+    @patch.object(ec, "_audit_insert", return_value="AUDITLOG-GATE-3")
+    @patch.object(ec, "check_user_permission", return_value=True)
+    @patch.object(ec, "verify_rbac_precheck_reliable", return_value={"reliable": True})
+    @patch.object(ec, "resource_exists", return_value=True)
+    def test_allowed_call_is_also_logged(self, mocked_exists, mocked_trust, mocked_perm,
+                                          mocked_insert, mocked_submit):
+        with patch.dict("os.environ", self.ENV, clear=True):
+            ec._validate_prod_requester("gatelog", "priya@org.com", "Sales Order", "read")
+        fields = mocked_insert.call_args[0][1]
+        self.assertEqual(fields["status"], "Success")
+        payload = json.loads(fields["response_payload"])
+        self.assertTrue(payload["allowed"])
+
+    @patch.object(ec, "_audit_insert")
+    def test_exempt_doctype_is_never_logged(self, mocked_insert):
+        with patch.object(ec, "resource_exists") as mocked_exists:
+            ec._validate_prod_requester("gatelog", None, "User", "read")
+        mocked_exists.assert_not_called()
+        mocked_insert.assert_not_called()
+
+    @patch.object(ec, "_audit_insert")
+    def test_unresolvable_tag_never_raises_from_logging_itself(self, mocked_insert):
+        # No env configured for this tag at all — get_env_config() inside
+        # _log_gate_decision() fails; that must never surface as anything
+        # other than the ORIGINAL UnvalidatedProdRequesterError.
+        with self.assertRaises(ec.UnvalidatedProdRequesterError):
+            ec._validate_prod_requester("no-such-tag-at-all", None, "Sales Order", "read")
+        mocked_insert.assert_not_called()
+
+
+class GetResourceInternalFlagTests(unittest.TestCase):
+    """F12, .scratch/hermes-erp-bot-reliability/spec.md: get_resource()'s
+    `internal=True` replaces a blanket User/DocType/Role doctype
+    exemption on the read path — a business-intent read of those
+    doctypes now gets logged; only a caller that explicitly marks itself
+    internal (resource_exists(), _fetch_doctype_role_permissions()) is
+    skipped."""
+
+    @patch.object(ec, "_log_read")
+    @patch.object(ec, "_request", return_value={"data": {"name": "nikhil.sharma@qkeee.in"}})
+    @patch.object(ec, "get_env_config", return_value={"tag": "default"})
+    @patch.object(ec, "_validate_prod_requester")
+    def test_business_read_of_user_doctype_is_logged(self, mocked_gate, mocked_cfg, mocked_request,
+                                                       mocked_log_read):
+        ec.get_resource("default", "User", "nikhil.sharma@qkeee.in", requested_by="admin@org.com")
+        mocked_log_read.assert_called_once()
+        self.assertFalse(mocked_log_read.call_args.kwargs.get("internal", False))
+
+    @patch.object(ec, "_log_read")
+    @patch.object(ec, "_request", return_value={"data": {"name": "Sales Order"}})
+    @patch.object(ec, "get_env_config", return_value={"tag": "default"})
+    @patch.object(ec, "_validate_prod_requester")
+    def test_resource_exists_marks_its_own_read_internal(self, mocked_gate, mocked_cfg, mocked_request,
+                                                           mocked_log_read):
+        self.assertTrue(ec.resource_exists("default", "DocType", "Sales Order"))
+        mocked_log_read.assert_called_once()
+        self.assertTrue(mocked_log_read.call_args.kwargs.get("internal"))
+
+    def test_log_read_skips_when_internal_regardless_of_doctype(self):
+        with patch.object(ec, "_audit_insert") as mocked_insert:
+            ec._log_read({"tag": "t"}, "Sales Order", "SO-0001", "priya@org.com", None, None,
+                          internal=True)
+        mocked_insert.assert_not_called()
+
+    def test_log_read_still_exempts_true_recursion_doctypes_when_not_internal(self):
+        with patch.object(ec, "_audit_insert") as mocked_insert:
+            ec._log_read({"tag": "t"}, ec.AUDIT_LOG_DOCTYPE, "AL-1", "priya@org.com", None, None)
+        mocked_insert.assert_not_called()
+
+
+class GetUserRolesAuditLoggingTests(unittest.TestCase):
+    """F12: get_user_roles() previously never routed through _log_read()
+    at all — a business-intent `roles <user>` lookup (the CLI command, or
+    a domain script) left no Audit Log row regardless of doctype
+    exemptions. Now logs unless internal=True."""
+
+    @patch.object(ec, "_log_read")
+    @patch.object(ec, "_request", return_value={"data": {"roles": [{"role": "Purchase Manager"}]}})
+    @patch.object(ec, "get_env_config", return_value={"tag": "default"})
+    def test_business_lookup_is_logged(self, mocked_cfg, mocked_request, mocked_log_read):
+        ec.get_user_roles("default", "priya@org.com", requested_by="admin@org.com")
+        mocked_log_read.assert_called_once()
+        args = mocked_log_read.call_args[0]
+        self.assertEqual(args[1], "User")
+        self.assertEqual(args[2], "priya@org.com")
+        self.assertEqual(args[3], "admin@org.com")  # requested_by = who's asking
+
+    @patch.object(ec, "_log_read")
+    @patch.object(ec, "_request", return_value={"data": {"roles": []}})
+    @patch.object(ec, "get_env_config", return_value={"tag": "default"})
+    def test_internal_lookup_from_bot_identity_is_not_logged(self, mocked_cfg, mocked_request, mocked_log_read):
+        ec.get_user_roles("default", internal=True)
+        mocked_log_read.assert_not_called()
+
+    @patch.object(ec, "get_user_roles", return_value={"user": "bot@org.com", "roles": []})
+    def test_bot_identity_resolution_passes_internal_true(self, mocked_roles):
+        ec._BOT_IDENTITY_CACHE.clear()
+        self.addCleanup(ec._BOT_IDENTITY_CACHE.clear)
+        ec._bot_identity("some-tag")
+        mocked_roles.assert_called_once_with("some-tag", internal=True)
+
+    @patch.object(ec, "_fetch_doctype_role_permissions", return_value=([], None))
+    @patch.object(ec, "get_user_roles", return_value={"user": "priya@org.com", "roles": ["Sales User"]})
+    def test_requester_role_fallback_passes_internal_true(self, mocked_roles, mocked_perms):
+        ec._requester_has_role_permission("some-tag", "Quotation", "write", "priya@org.com")
+        mocked_roles.assert_called_once_with("some-tag", "priya@org.com", internal=True)
 
 
 if __name__ == "__main__":

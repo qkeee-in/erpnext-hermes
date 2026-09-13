@@ -240,7 +240,25 @@ for the exact mechanism.
   `_requester_has_role_permission()`'s own docstring in `core/client.py`.
 - **Read audit logging, always on.** Every access gets an audit row in
   `Qkeee Bot Audit Log`, reads included, unconditionally — there is no
-  debug flag gating this in `core/client.py`.
+  debug flag gating this in `core/client.py`. The read-path exemption
+  (`_LOG_READ_RECURSION_EXEMPT_DOCTYPES`) is narrow and purpose-keyed, not
+  doctype-keyed: only a doctype/name check this connector runs on its own
+  behalf (`resource_exists()`, `_fetch_doctype_role_permissions()`,
+  `_bot_identity()`) skips logging, via an explicit `internal=True` —
+  never a business-intent read, even of `User`/`Role`/`DocType` (F12,
+  `.scratch/hermes-erp-bot-reliability/spec.md`; contrast the *write*
+  path's `AUDIT_EXEMPT_DOCTYPES`, which does exempt those doctypes
+  wholesale for `init_bot.py`'s own bootstrap reasons — read and write
+  exemptions are deliberately different sets, don't conflate them).
+- **A denied requester-permission check is logged too, not just an
+  allowed one.** `_validate_prod_requester()` writes one gate-decision
+  row to `Qkeee Bot Audit Log` on every branch — denial or allow — via
+  `_log_gate_decision()` (F11, same spec). Before this, a refused call
+  raised before any read/write it was guarding ever ran, and the gate
+  itself never logged — so a denial left literally nothing in the audit
+  trail, the opposite of what a GRC review needs. Look for
+  `response_payload.gate_check: true` to tell a gate-decision row apart
+  from a real read/write row sharing the same action/status vocabulary.
 - **PII/GDPR redaction, single source.** `core.client.redact_pii()` is
   the one place sensitive fields get scrubbed before display, storage, or
   logging. Never re-implemented per domain.
