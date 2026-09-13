@@ -113,18 +113,20 @@ specifically for the multi-tag case, not as a blanket preference over the
 native mechanism. Use the `${HERMES_SKILL_DIR}` template token for any
 path a script needs to itself, rather than a hardcoded relative path.
 
-**Never read `qkeee-erp.env`'s contents into your own context to
-"confirm" it, and never compose a command that embeds a raw secret
-value.** If a value needs confirming, ask the user to check the file
-themselves, out-of-band. This file is deliberately **not** the profile's
-main `.env` — keeps credentials physically separate from any LLM-provider
-secret that might live there.
+**Ask the user to check a value in `qkeee-erp.env` themselves,
+out-of-band, whenever it needs confirming.** This file is deliberately
+**not** the profile's main `.env` — keeps credentials physically separate
+from any LLM-provider secret that might live there. **Never read its
+contents into your own context to "confirm" it, and never compose a
+command that embeds a raw secret value** — the DEMO_ERP incident above
+is exactly what reading it into context to work around a missing-var
+error looks like.
 
 ## Discovering a doctype's live shape — `discover.py`
 
-Never propose a field/doctype shape from general ERPNext knowledge alone
-(Non-negotiable 4 in `00-conventions.md`). Resolve it against the live
-instance first:
+Resolve a doctype's field/shape against the live instance first
+(Non-negotiable 4 in `00-conventions.md`) — never propose it from general
+ERPNext knowledge alone:
 
 - `discover.py resolve "<DocType>"` — module + owning app +
   submittable/custom flags. Run before assuming any doctype is uncovered
@@ -187,9 +189,9 @@ plain file I/O, never `/tmp`. **Not `terminal.cwd`:** the local CLI
 backend (this skill's primary usage path) deliberately ignores that
 config key and always uses the launch directory — only gateway- and
 cron-driven sessions bridge it into a fixed path. `<profile>/workspace/`
-is the one directory
-that's stable regardless of which backend or invocation mode is running,
-provisioned at profile creation alongside `memories/`, `skills/`, etc. —
+is the one directory that's stable regardless of which backend or
+invocation mode is running, provisioned at profile creation alongside
+`memories/`, `skills/`, etc. —
 see `00-conventions.md`'s naming table. Most tasks need none of this:
 Hermes' own session transcript already retains the working conversation,
 so reach for scratch only when something is genuinely too bulky to keep

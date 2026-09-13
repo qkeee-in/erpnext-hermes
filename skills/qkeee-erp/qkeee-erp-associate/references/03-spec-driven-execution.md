@@ -20,6 +20,15 @@ and built for exactly that shape of work. Still write the spec below when
 the work fits in one sitting with one actor — don't reach for Kanban by
 default.
 
+**Two rules once a board is in play.** *Refer by name*: in anything a
+human reads — narration, a status update, a hand-off — name a card by
+its title, never by a bare id ("the GSTIN backfill card," not "card
+#14"); a wall of ids is illegible, a name reads at a glance. *The board
+is an index, not a store*: each card gists its own work and links out to
+where the detail actually lives (a spec file, a domain doctype, a
+comment thread) — a decision or a finding lives in exactly one place,
+never restated across the card and its detail going out of sync.
+
 ## When a spec is required
 
 **Required:** any write (create/update/submit/cancel/delete), any
@@ -41,9 +50,15 @@ low, the cost of an unreviewed multi-step write is not.
    environment tag (if not already resolved per `SKILL.md`'s activation
    sequence), which domain(s) it touches, expected scope of a write
    (how many records, which doctype), and any constraint the user implied
-   but didn't state. Ask; don't guess a scope-defining detail. **Done
-   when:** target tag, domain(s), and write scope are each resolved from
-   the user's actual answer, not assumed.
+   but didn't state. Ask; don't guess a scope-defining detail. **More
+   than one open question: ask the whole frontier in one round, not one
+   at a time.** The frontier is every question whose prerequisites are
+   already settled — what you can ask now without guessing at an answer
+   you haven't heard yet. Number each, give your own recommended answer
+   alongside it, then wait for the user's reply before drafting; don't
+   drip questions across turns when they could all be asked together.
+   **Done when:** target tag, domain(s), and write scope are each
+   resolved from the user's actual answer, not assumed.
 2. **Draft the spec.** Use the template below. Keep it crisp — this is a
    working contract, not a report. State plainly where a functional
    detail is still unconfirmed against live metadata (Non-negotiable 4,

@@ -41,6 +41,7 @@ place to land.
 | Memory breadcrumb | one line in `<profile>/memories/MEMORY.md` via the `memory` tool | `qkeee-erp env prod-in: ... — see skill qkeee-erp-learned/prod-in` |
 | Working scratch (rare) | `<profile>/workspace/qkeee-erp/<env-tag>/` | disposable, cleared at end of task |
 | Task spec | `./qkeee-erp-specs/<slug>-<YYYYMMDD-HHMM>.md`, relative to the session's actual working directory (`terminal.cwd` on gateway/cron, launch dir on local CLI) | see `references/03-spec-driven-execution.md`; `<profile>/workspace/...` only as a last-resort fallback when neither resolves; disposable across sessions, not mid-task |
+| Questionnaire | `./qkeee-erp-specs/questionnaire-<slug>-<YYYYMMDD-HHMM>.md` | see `qkeee-erp-questionnaire`; same working-directory placement rule as Task spec above |
 | New-learning entries | append under `## Learned <YYYY-MM-DD>` | never edit or delete a prior entry |
 
 **Before any `skill_manage(create)` touching ERPNext/organizational
@@ -132,10 +133,10 @@ for the exact mechanism.
    Code-enforced for every `create`/`update`, not left to `discover.py`
    being called by hand: `execute_write.py` runs every payload through
    `schema_mapping.map_payload_for_write()` before dispatch, which fetches
-   the live schema and maps fields against it
-   instead of relying on a domain doc's hand-curated field list. See
-   `schema_mapping.py`'s own module docstring for the fuzzy-match
-   confirmation story and the fetch-failure degrade path.
+   the live schema and maps fields against it instead of relying on a
+   domain doc's hand-curated field list. See `schema_mapping.py`'s own
+   module docstring for the fuzzy-match confirmation story and the
+   fetch-failure degrade path.
 5. **Save-draft-then-review-then-submit, always three distinct steps —
    code-enforced, not just sequencing discipline.** `create`/`update` and
    `submit` are always separate `mutate` calls. Re-fetch the record by its
@@ -172,70 +173,57 @@ for the exact mechanism.
 
 ## GRC baseline
 
-- **Source the requester identity from the channel's own authenticated
-  sender field, never reconstruct it conversationally.** Hermes' gateway
-  already resolves and authorizes the inbound sender before this skill
-  ever sees the message (platform allowlists, DM pairing — see
+- **Resolve requester identity from the channel's own authenticated
+  sender field, every call — never from what the conversation says.**
+  Hermes' gateway already resolves and authorizes the inbound sender
+  before this skill ever sees the message (platform allowlists, DM
+  pairing — see
   [Security | Hermes Agent](https://hermes-agent.nousresearch.com/docs/user-guide/security)'s
-  "User Authorization" section). Use that already-resolved platform
+  "User Authorization" section); feed that already-resolved platform
   identity (the Google Chat/Discord user id, or the email `From` header)
-  as the input to the ERPNext-`User` lookup below — don't ask the model to
-  infer or restate who's asking from conversation text, and never accept a
-  `requested_by` that didn't originate from that channel-provided field.
-  **Live-observed failure mode: when the channel-resolved requester is correctly refused for
-  lacking a role/permission, never offer or accept a substitute
-  `requested_by` as a way around it — not "tell me a different user to
-  run this as," not picking a fallback identity (e.g. the instance admin)
-  unprompted.** A user typing a different email into chat is not the
-  same as that email being the channel's own authenticated sender field —
-  accepting it would be exactly the "reconstruct it conversationally"
-  failure this bullet already forbids, just one conversational turn
-  removed. The only correct responses to a permission-denied requester
-  are: (1) report the gap by name (the missing role, the doctype/action
-  it would need to cover) so the user or an admin can fix the actual
-  requester's role assignment, or (2) decline the request. Never reroute
-  it to a different identity, ever, regardless of who suggests it. This
-  connector's own refusal messages (`UnvalidatedProdRequesterError`) say
-  so explicitly for exactly this reason — see `core/client.py`. This is
-  what `resource_exists(tag, "User", requested_by)` and
-  `check_user_permission()` are validating *against*; they can't detect a
-  plausible-looking but fabricated identity that was never actually tied
-  to the channel message.
-- **RBAC pre-check, every environment.** The associate runs the same
-  requester-permission check on every environment, every fetch or
-  write, not PROD only: resolve the requester as a real ERPNext `User`,
-  then confirm via ERPNext's own `frappe.client.has_permission` that they
-  actually hold the permission the call needs. Presence of `requested_by`
-  is mandatory on every tag, no exceptions — there is no PROD/non-PROD
-  distinction left, and no config default to satisfy it with; it must
-  come from the live channel identity, every call. Function/constant
-  names (`_validate_prod_requester()`, `PROD_GATE_EXEMPT_DOCTYPES`)
-  reflect a narrower PROD-only origin — don't read the name as scope.
-  **When that RPC is known unreliable (a privileged bot identity or a
-  non-discriminating `has_permission`), a second, independent, RPC-free
-  check REPLACES the
-  domain-allowlist/advisory-token fallback (2026-09-11 decision):**
-  `_requester_has_role_permission()` computes locally, from the
-  requester's own live role list and the doctype's own live DocPerm
-  rows, whether any role they hold actually grants the permission in
-  question. Only a `True` result (a locally-confirmed grant) lets the
-  call through — a `False` result (positive evidence of no permission)
-  and an inconclusive `None` result (either live read failed — commonly
+  into the ERPNext-`User` lookup below. On a permission denial, respond
+  with exactly one of two things: name the gap (the missing role, the
+  doctype/action it needs) so the user or an admin can fix the real
+  requester's role assignment, or decline. **Never substitute a
+  different `requested_by`** — a user-typed alternative email, a
+  fallback identity like the instance admin, anything not the channel's
+  own field — that is the same failure as inferring identity from
+  conversation text, one turn removed, and this connector's own refusal
+  messages (`UnvalidatedProdRequesterError`, `core/client.py`) say so
+  explicitly. `resource_exists(tag, "User", requested_by)`/
+  `check_user_permission()` validate against whatever identity is passed
+  in; they cannot detect a plausible-looking but fabricated one — which
+  is exactly why the identity must come from the channel field, never
+  from anyone's say-so mid-conversation.
+- **Run the same requester-permission check on every environment, every
+  fetch or write.** Resolve the requester as a real ERPNext `User`, then
+  confirm via ERPNext's own `frappe.client.has_permission` that they
+  actually hold the permission the call needs — `requested_by` is
+  mandatory on every tag, always resolved from the live channel identity
+  (no PROD/non-PROD split, no config default). Function/constant names
+  (`_validate_prod_requester()`, `PROD_GATE_EXEMPT_DOCTYPES`) reflect a
+  narrower PROD-only origin — read them by behavior, not by name.
+
+  **When that RPC is known unreliable** (a privileged bot identity, or a
+  non-discriminating `has_permission`), `_requester_has_role_permission()`
+  takes over: a second, independent, RPC-free check computed locally
+  from the requester's own live role list and the doctype's own live
+  DocPerm rows. Only a `True` verdict (a locally-confirmed grant) lets
+  the call through. A `False` verdict (positive evidence of no
+  permission) or an inconclusive `None` (a live read failed — commonly
   the same System-Manager-level DocType read this skill already flags as
-  a real gap on a correctly least-privileged bot) both refuse the call outright
-  now, uniformly, for read and write alike. A `domain` allowlist or a
-  verified advisory token no longer rescues either case: those attest a
-  write's *shape* was reviewed ahead of time, never that `requested_by`
-  specifically can do it, and that distinction stopped being good enough
-  once `has_permission` itself can't be trusted. Trade-off, stated
-  plainly: this makes System-Manager-level DocType read a hard
-  requirement for ANY write once precheck is unreliable, including a
-  domain-scoped one that used to proceed on the allowlist alone —
-  availability loss, in exchange for never proceeding without positive,
-  locally-confirmed evidence. This is a corroborating signal, not a
-  reimplementation of Frappe's permission engine — User Permissions and
-  `if_owner` scoping aren't visible to it; see
-  `_requester_has_role_permission()`'s own docstring in `core/client.py`.
+  a real gap on a correctly least-privileged bot) both refuse the call
+  outright, for read and write alike — a `domain` allowlist or a
+  verified advisory token no longer rescues either case, since those
+  attest a write's *shape* was reviewed ahead of time, never that
+  `requested_by` specifically can do it. Trade-off, stated plainly: this
+  makes System-Manager-level DocType read a hard requirement for ANY
+  write once precheck is unreliable — availability loss, in exchange for
+  never proceeding without positive, locally-confirmed evidence. A
+  corroborating signal, not a reimplementation of Frappe's permission
+  engine — User Permissions and `if_owner` scoping aren't visible to it;
+  see `_requester_has_role_permission()`'s own docstring in
+  `core/client.py`.
 - **Read audit logging, always on.** Every access gets an audit row in
   `Qkeee Bot Audit Log`, reads included, unconditionally — there is no
   debug flag gating this in `core/client.py`. The read-path exemption
@@ -381,33 +369,14 @@ for the exact mechanism.
 - **Non-ERPNext systems** — see `references/non-erpnext-adapter.md`:
   explicitly request API docs, a user guide, or a URL before attempting
   any action against a system that isn't ERPNext.
-- **Shipped skill is protected from autonomous drift.** `qkeee-erp-associate`
-  itself must stay outside Hermes' autonomous background-review lifecycle
-  maintenance so it never silently rewrites its own audit/RBAC/redaction
-  logic — only the `qkeee-erp-learned/*` satellite skills stay open to
-  that evolution. Mechanically this is a Hermes profile config
-  decision, not something set in this skill's own frontmatter: per
-  `agent/skill_utils.py`'s `is_external_skill_path()`, a skill directory
-  under `skills.external_dirs`, or a trusted project-local skills dir
-  (`get_project_skills_dirs()`), is treated as externally-owned —
-  discoverable and still editable by a foreground, user-directed tool
-  call, but read-only to the autonomous curator/background-review pass.
-  Whoever owns the target Hermes profile's `config.yaml` needs to confirm
-  this skill's install path resolves under one of those two — this is an
-  operator action, not something `qkeee-erp-associate`'s own code can
-  enforce on itself.
-- **Doc claims about skill-write gating are not self-enforcing — verify
-  `config.yaml` matches them.** `profile.md` states local skill writes are
-  gated by `skills.write_approval` and reviewed before landing; that's
-  only true if `skills.write_approval: true` is actually set in
-  `config.yaml` — the key defaults off (`tools/write_approval.py`), and a
-  profile can drift into having the doc claim without the config backing
-  it (this happened: see the check-before-create rule above). Same for
-  `curator.consolidate` (default off, `agent/curator.py`) — the
-  mechanism that would otherwise merge overlapping agent-created skills
-  back into this one doesn't run unless explicitly turned on. Neither is
-  this skill's own code to enforce; flag a mismatch to the operator if
-  ever discovered, same as the `external_dirs` check above.
+- **Shipped skill is protected from autonomous drift; verify doc claims
+  against actual config.** `qkeee-erp-associate` must stay outside
+  Hermes' autonomous background-review lifecycle so it never silently
+  rewrites its own audit/RBAC/redaction logic — see
+  `references/governance.md` for the mechanism
+  (`skills.external_dirs`, the background-review write guard) and for
+  the two confirmed cases where a profile drifted into a doc claim its
+  `config.yaml` didn't actually back.
 
 ## Report-back
 

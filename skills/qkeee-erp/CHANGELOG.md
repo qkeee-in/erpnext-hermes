@@ -39,3 +39,69 @@ completion criterion to every numbered step across `SKILL.md`,
 new `## Report-back` contract in `00-conventions.md`. See
 `agents/.scratch/mattpocock-skills-adoption/plan.md` (companion repo) for
 the full analysis this pass executes against.
+
+## 2026-09-13 — writing pass, batch 2
+
+Moved `SKILL.md`'s Governance and Status-note sections (operator/
+maintainer material) to new `qkeee-erp-associate/references/governance.md`
+— router 248 → 200 lines. Split `01-connectivity.md`'s worked CLI/
+`execute_write.py` invocations into new `references/cli-cookbook.md`,
+latched only once a call is about to run; `01-connectivity.md` keeps the
+always-needed mechanics. Normalized domain-file section templates:
+`mis.md`'s stray sixth heading folded into its Non-negotiables section,
+`manufacturing.md`'s per-heading status parentheticals moved into each
+section's one-line caveat and its missing Relationships section added.
+10 of 11 domain files now share an identical five-heading skeleton
+(`grc-audit.md` deliberately kept its own second heading — its content
+isn't a behavioral-rule list, so the standard name would misdescribe
+it). No rule's enforceable meaning changed.
+
+## 2026-09-13 — writing pass, batch 3
+
+- **Dedup (C8):** `00-conventions.md`'s GRC baseline had drifted into
+  restating `governance.md`'s own two sections. Replaced both restated
+  bullets with one-line pointers; moved the "doc claims vs. actual
+  config" content (not previously in `governance.md`) there as its own
+  section. `00-conventions.md` GRC baseline: ~237 → ~205 lines.
+- **Positive-target rewrite (C4):** rewrote the two most negation-led GRC
+  bullets — requester-identity resolution (F10) and the RBAC pre-check
+  — to lead with the positive target, retaining exactly one prohibition
+  each for the hard security guardrail underneath (never substitute a
+  requester; never trust `has_permission` once known unreliable without
+  the local fallback). Two similarly negation-led lines in
+  `01-connectivity.md` (the `qkeee-erp.env` read-into-context ban, the
+  `discover.py` intro) rewritten the same way. Every other GRC-baseline
+  bullet was already positive-led with a necessary retained ban — left
+  as-is rather than force a rewrite that wouldn't change meaning.
+- **Folds:** `grilling`'s frontier/numbered-rounds clarify method into
+  `03-spec-driven-execution.md` step 1 (C10). `diagnosing-bugs`' "red"
+  signal + "a WARN in the same output outranks your prior" into
+  `02-environment-assessment.md` step 4 — targets F8's exact
+  misdiagnosis (C11). `wayfinder`'s "refer by name" + "the board is an
+  index, not a store" into the Kanban section (C17).
+- **Two new shipped skills (C13/C14):** `qkeee-erp-questionnaire` (turn
+  a data gap only someone else can fill — supplier KYC, an HR field, a
+  doc-extraction low-confidence field — into a questionnaire document to
+  hand them; fills the gap F2 hit) and `qkeee-erp-handoff` (emit a fixed
+  ERP continuity block — env tag, requester-identity rule, `session_id`
+  reset, active spec path — before a hand-off or context compaction;
+  F1's "compaction is a new logical session" rule had nothing carrying
+  state across that boundary). Both cross-referenced from
+  `qkeee-erp-associate/SKILL.md`'s intro and, for the questionnaire's
+  output path, `00-conventions.md`'s naming table.
+- **Category router (C15):** new `skills/qkeee-erp/DESCRIPTION.md`.
+- **C18 (requires_tools gating) — substituted, not implemented as
+  specified.** Hermes' conditional-activation fields
+  (`requires_tools`/`requires_toolsets`/`session_platforms`) gate on
+  tool/toolset/platform presence; neither new skill has a real
+  dependency of that kind to gate on; a "child of qkeee-erp-associate"
+  gate doesn't exist as a mechanism. Substituted narrowly-scoped,
+  ERPNext-specific descriptions plus `related_skills` metadata as the
+  practical equivalent — controls accidental firing the way the plan
+  intended, without declaring a tool dependency that isn't real.
+
+No rule's enforceable meaning changed anywhere in this pass. 216 tests,
+28 subtests still pass throughout (docs/new-skills only — `scripts/`
+untouched). Closes the mattpocock-skills-adoption plan's in-scope items
+(C1–C11, C13–C15, C17, C18); C12 and C16 remain deliberately deferred
+until F1–F13 is reviewed and committed.

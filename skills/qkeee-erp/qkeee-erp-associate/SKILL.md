@@ -34,7 +34,10 @@ in `references/00-conventions.md`/`01-connectivity.md` — read those before
 the first ERPNext call of a session, not instead of this file, but
 alongside it. Every procedure specific to a domain lives in
 `references/domains/<slug>.md`, latched only when the conversation's
-intent actually needs it.
+intent actually needs it. Two sibling skills handle what this one
+deliberately doesn't: `qkeee-erp-questionnaire` when a write is blocked
+on data only a different person holds, `qkeee-erp-handoff` before a
+context hand-off or compaction.
 
 ## Scope guardrail
 

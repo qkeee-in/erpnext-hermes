@@ -57,3 +57,17 @@ them is code-enforced today:
 Don't claim a capability is fully enforced in code without confirming it
 in `scripts/` — say what's live vs. planned plainly, the same discipline
 `references/domains/grc-audit.md` asks of any GRC-framed conversation.
+
+## Doc claims vs. actual config
+
+Verify `config.yaml` before repeating a doc claim about it — a profile
+can drift into having the claim without the config backing it. Two
+confirmed cases: `profile.md` states local skill writes are gated by
+`skills.write_approval` and reviewed before landing; that's only true
+if `skills.write_approval: true` is actually set (the key defaults off,
+`tools/write_approval.py`). `curator.consolidate` (default off,
+`agent/curator.py`) is the mechanism that would otherwise merge
+overlapping agent-created skills back into this one — it doesn't run
+unless explicitly turned on. Neither is this skill's own code to
+enforce; flag a mismatch to the operator if ever discovered, same as the
+`external_dirs` check above.
