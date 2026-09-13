@@ -162,6 +162,9 @@ all** (a third-party tool, an internal API) follows
   baseline. Read first, applies to every domain.
 - `references/01-connectivity.md` — REST/Frappe mechanics, env resolution,
   `discover.py` usage, the `qkeee-erp.env` design decision.
+- `references/cli-cookbook.md` — worked `core/client.py`/`execute_write.py`
+  invocations (copy-paste, not mechanics); latch only once a call is
+  actually about to run.
 - `references/02-environment-assessment.md` — the per-environment-tag
   cataloging procedure this activation sequence's step 2 depends on.
 - `references/03-spec-driven-execution.md` — clarify → spec → persist →
@@ -193,56 +196,8 @@ all** (a third-party tool, an internal API) follows
   illustrative findings — no live `skill_manage` call was exercised to
   create it; see that directory's `README.md`.
 - `qkeee-erp-associate.env.example` — template for `$HERMES_HOME/qkeee-erp.env`.
-
-## Governance: this skill is externally-owned, not curator-managed
-
-This shipped skill must stay closed to Hermes' autonomous background-
-review pass (which may otherwise "improve" its audit/RBAC/redaction
-logic unsupervised), while the `qkeee-erp-learned/*` satellite skills
-stay open to that same evolution — that's the whole point of the split.
-The mechanism is `skills.external_dirs` in `config.yaml` (**a config
-entry, not a frontmatter flag** — skill_usage.py deliberately keeps this
-kind of policy out of user-authored SKILL.md content), which the
-background-review write guard (`_background_review_write_guard`) checks
-first and refuses ANY autonomous `edit`/`patch`/`delete`/`write_file`/
-`remove_file` against, unconditionally — "external skills are read-only
-to the curator." This repo's own `config.yaml` lists `skills/qkeee-erp`
-under `skills.external_dirs`, which covers this skill (a subdirectory of
-it). A foreground, user-directed edit is unaffected — the guard only
-blocks the *autonomous* curator pass. Complementary belt-and-suspenders
-option for whoever operates the live profile: `hermes curator pin
-qkeee-erp-associate` additionally blocks `skill_manage(action="delete")`
-itself, not just autonomous writes — this requires a live profile/CLI,
-not a repo-side config change.
-
-## Status note (read this before assuming a capability is fully live)
-
-`scripts/core/client.py` and the domain modules with a write path are
-real, tested code, including RBAC-every-environment and always-on read
-audit logging (see `00-conventions.md`'s GRC baseline).
-
-Two distinct things sit under "advisory-first draft," and only one of
-them is code-enforced today:
-
-- **The double-confirm GATE on submit/cancel/delete** (never let a write
-  through without a fresh, exact-match confirmation over what was just
-  shown to the user) **is code-enforced**, uniformly, via
-  `core.client.mutate_resource()`'s `DOMAIN_TOKEN_GATED_ACTIONS` registry
-  (`register_domain_token_gate()`) for accounts/hr-payroll/sales/
-  procurement/inventory's submit/cancel, and via each domain's own
-  bespoke token scheme for fixed-assets' depreciation/disposal and
-  system-admin's destructive/permission/config actions. Compute the token
-  via `scripts/core/confirm_token.py`'s `advisory-token` CLI (or a
-  domain's own token constructor) over the exact facts confirmed — never
-  hand-construct one.
-- **Composing the draft's actual content** — a Journal Entry's balance
-  check and narration, a cancel's impact statement, a Quotation's
-  presentation — still depends on the `render_*.py` scripts several
-  domain files describe, which are **not yet present in this skill's
-  `scripts/` directory**. The gate above will refuse an unconfirmed
-  submit/cancel either way, but nothing yet code-assists producing the
-  draft itself; that part is still prompt discipline.
-
-Don't claim a capability is fully enforced in code without confirming it
-in `scripts/` — say what's live vs. planned plainly, the same discipline
-`references/domains/grc-audit.md` asks of any GRC-framed conversation.
+- `references/governance.md` — operator/maintainer material: why this
+  skill is externally-owned (curator-drift protection) and which
+  capabilities are actually code-enforced vs. still prompt discipline.
+  Read once at install or when auditing this skill's own health — not
+  needed for a normal session.

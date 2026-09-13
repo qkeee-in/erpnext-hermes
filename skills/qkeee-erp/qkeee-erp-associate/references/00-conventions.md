@@ -287,8 +287,9 @@ for the exact mechanism.
   blank — `session_id` hardcoded to `""`, `channel_metadata` never built
   at all, `latest_prompt` never passed (only a paraphrased
   `prompt_summary`), even when the real platform thread id was sitting in
-  context the whole time. `execute_write.py` (`01-connectivity.md`) is
-  the fix: it's the one write entry point, and it WARNs loudly on stderr
+  context the whole time. `execute_write.py` (`01-connectivity.md`,
+  worked examples in `cli-cookbook.md`) is the fix: it's the one write
+  entry point, and it WARNs loudly on stderr
   before firing if any of the three is missing — use it instead of
   hand-writing a write script, and don't route around its warning.
 - **`session_id` specifically — regenerate per platform session, never

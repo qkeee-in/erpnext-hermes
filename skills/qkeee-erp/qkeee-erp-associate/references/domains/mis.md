@@ -1,20 +1,8 @@
 # Domain: mis (GL / MIS reporting, read-only)
 
 Code lives in `scripts/domains/mis.py`
-(`ALLOWED_WRITE_DOCTYPES = ()` — deliberately empty, see below).
-
-## Read-only, always — enforced in code, not by omission
-
-`core.client.mutate_resource()` is one shared function used by every
-domain, so this domain's read-only guarantee is a **runtime
-write-allowlist gate**, not a missing write path: `domains/mis.py`
-registers an empty `ALLOWED_WRITE_DOCTYPES` tuple, so
-`core.client.mutate_resource(..., domain="mis")` refuses every doctype,
-unconditionally, via `DoctypeNotAllowedError`. Treat any proposal to add a
-doctype to this domain's allowlist as a decision that contradicts this
-domain's entire purpose, not a routine capability expansion.
-`domains.mis.mutate()` exists only for interface symmetry with every
-other domain module; calling it always fails.
+(`ALLOWED_WRITE_DOCTYPES = ()` — deliberately empty, see the
+non-negotiable below).
 
 ## When this domain applies
 
@@ -24,6 +12,17 @@ question over ERPNext's accounts data.
 
 ## Non-negotiables specific to this domain
 
+- **Read-only, always — enforced in code, not by omission.**
+  `core.client.mutate_resource()` is one shared function used by every
+  domain, so this domain's read-only guarantee is a **runtime
+  write-allowlist gate**, not a missing write path: `domains/mis.py`
+  registers an empty `ALLOWED_WRITE_DOCTYPES` tuple, so
+  `core.client.mutate_resource(..., domain="mis")` refuses every doctype,
+  unconditionally, via `DoctypeNotAllowedError`. Treat any proposal to
+  add a doctype to this domain's allowlist as a decision that
+  contradicts this domain's entire purpose, not a routine capability
+  expansion. `domains.mis.mutate()` exists only for interface symmetry
+  with every other domain module; calling it always fails.
 - **Numbers must tie out before they're presented.** Every report
   self-checks a reconciliation (debits vs credits, assets vs
   liabilities+equity, segment-sum vs company-total, drill-down-sum vs

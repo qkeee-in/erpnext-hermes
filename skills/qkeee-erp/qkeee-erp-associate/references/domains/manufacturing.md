@@ -23,14 +23,17 @@ this domain in the shipped skill yet, full stop. Anything below framed as
 "drafting/creating" a manufacturing doctype describes a future build
 target, not a live capability.
 
-## When this domain would apply (once built)
+## When this domain applies
 
 Building or reviewing a Bill of Materials, planning production (Production
 Plan / MRP), creating or tracking a Work Order, logging shop-floor
 progress via Job Card, or checking raw-material availability against a
-planned production run.
+planned production run — once built; see the intro above.
 
-## Proposed non-negotiables (unvalidated — confirm before trusting)
+## Non-negotiables specific to this domain
+
+Proposed, unvalidated — confirm each against a live instance before
+trusting it, same caveat as the intro above.
 
 - **A BOM change on an already-consumed-in-production item needs the same
   save-draft-then-review-then-submit discipline as any other domain** —
@@ -49,7 +52,9 @@ planned production run.
   transfers — unconfirmed which Job Card actions are submittable vs.
   plain status updates on this ERPNext version family.
 
-## Proposed procedure (draft, needs live confirmation)
+## Procedure
+
+Draft, needs live confirmation — same caveat as the intro above.
 
 1. Before proposing any manufacturing-specific field or workflow, run
    `discover.py resolve "BOM"` / `"Work Order"` / `"Job Card"` and
@@ -89,7 +94,9 @@ planned production run.
    **Done when:** both Link fields are confirmed resolved before progress
    is reported.
 
-## Quick reference (proposed, not yet built)
+## Quick reference
+
+Proposed, not yet built — see the intro above.
 
 | Capability | Outcome | Status |
 | --- | --- | --- |
@@ -98,9 +105,13 @@ planned production run.
 | Work Order creation/tracking | Production run drafted/tracked | Not built — needs stock-availability check design, analogous to inventory's |
 | Job Card logging | Shop-floor progress recorded | Not built — submit/status-transition behavior unconfirmed |
 
-## What this domain deliberately doesn't try to do yet
+## Relationships
 
-No write capability ships today. Read-only exploration (via the generic
+Reuses `domains/inventory.md`'s `get_bin_qty()` freshness-check
+convention for Work Order raw-material availability (proposed step 4
+above) rather than reinventing it — the one concrete cross-domain link
+this file has today. **What this domain deliberately doesn't try to do
+yet:** no write capability ships. Read-only exploration (via the generic
 `core.client.query_resource()`/`get_resource()`/`run_query_report()`,
 with `domain=` omitted since there's no allowlist yet to gate against) is
 usable today for a user who just wants to look at BOM/Work Order/Job Card
