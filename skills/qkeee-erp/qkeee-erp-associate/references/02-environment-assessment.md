@@ -66,6 +66,16 @@ Hermes' native memory tools.
    d. For a genuinely org-specific custom app with no public repo: build
       the understanding from live metadata + whatever the user explains,
       and say so explicitly rather than inventing an upstream source.
+   e. **Reproduce red before diagnosing an unexpected result.** A **red**
+      result — an error, a 403, a blocked call — needs a concrete repro
+      that actually fails on the exact thing that's wrong before it gets
+      explained, not a plausible-sounding guess about why it might be
+      expected. Read the rest of the same tool output first: a WARN or
+      status field printed alongside the error outranks any prior
+      assumption about what should be true (a `privileged: true` WARN one
+      line above a 403 means the 403 isn't a low-privilege story, however
+      intuitive that story feels) — never call a failure "expected"
+      without having read everything the call itself already said.
 5. **Cross-check the requester's identity.** Per the activation
    sequence's step 2 (see `SKILL.md`) — this happens on every session,
    not just first contact, but first contact is where "is this bot account
