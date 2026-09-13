@@ -131,9 +131,8 @@ for the exact mechanism.
    this DocType" beats a guessed field name that happens to resolve.
    Code-enforced for every `create`/`update`, not left to `discover.py`
    being called by hand: `execute_write.py` runs every payload through
-   `schema_mapping.map_payload_for_write()` before dispatch (issue 01,
-   `.scratch/hermes-erp-bot-reliability/issues/01-schema-first-attribute-
-   mapping.md`), which fetches the live schema and maps fields against it
+   `schema_mapping.map_payload_for_write()` before dispatch, which fetches
+   the live schema and maps fields against it
    instead of relying on a domain doc's hand-curated field list. See
    `schema_mapping.py`'s own module docstring for the fuzzy-match
    confirmation story and the fetch-failure degrade path.
@@ -183,8 +182,7 @@ for the exact mechanism.
   as the input to the ERPNext-`User` lookup below — don't ask the model to
   infer or restate who's asking from conversation text, and never accept a
   `requested_by` that didn't originate from that channel-provided field.
-  **Live-observed failure mode (F10, .scratch/hermes-erp-bot-reliability/
-  spec.md): when the channel-resolved requester is correctly refused for
+  **Live-observed failure mode: when the channel-resolved requester is correctly refused for
   lacking a role/permission, never offer or accept a substitute
   `requested_by` as a way around it — not "tell me a different user to
   run this as," not picking a fallback identity (e.g. the instance admin)
@@ -213,9 +211,9 @@ for the exact mechanism.
   come from the live channel identity, every call. Function/constant
   names (`_validate_prod_requester()`, `PROD_GATE_EXEMPT_DOCTYPES`)
   reflect a narrower PROD-only origin — don't read the name as scope.
-  **When that RPC is known unreliable (F7, .scratch/hermes-erp-bot-
-  reliability/spec.md — a privileged bot identity or a non-discriminating
-  `has_permission`), a second, independent, RPC-free check REPLACES the
+  **When that RPC is known unreliable (a privileged bot identity or a
+  non-discriminating `has_permission`), a second, independent, RPC-free
+  check REPLACES the
   domain-allowlist/advisory-token fallback (2026-09-11 decision):**
   `_requester_has_role_permission()` computes locally, from the
   requester's own live role list and the doctype's own live DocPerm
@@ -223,8 +221,8 @@ for the exact mechanism.
   question. Only a `True` result (a locally-confirmed grant) lets the
   call through — a `False` result (positive evidence of no permission)
   and an inconclusive `None` result (either live read failed — commonly
-  the same System-Manager-level DocType read F8 already flags as a real
-  gap on a correctly least-privileged bot) both refuse the call outright
+  the same System-Manager-level DocType read this skill already flags as
+  a real gap on a correctly least-privileged bot) both refuse the call outright
   now, uniformly, for read and write alike. A `domain` allowlist or a
   verified advisory token no longer rescues either case: those attest a
   write's *shape* was reviewed ahead of time, never that `requested_by`
@@ -245,15 +243,14 @@ for the exact mechanism.
   doctype-keyed: only a doctype/name check this connector runs on its own
   behalf (`resource_exists()`, `_fetch_doctype_role_permissions()`,
   `_bot_identity()`) skips logging, via an explicit `internal=True` —
-  never a business-intent read, even of `User`/`Role`/`DocType` (F12,
-  `.scratch/hermes-erp-bot-reliability/spec.md`; contrast the *write*
-  path's `AUDIT_EXEMPT_DOCTYPES`, which does exempt those doctypes
-  wholesale for `init_bot.py`'s own bootstrap reasons — read and write
-  exemptions are deliberately different sets, don't conflate them).
+  never a business-intent read, even of `User`/`Role`/`DocType` — contrast
+  the *write* path's `AUDIT_EXEMPT_DOCTYPES`, which does exempt those
+  doctypes wholesale for `init_bot.py`'s own bootstrap reasons; read and
+  write exemptions are deliberately different sets, don't conflate them.
 - **A denied requester-permission check is logged too, not just an
   allowed one.** `_validate_prod_requester()` writes one gate-decision
   row to `Qkeee Bot Audit Log` on every branch — denial or allow — via
-  `_log_gate_decision()` (F11, same spec). Before this, a refused call
+  `_log_gate_decision()`. Before this, a refused call
   raised before any read/write it was guarding ever ran, and the gate
   itself never logged — so a denial left literally nothing in the audit
   trail, the opposite of what a GRC review needs. Look for
@@ -285,8 +282,7 @@ for the exact mechanism.
   than blocking the write.
 - **`session_id`, `channel_metadata`, `latest_prompt` — resolve once per
   logical session, pass on every write, never leave blank because the
-  write "feels routine."** Live-observed (F1, `.scratch/
-  hermes-erp-bot-reliability/spec.md`): hand-writing a fresh one-off
+  write "feels routine."** Live-observed: hand-writing a fresh one-off
   Python script per write is exactly how these three keep getting left
   blank — `session_id` hardcoded to `""`, `channel_metadata` never built
   at all, `latest_prompt` never passed (only a paraphrased
@@ -367,10 +363,9 @@ for the exact mechanism.
   same turn; `confirmation_token`/`issued_at` are only used after the
   user's own reply affirmatively confirms that specific rendered draft.
 - **`gated_mutate_resource()` additionally requires `user_confirmation_text`
-  — the literal text of the user's own reply (F5, `.scratch/
-  hermes-erp-bot-reliability/spec.md`).** This is the domain-less
+  — the literal text of the user's own reply.** This is the domain-less
   advisory-token path (a doctype no named domain's `mutate()` has a
-  chance to layer a stricter rule onto, e.g. Item — see F3/issue 01); a
+  chance to layer a stricter rule onto, e.g. Item); a
   matching `confirmation_token` alone is computable and verifiable by the
   same process in the same turn, proving only that the payload wasn't
   altered since render, same limit as the paragraph above. The render
@@ -412,3 +407,34 @@ for the exact mechanism.
   back into this one doesn't run unless explicitly turned on. Neither is
   this skill's own code to enforce; flag a mismatch to the operator if
   ever discovered, same as the `external_dirs` check above.
+
+## Report-back
+
+What goes back to the user at the end of a turn or task, every domain,
+every time. A live session shipped a confidently wrong remediation claim
+in its closing message once — this section exists so that doesn't repeat.
+
+1. **Line 1 states the outcome and scope** — what happened, which
+   environment tag, read-only or read-write. No preamble, no restating
+   the request back.
+2. **Records touched are a table**, never prose: doctype, name, action,
+   docstatus. A reader should be able to scan it in one pass, not parse
+   sentences for it.
+3. **Warnings lead, ahead of the detail** — each its own line, before the
+   narrative: `_audit_log_status` not `"ok"`/`"exempt"`, a waived KYC, a
+   `local-*` fallback session, a `has_more` truncation, an unconfirmed
+   field mapping. A warning buried in paragraph three is a warning that
+   didn't fire.
+4. **Verified and assumed never share a sentence.** A field re-fetched and
+   checked against the live record reads differently from one inferred or
+   carried forward from an earlier turn — say which is which, every time,
+   not just when it happens to matter.
+5. **A remediation claim is live-confirmed or labelled a guess.** Never
+   state what a fix would require ("this needs a custom field on X")
+   without having checked it against live schema first — an unconfirmed
+   claim is one sentence away from being wrong in a way the user will act
+   on.
+6. **Done when:** the reply's first line states outcome and scope, every
+   touched record appears in a table, every warning precedes the
+   narrative detail, and no remediation claim in it is unlabelled as
+   verified or guessed.

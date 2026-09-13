@@ -1,0 +1,41 @@
+# qkeee-erp skills — changelog
+
+Repo-side record only. Never loaded into agent context — nothing in
+`qkeee-erp-associate/references/` should point here or at a finding
+number; this file is where that provenance moved to (2026-09-13 writing
+pass, batch 1 / C1). Findings F1–F13 were logged in a companion repo's
+local issue tracker (`.scratch/hermes-erp-bot-reliability/spec.md` and
+its `issues/01-schema-first-attribute-mapping.md`), not part of this
+repo — read there for the full incident writeup, reproduction, and code
+diff discussion behind each entry below. This file maps each finding to
+the rule it produced and where that rule now lives in the shipped skill.
+
+| Finding | What happened | Rule it produced | Lives in |
+| --- | --- | --- | --- |
+| F1 | Hand-written per-write scripts left `session_id` blank, never built `channel_metadata`, never passed `latest_prompt` — despite the real values being in context | `execute_write.py` is the one write entry point; WARNs on stderr before firing if session/channel/prompt context is missing | `00-conventions.md` GRC baseline; `01-connectivity.md` CLI usage |
+| F2 | Supplier KYC-completeness rule was treated as optional scope; GSTIN retry targeted the wrong doctype (Supplier instead of Address) | `procurement.py` refuses Supplier `create` without `kyc={...}` or an explicit waiver; tax ID documented as an Address field, never Supplier | `domains/procurement.md` non-negotiables |
+| F3 | `Item` has no owning domain and no documented India-compliance field list; HSN code was embedded in free text instead of attempted as a field | Generalized into issue 01 (schema-first attribute mapping) rather than a narrow Item patch | `domains/procurement.md` (cross-reference); issue 01 in the companion repo |
+| F4 | doc-extraction's mandatory staged report (confidence ratings + `reconciliation_check`) never ran — went straight from OCR to free text | Confidence/value-key refusal is code-enforced one step downstream (`schema_mapping.match_staged_report()`); a dedicated `render_*.py` staged-report script is still owed | `domains/doc-extraction.md` step 6 "Known gap" |
+| F5 | The Item write's confirmation token was self-computed and self-verified in the same turn/process | `gated_mutate_resource()` requires `user_confirmation_text` — the literal text of the user's own reply — not just a matching token | `00-conventions.md` GRC baseline; `01-connectivity.md` worked example |
+| F6 | Purchase cost auto-saved as this org's selling price (`standard_rate` bare on Item create defaults to Standard Selling) | `item_write_helpers.py` refuses a bare `standard_rate` on a purchase-sourced item create; points at the Standard Buying alternative | `01-connectivity.md` worked example comment |
+| F7 | Every write proceeded on a WARN, not a real per-requester RBAC check, under a privileged bot identity where `has_permission` doesn't discriminate | `_requester_has_role_permission()` — a local, RPC-free role/DocPerm check — replaces the allowlist/token fallback when the RPC is known unreliable; `False`/`None` both refuse | `00-conventions.md` GRC baseline (RBAC pre-check) |
+| F8 | Schema discovery (`discover.py`) didn't exist in the shipped skill; a 403 querying `DocField` directly was misdiagnosed as expected low-privilege access | `discover.py` resurrected and ported to the current connector API; `meta`/`resolve` go through `get_resource()`, never `query DocField` | `01-connectivity.md` "Discovering a doctype's live shape" |
+| F9 | `is_sales_item` set to 1 with nothing in a purchase invoice supporting it | Same fix as F6 — `item_write_helpers.py` defaults `is_purchase_item=1, is_sales_item=0` for a purchase-sourced item unless told otherwise | `01-connectivity.md` worked example comment |
+| F10 | Agent offered to re-attribute a permission-denied read to a different `requested_by` | Refusal messages and the GRC baseline explicitly forbid rerouting to a substitute requester; only "report the gap" or "decline" | `00-conventions.md` GRC baseline (requester identity) |
+| F11 | A denied requester-permission check left zero trace in the audit log — the gate raised before the guarded read/write ever ran, and the gate itself never logged | `_log_gate_decision()` writes one row per `_validate_prod_requester()` call, denial or allow | `00-conventions.md` GRC baseline; `domains/grc-audit.md` |
+| F12 | Business-intent reads of `User`/`Role` were silently dropped by a doctype-keyed audit exemption built for a different purpose (stopping internal plumbing calls from logging themselves) | Read-path exemption made purpose-keyed (`internal=True`), not doctype-keyed; a business-intent `User`/`Role` read is now a real logged row | `00-conventions.md` GRC baseline; `domains/grc-audit.md` |
+| F13 | Update's `field_diff` had been silently dead since it was built — the pre-image fetch never passed `requested_by`, so it was refused every time and the refusal was swallowed | Pre-image `get_resource()` call now carries the write's own `requested_by` and full session/channel/prompt context | `core/client.py` `mutate_resource()` (code fix; no doc rule needed) |
+
+## 2026-09-13 — writing pass, batch 1
+
+Stripped all `F<n>` / `.scratch/hermes-erp-bot-reliability` references from
+`qkeee-erp-associate/references/` (11 refs across `00-conventions.md`,
+`01-connectivity.md`, `domains/doc-extraction.md`, `domains/grc-audit.md`,
+`domains/procurement.md`) — see this file's table above for where each
+finding's rule now lives. No rule's enforceable meaning changed; only the
+case-number/path provenance moved here. Also added a **Done when:**
+completion criterion to every numbered step across `SKILL.md`,
+`03-spec-driven-execution.md`, and every `domains/*.md` procedure, and a
+new `## Report-back` contract in `00-conventions.md`. See
+`agents/.scratch/mattpocock-skills-adoption/plan.md` (companion repo) for
+the full analysis this pass executes against.

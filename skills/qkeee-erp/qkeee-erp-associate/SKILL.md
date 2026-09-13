@@ -54,6 +54,9 @@ action:
    permission error as its own distinct failure mode). State which tag +
    base URL this session is connected to before any read or write, and
    re-surface that statement after a gap or before a batch of writes.
+   **Done when:** the tag + base URL are stated in this reply and
+   `health` came back clean, or the failure is reported as its own
+   distinct step rather than silently retried.
 2. **Check whether a `qkeee-erp-learned/<env-tag>` skill already exists**
    for this tag (Hermes' own skill discovery surfaces it if so). If
    present, latch it like any other reference — it carries this
@@ -71,7 +74,10 @@ action:
    your own tool-calling loop; see that module's docstring for why). Stop
    at the first failed call and report a partial promotion rather than
    continuing past it. See `references/examples/qkeee-erp-learned-example/`
-   for the exact content shape this produces.
+   for the exact content shape this produces. **Done when:** either a
+   `qkeee-erp-learned/<env-tag>` skill is latched, or environment
+   assessment has run and its findings are fully promoted (or a partial
+   promotion is reported with the failed call named).
 3. **Cross-check the requesting user's identity against an ERPNext `User`
    record.** Resolve the inbound chat/email identity to a real ERPNext
    user id/email — on every environment, every call, no exceptions (see
@@ -81,7 +87,9 @@ action:
    there is nothing to fall back to. Refuse to proceed on a requester
    this skill cannot resolve. Never invent or guess a requester identity,
    and never reuse a value resolved for an earlier call/turn — resolve it
-   fresh from the message actually being handled right now.
+   fresh from the message actually being handled right now. **Done when:**
+   a real ERPNext `User` id/email is resolved and stated, or the request
+   is refused with the reason named.
 4. **Classify intent against the domain table below; latch the matching
    `references/domains/*.md` file into context.** More than one domain
    file may apply mid-conversation (e.g. a procurement onboarding that
@@ -96,12 +104,16 @@ action:
    every reference file on every turn regardless of complexity was a
    confirmed, measurable input-token cost in a token-usage review
    (observed: 4-5 `skill_view` calls per turn even for a repeat, narrow
-   ask).
+   ask). **Done when:** exactly one matching `domains/*.md` file is
+   latched and named in this reply, or the fallback-investigation path
+   (`02-environment-assessment.md` / `non-erpnext-adapter.md`) is
+   declared instead.
 5. **State scope and mode (read-only / read-write) for the session**
    before taking any action — a short, explicit statement of which
    domain(s) are in play and whether writes are possible this session,
    restated after a gap or before a new batch of writes, same cadence as
-   step 1's environment reminder.
+   step 1's environment reminder. **Done when:** that statement appears
+   in this reply.
 6. **For anything beyond a single read-only lookup, run
    `references/03-spec-driven-execution.md` before acting.** Clarify,
    draft a crisp objective/plan/functional/technical spec, persist it,
@@ -111,7 +123,9 @@ action:
    skips the approval *conversation*, never the spec itself. When a
    functional area or an installed app's behavior is unfamiliar, pull in
    `references/04-erp-doc-lookup.md` to ground the spec against real
-   documentation rather than guessing.
+   documentation rather than guessing. **Done when:** a spec exists at
+   its persisted path, `approved`/`autonomous`, before
+   `03-spec-driven-execution.md`'s own step 6 (execute) starts.
 
 ## Domain table
 

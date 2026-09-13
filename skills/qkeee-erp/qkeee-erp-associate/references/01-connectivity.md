@@ -218,7 +218,7 @@ directly for manual/ad hoc use. See `core/client.py`'s own `_cli()` for
 the full subcommand list (`health`, `list-envs`, `query`, `get`, `report`,
 `roles`, `mutate`, `gated-mutate`).
 
-**`core/client.py`'s own `mutate`/`gated-mutate` subcommands are read-only-safe to explore but not the write entry point — use `execute_write.py` for every actual write.** `mutate --domain <slug>` looks like the domain-scoped write path, but `core/client.py` never imports any `domains/*.py` module itself — run standalone in a fresh process, `--domain procurement` 404s with "domain has no registered ALLOWED_WRITE_DOCTYPES" even though `domains/procurement.py` genuinely declares one (`register_domain_allowlist()` only runs at that module's *own* import time). `scripts/execute_write.py` imports every `domains/*.py` module up front specifically so this isn't a trap, and it's the one write entry point regardless of whether the target doctype belongs to a named domain (`--domain <slug>` → `mutate_resource()`) or not (omit `--domain`, pass `--confirmation-token`/`--issued-at` → `gated_mutate_resource()`). See its own module docstring — this is also where F1 (`.scratch/hermes-erp-bot-reliability/spec.md`) was fixed: hand-writing a fresh one-off Python script per write is exactly how `session_id`/`channel_metadata`/`latest_prompt` kept getting left blank, and `execute_write.py` WARNs loudly on stderr, before the write fires, if any of those three are missing — don't route around that warning by constructing the underlying `mutate_resource()`/`gated_mutate_resource()` call directly in a hand-written script instead.
+**`core/client.py`'s own `mutate`/`gated-mutate` subcommands are read-only-safe to explore but not the write entry point — use `execute_write.py` for every actual write.** `mutate --domain <slug>` looks like the domain-scoped write path, but `core/client.py` never imports any `domains/*.py` module itself — run standalone in a fresh process, `--domain procurement` 404s with "domain has no registered ALLOWED_WRITE_DOCTYPES" even though `domains/procurement.py` genuinely declares one (`register_domain_allowlist()` only runs at that module's *own* import time). `scripts/execute_write.py` imports every `domains/*.py` module up front specifically so this isn't a trap, and it's the one write entry point regardless of whether the target doctype belongs to a named domain (`--domain <slug>` → `mutate_resource()`) or not (omit `--domain`, pass `--confirmation-token`/`--issued-at` → `gated_mutate_resource()`). See its own module docstring — this is also where a real bug got fixed: hand-writing a fresh one-off Python script per write is exactly how `session_id`/`channel_metadata`/`latest_prompt` kept getting left blank, and `execute_write.py` WARNs loudly on stderr, before the write fires, if any of those three are missing — don't route around that warning by constructing the underlying `mutate_resource()`/`gated_mutate_resource()` call directly in a hand-written script instead.
 
 **Exact path — don't guess it.** The script lives at
 `<profile>/skills/qkeee-erp/qkeee-erp-associate/scripts/core/client.py`
@@ -283,15 +283,15 @@ python execute_write.py --tag <tag> --mode read-write \
   --prompt-summary "<one-line paraphrase>" \
   --latest-prompt "<the user's literal most-recent message>"
 
-# Domain-less write — Item belongs to no domain's allowlist yet (F3/
-# issue 01). For an item sourced from a purchase document (PO, purchase
-# invoice, GRN), add --purchase-sourced-item: defaults
-# is_purchase_item=1/is_sales_item=0 (F9 — nothing in a purchase document
-# supports "the org resells this") and refuses a bare standard_rate key
-# (F6 — that auto-creates a Standard SELLING Item Price from what was
-# actually a purchase cost; see item_write_helpers.py for the buying-side
-# alternative). Omit --domain, supply the advisory-draft token, AND (F5)
-# the user's own literal reply containing confirm_token.py's printed
+# Domain-less write — Item belongs to no domain's allowlist yet. For an
+# item sourced from a purchase document (PO, purchase invoice, GRN), add
+# --purchase-sourced-item: defaults is_purchase_item=1/is_sales_item=0
+# (nothing in a purchase document supports "the org resells this") and
+# refuses a bare standard_rate key (that auto-creates a Standard SELLING
+# Item Price from what was actually a purchase cost; see
+# item_write_helpers.py for the buying-side alternative). Omit --domain,
+# supply the advisory-draft token, AND the user's own literal reply
+# containing confirm_token.py's printed
 # confirmation_code (show them the code in the rendered draft first —
 # never construct this string yourself, see confirmation_code()'s
 # docstring for why that defeats the point).

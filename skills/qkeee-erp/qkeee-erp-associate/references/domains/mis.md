@@ -39,7 +39,9 @@ question over ERPNext's accounts data.
 ## Procedure
 
 1. Follow the activation sequence. This domain has no `ALLOWED_WRITE_DOCTYPES`
-   to check against — there is nothing to write, full stop.
+   to check against — there is nothing to write, full stop. **Done
+   when:** no `mutate`/`create`/`update`/`submit` call has been attempted
+   from inside this domain.
 2. For any of ERPNext's standard reports (General Ledger, Trial Balance,
    P&L, Balance Sheet, Cash Flow Statement, AR/AP, Budget Variance,
    Financial Ratios), prefer `core.client.run_query_report()` over
@@ -49,14 +51,19 @@ question over ERPNext's accounts data.
    only for a genuinely custom cut no built-in report covers. Always
    check `has_more` before treating a result as complete — a truncated
    pull is the easiest way to produce a report that looks right but
-   doesn't reconcile.
+   doesn't reconcile. **Done when:** a built-in report was checked for
+   first, and `has_more` is confirmed false or the truncation is stated.
 3. **Before declaring a reconciliation mismatch, rule out a scope
    mismatch first.** Confirm both figures being compared used the same
    Finance Book filter and the same currency basis — comparing across
-   either is a known false-anomaly source, not a real discrepancy.
+   either is a known false-anomaly source, not a real discrepancy. **Done
+   when:** both filters are confirmed identical before a mismatch is
+   reported as real.
 4. Every report needs at least one well-formed reconciliation check, or
    an explicit `not_applicable` with a one-line stated reason — never
-   presented without one.
+   presented without one. **Done when:** a reconciliation check ran, or
+   `not_applicable` carries a stated reason, before the report is
+   presented.
 
 ## Quick reference
 

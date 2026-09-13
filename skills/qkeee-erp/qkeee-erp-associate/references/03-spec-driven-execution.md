@@ -41,11 +41,15 @@ low, the cost of an unreviewed multi-step write is not.
    environment tag (if not already resolved per `SKILL.md`'s activation
    sequence), which domain(s) it touches, expected scope of a write
    (how many records, which doctype), and any constraint the user implied
-   but didn't state. Ask; don't guess a scope-defining detail.
+   but didn't state. Ask; don't guess a scope-defining detail. **Done
+   when:** target tag, domain(s), and write scope are each resolved from
+   the user's actual answer, not assumed.
 2. **Draft the spec.** Use the template below. Keep it crisp — this is a
    working contract, not a report. State plainly where a functional
    detail is still unconfirmed against live metadata (Non-negotiable 4,
-   `00-conventions.md`) rather than papering over the gap.
+   `00-conventions.md`) rather than papering over the gap. **Done when:**
+   every template section below is filled, or explicitly marked
+   unconfirmed rather than left blank.
 3. **Persist it — in the session's actual working directory.** Write the
    spec file to `./qkeee-erp-specs/<slug>-<YYYYMMDD-HHMM>.md`, resolved
    relative to whatever directory this session is actually running in:
@@ -70,28 +74,38 @@ low, the cost of an unreviewed multi-step write is not.
 
    Never put a spec under `qkeee-erp-learned/*` or `memories/MEMORY.md` —
    those are durable environment knowledge, not per-task working state; a
-   spec is disposable once its task closes.
+   spec is disposable once its task closes. **Done when:** the file
+   exists at its resolved path and that path is stated to the user.
 4. **Seek approval — unless running autonomously (see below).** Present
    the spec's objective/plan/steps to the user, plainly, and wait for an
    explicit go-ahead or edits. Don't start step 5 on a spec that hasn't
-   been approved or silently-generated (autonomous mode).
+   been approved or silently-generated (autonomous mode). **Done when:**
+   the user has given an explicit go-ahead or edits, or (autonomous mode)
+   the header carries the `Approval: autonomous (…)` mark.
 5. **Update on feedback.** Fold every user edit into the persisted file
    itself (not just into conversation) before proceeding — the file on
    disk is the record of what was actually approved, so it must match
    what execution follows. Re-confirm after a substantive edit; a typo
-   fix doesn't need a second round.
+   fix doesn't need a second round. **Done when:** the persisted file
+   matches what was actually approved, word for word on any changed
+   scope.
 6. **Execute against the spec.** Follow the technical steps in order.
    Each domain's own procedure (`references/domains/<slug>.md`) and every
    non-negotiable in `00-conventions.md` still apply in full — this spec
    sequences the work, it doesn't relax save-draft-then-review-then-submit,
    the write-allowlist gate, or anything else already enforced in
-   `scripts/core/client.py`.
+   `scripts/core/client.py`. **Done when:** every technical step has run,
+   or is marked deviated-with-reason in the spec file — never silently
+   skipped.
 7. **Close out.** Append a short "Outcome" section to the same spec file
    (what actually happened, any deviation from plan and why) before
    telling the user the task is done. Leave the file in place — it's the
    audit trail for this task, not deleted on success. Working-scratch
    files are disposable across *sessions* (`01-connectivity.md`), not
-   mid-task.
+   mid-task. Tell the user per `00-conventions.md`'s
+   `## Report-back` contract, not a free-form summary. **Done when:** the
+   Outcome section is appended to the spec file, before — not after —
+   telling the user the task is done.
 
 ## Autonomous mode
 
